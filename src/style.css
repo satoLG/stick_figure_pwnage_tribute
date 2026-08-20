@@ -1,0 +1,32 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #000;
+}
+
+#game {
+  display: block;
+  image-rendering: auto;
+  background: #fff;
+  cursor: none;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* The whole UI is painted inside the canvas so it shares the hand-drawn look. */
