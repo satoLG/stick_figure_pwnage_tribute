@@ -1,14 +1,16 @@
 import { audio, type SfxName } from '../core/audio';
 import { Input } from '../core/input';
-import { clamp, damp, easeOutBack, easeOutCubic, hashNoise, rand, TAU, vec, type Vec2 } from '../core/math';
+import { clamp, damp, easeOutBack, hashNoise, rand, TAU, vec, type Vec2 } from '../core/math';
 import { Sketch } from '../core/sketch';
+import { TouchControls } from '../ui/touch';
 import {
-  drawProgress, hitRect, inkButton, inkText, measureText, WeaponWheel, type Rect,
+  drawProgress, hitRect, inkButton, inkText, measureText, WeaponWheel,
+  type Rect, type WheelLayout,
 } from '../ui/ui';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
-import { Stickman } from './stickman';
-import { GROUND_Y, Terrain, WORLD_H, WORLD_W } from './terrain';
+import { Stickman, type Controls } from './stickman';
+import { computeWorldSize, Terrain } from './terrain';
 import { createArsenal, type Weapon, type WeaponCtx } from './weapons';
 
 type Phase = 'menu' | 'playing' | 'won';
@@ -21,13 +23,27 @@ const NUMBER_KEYS = [
   'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0',
 ];
 
+/** Everything the player is asking for this frame, whatever device said it. */
+interface Intent extends Controls {
+  aim: Vec2;
+  firing: boolean;
+  firePressed: boolean;
+  wheelOpen: boolean;
+  wheelPointer: Vec2;
+  wheelReleased: boolean;
+  numberKey: number | null;
+}
+
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private sk: Sketch;
   private input: Input;
+  private touch = new TouchControls();
 
-  private terrain = new Terrain();
+  /** Playfield size in world units; follows the viewport aspect exactly. */
+  private view = { w: 1280, h: 720 };
+  private terrain: Terrain;
   private sm = new Stickman();
   private particles = new Particles();
   private projectiles: Projectile[] = [];
@@ -49,13 +65,13 @@ export class Game {
   private timeScale = 1;
   private hintFade = 1;
 
-  private viewScale = 1;
-  private cssW = WORLD_W;
-  private cssH = WORLD_H;
-
-  private startBtn: Rect = { x: WORLD_W / 2 - 170, y: 420, w: 340, h: 76 };
-  private restartBtn: Rect = { x: WORLD_W / 2 - 250, y: 452, w: 230, h: 64 };
-  private menuBtn: Rect = { x: WORLD_W / 2 + 20, y: 452, w: 230, h: 64 };
+  private scaleX = 1;
+  private scaleY = 1;
+  private cssW = 1280;
+  private cssH = 720;
+  /** Notch / home-bar insets in world units, so the HUD stays clear of them. */
+  private safe = { top: 0, right: 0, bottom: 0, left: 0 };
+  private probe = document.getElementById('safe-probe');
 
   private stats = { shots: 0, elapsed: 0 };
 
@@ -63,6 +79,9 @@ export class Game {
   get player(): Stickman { return this.sm; }
   get destroyedPct(): number { return this.terrain.destroyed; }
   get currentPhase(): string { return this.phase; }
+  get viewSize(): { w: number; h: number } { return this.view; }
+  get equippedIndex(): number { return this.equipped; }
+  get touchActive(): boolean { return this.isTouch; }
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -71,9 +90,15 @@ export class Game {
     this.ctx = c;
     this.sk = new Sketch(c);
     this.input = new Input(canvas);
+    this.view = computeWorldSize(window.innerWidth, window.innerHeight);
+    this.terrain = new Terrain(this.view.w, this.view.h);
     this.resetWorld();
     this.fit();
-    window.addEventListener('resize', () => this.fit());
+
+    const refit = () => this.fit();
+    window.addEventListener('resize', refit);
+    window.addEventListener('orientationchange', refit);
+    window.visualViewport?.addEventListener('resize', refit);
     document.addEventListener('visibilitychange', () => { this.last = performance.now(); });
   }
 
@@ -96,51 +121,125 @@ export class Game {
 
   // ------------------------------------------------------------- viewport ---
 
+  /**
+   * The canvas always fills the window; the world is re-sized to the viewport's
+   * exact aspect ratio so there are never letterbox bars in any orientation.
+   */
   private fit(): void {
-    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
-    const scale = Math.min(window.innerWidth / WORLD_W, window.innerHeight / WORLD_H);
-    this.cssW = Math.floor(WORLD_W * scale);
-    this.cssH = Math.floor(WORLD_H * scale);
-    this.canvas.style.width = `${this.cssW}px`;
-    this.canvas.style.height = `${this.cssH}px`;
-    this.canvas.width = Math.round(this.cssW * dpr);
-    this.canvas.height = Math.round(this.cssH * dpr);
-    this.viewScale = this.canvas.width / WORLD_W;
+    const vw = Math.max(1, Math.round(window.visualViewport?.width ?? window.innerWidth));
+    const vh = Math.max(1, Math.round(window.visualViewport?.height ?? window.innerHeight));
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 2.5);
+    const size = computeWorldSize(vw, vh);
+
+    this.cssW = vw;
+    this.cssH = vh;
+    this.canvas.style.width = `${vw}px`;
+    this.canvas.style.height = `${vh}px`;
+    this.canvas.width = Math.round(vw * dpr);
+    this.canvas.height = Math.round(vh * dpr);
+
+    if (size.w !== this.view.w || size.h !== this.view.h) {
+      this.view = size;
+      // Re-lays the level at the new size, keeping the damage already done.
+      this.terrain.resizeTo(size.w, size.h);
+      this.settlePlayer();
+      this.layoutButtons();
+    }
+    this.scaleX = this.canvas.width / this.view.w;
+    this.scaleY = this.canvas.height / this.view.h;
+    this.readSafeArea();
   }
 
-  private pointerWorld(): Vec2 {
-    return {
-      x: clamp((this.input.pointer.x / this.cssW) * WORLD_W, 0, WORLD_W),
-      y: clamp((this.input.pointer.y / this.cssH) * WORLD_H, 0, WORLD_H),
+  /** Reads env(safe-area-inset-*) off the probe and converts it to world units. */
+  private readSafeArea(): void {
+    if (!this.probe) return;
+    const cs = getComputedStyle(this.probe);
+    const px = (v: string): number => parseFloat(v) || 0;
+    const kx = this.view.w / this.cssW;
+    const ky = this.view.h / this.cssH;
+    this.safe = {
+      top: px(cs.paddingTop) * ky,
+      right: px(cs.paddingRight) * kx,
+      bottom: px(cs.paddingBottom) * ky,
+      left: px(cs.paddingLeft) * kx,
     };
+  }
+
+  /** After a re-lay, make sure the figure is not buried inside the new terrain. */
+  private settlePlayer(): void {
+    this.sm.pos.x = clamp(this.sm.pos.x, 50, this.view.w - 50);
+    let guard = 0;
+    while (guard++ < 400 && this.terrain.solidAt(this.sm.pos.x, this.sm.pos.y - 4)) {
+      this.sm.pos.y -= 4;
+    }
+    if (this.sm.pos.y < 0) this.sm.pos.y = this.terrain.groundTop;
+  }
+
+  private toWorld = (cssX: number, cssY: number): Vec2 => ({
+    x: clamp((cssX / this.cssW) * this.view.w, 0, this.view.w),
+    y: clamp((cssY / this.cssH) * this.view.h, 0, this.view.h),
+  });
+
+  private pointerWorld(): Vec2 {
+    return this.toWorld(this.input.pointer.x, this.input.pointer.y);
   }
 
   // ---------------------------------------------------------------- world ---
 
+  private startBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private restartBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private menuBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+
+  private layoutButtons(): void {
+    const { w, h } = this.view;
+    const bw = clamp(w * 0.42, 260, 380);
+    const bh = clamp(h * 0.09, 62, 84);
+    this.startBtn = { x: w / 2 - bw / 2, y: h * 0.56, w: bw, h: bh };
+
+    const sw = clamp(w * 0.3, 170, 240);
+    const sh = clamp(h * 0.075, 54, 68);
+    const gap = 20;
+    const y = h * 0.6;
+    this.restartBtn = { x: w / 2 - sw - gap / 2, y, w: sw, h: sh };
+    this.menuBtn = { x: w / 2 + gap / 2, y, w: sw, h: sh };
+  }
+
   private resetWorld(): void {
-    this.terrain = new Terrain();
+    this.terrain = new Terrain(this.view.w, this.view.h);
     this.particles.clear();
     this.projectiles.length = 0;
     this.weapons = createArsenal();
     this.equipped = 0;
     this.wheel.hovered = 0;
-    this.sm.reset(230, GROUND_Y - 40);
+    this.touch.reset();
+    this.sm.reset(Math.min(230, this.view.w * 0.22), this.terrain.groundTop - 40);
     this.shakeAmt = 0;
     this.flashAmt = 0;
     this.invertT = 0;
     this.hintFade = 1;
     this.stats = { shots: 0, elapsed: 0 };
+    this.layoutButtons();
   }
 
   private get weapon(): Weapon { return this.weapons[this.equipped]; }
+  private get isTouch(): boolean { return this.input.touchMode; }
 
-  private makeCtx(dt: number): WeaponCtx {
+  private wheelLayout(): WheelLayout {
+    if (this.isTouch) return this.touch.layout(this.view);
+    return {
+      kind: 'ring',
+      anchor: { x: this.view.w / 2, y: this.view.h / 2 },
+      radius: clamp(Math.min(this.view.w, this.view.h) * 0.3, 150, 240),
+    };
+  }
+
+  private makeCtx(dt: number, aim: Vec2): WeaponCtx {
     return {
       sm: this.sm,
       terrain: this.terrain,
       particles: this.particles,
       projectiles: this.projectiles,
-      aimPoint: this.pointerWorld(),
+      aimPoint: aim,
       dt,
       time: this.time,
       shake: (a) => this.shake(a),
@@ -168,7 +267,36 @@ export class Game {
     }
 
     this.render(rawDt);
-    this.input.endFrame();
+    this.input.endFrame(rawDt);
+  }
+
+  /** Merges keyboard/mouse and on-screen controls into one set of wishes. */
+  private readIntent(rawDt: number): Intent {
+    const inp = this.input;
+    const t = this.touch.update(inp, rawDt, this.view, this.toWorld);
+
+    let numberKey: number | null = null;
+    for (let i = 0; i < NUMBER_KEYS.length; i++) {
+      if (inp.justPressed(NUMBER_KEYS[i])) numberKey = i;
+    }
+
+    const keyAxis = (inp.anyDown('KeyD', 'ArrowRight') ? 1 : 0) - (inp.anyDown('KeyA', 'ArrowLeft') ? 1 : 0);
+    const tabOpen = inp.down('Tab');
+    const wheelOpen = tabOpen || t.wheelOpen;
+
+    return {
+      axis: keyAxis !== 0 ? keyAxis : t.axis,
+      down: inp.anyDown('KeyS', 'ArrowDown') || t.crouch,
+      jump: inp.justPressed('Space') || t.jump,
+      jumpHeld: inp.down('Space') || t.jumpHeld,
+      aim: t.aim && this.isTouch ? t.aim : this.pointerWorld(),
+      firing: (!wheelOpen && inp.mouseDown) || t.firing,
+      firePressed: (!wheelOpen && inp.mousePressed) || t.firePressed,
+      wheelOpen,
+      wheelPointer: t.wheelOpen ? t.wheelPointer : this.pointerWorld(),
+      wheelReleased: inp.justReleased('Tab') || t.wheelReleased,
+      numberKey,
+    };
   }
 
   // ----------------------------------------------------------------- menu ---
@@ -176,15 +304,12 @@ export class Game {
   private updateMenu(dt: number): void {
     // The world keeps breathing behind the title card.
     const aim = { x: this.sm.pos.x + 200, y: this.sm.pos.y - 90 };
-    this.sm.update(dt, this.terrain, {
-      left: false, right: false, up: false, down: false, jump: false, jumpHeld: false,
-    }, aim);
+    this.sm.update(dt, this.terrain, { axis: 0, down: false, jump: false, jumpHeld: false }, aim);
     this.particles.update(dt, this.terrain);
     this.decayEffects(dt);
 
-    const p = this.pointerWorld();
-    const hovering = hitRect(this.startBtn, p);
-    if (this.input.mousePressed && hovering) void this.beginRun();
+    const press = this.input.pressPoint();
+    if (press && hitRect(this.startBtn, this.toWorld(press.x, press.y))) void this.beginRun();
     if (this.input.justPressed('Enter') || this.input.justPressed('Space')) void this.beginRun();
   }
 
@@ -207,54 +332,41 @@ export class Game {
   // -------------------------------------------------------------- playing ---
 
   private updatePlaying(rawDt: number): void {
-    const inp = this.input;
+    const intent = this.readIntent(rawDt);
 
     // --- weapon wheel, which also slows the action right down --------------
-    const wheelOpen = inp.down('Tab');
-    let numberKey: number | null = null;
-    for (let i = 0; i < NUMBER_KEYS.length; i++) {
-      if (inp.justPressed(NUMBER_KEYS[i])) numberKey = i;
-    }
     const wasOpen = this.wheel.open > 0.01;
     const changed = this.wheel.update(
-      rawDt, wheelOpen, this.pointerWorld(), { x: WORLD_W / 2, y: WORLD_H / 2 },
-      this.weapons.length, numberKey,
+      rawDt, intent.wheelOpen, intent.wheelPointer, this.wheelLayout(),
+      this.weapons.length, intent.numberKey,
     );
     if (changed) audio.play('wheel', 0.9 + this.wheel.hovered * 0.05);
-    if (wheelOpen && !wasOpen) audio.play('wheel', 0.7);
-    if (!wheelOpen && wasOpen) this.equip(this.wheel.hovered);
+    if (intent.wheelOpen && !wasOpen) audio.play('wheel', 0.7);
+    if (!intent.wheelOpen && wasOpen) this.equip(this.wheel.hovered);
 
     // Numbers and the scroll wheel work without opening the wheel at all.
-    if (!wheelOpen) {
-      if (numberKey !== null && numberKey < this.weapons.length) this.equip(numberKey);
-      if (inp.wheelDelta !== 0) {
+    if (!intent.wheelOpen) {
+      if (intent.numberKey !== null && intent.numberKey < this.weapons.length) this.equip(intent.numberKey);
+      if (this.input.wheelDelta !== 0) {
         const n = this.weapons.length;
-        this.equip((this.equipped + inp.wheelDelta + n) % n);
+        this.equip((this.equipped + this.input.wheelDelta + n) % n);
       }
     }
 
-    this.timeScale = damp(this.timeScale, wheelOpen ? 0.16 : 1, 14, rawDt);
+    this.timeScale = damp(this.timeScale, intent.wheelOpen ? 0.16 : 1, 14, rawDt);
     const dt = rawDt * this.timeScale;
     this.stats.elapsed += rawDt;
     if (this.hintFade > 0 && this.phaseTime > 9) this.hintFade = Math.max(0, this.hintFade - rawDt * 0.5);
 
     // --- character ---------------------------------------------------------
-    const aim = this.pointerWorld();
-    this.sm.update(dt, this.terrain, {
-      left: inp.anyDown('KeyA', 'ArrowLeft'),
-      right: inp.anyDown('KeyD', 'ArrowRight'),
-      up: inp.anyDown('KeyW', 'ArrowUp'),
-      down: inp.anyDown('KeyS', 'ArrowDown'),
-      jump: inp.justPressed('Space'),
-      jumpHeld: inp.down('Space'),
-    }, aim);
+    this.sm.update(dt, this.terrain, intent, intent.aim);
     if (this.sm.justJumped) audio.play('jump', rand(0.9, 1.15));
     if (this.sm.justLanded) audio.play('land', rand(0.9, 1.1));
 
     // --- weapon ------------------------------------------------------------
-    const wctx = this.makeCtx(dt);
-    const firing = !wheelOpen && inp.mouseDown;
-    const pressed = !wheelOpen && inp.mousePressed;
+    const wctx = this.makeCtx(dt, intent.aim);
+    const firing = !intent.wheelOpen && intent.firing;
+    const pressed = !intent.wheelOpen && intent.firePressed;
     if (pressed) this.stats.shots++;
     this.weapon.update(wctx, firing, pressed);
     this.sm.setHands(this.weapon.hands(wctx));
@@ -281,7 +393,7 @@ export class Game {
       this.flashAmt = 1;
       this.invertT = 0.25;
       this.shake(30);
-      this.particles.shockwave(1080, 300, 320);
+      this.particles.shockwave(this.view.w * 0.84, this.view.h * 0.42, 320);
       audio.play('win');
     }
   }
@@ -312,7 +424,7 @@ export class Game {
 
   private equip(i: number): void {
     if (i === this.equipped || i < 0 || i >= this.weapons.length) return;
-    this.weapon.onUnequip(this.makeCtx(0));
+    this.weapon.onUnequip(this.makeCtx(0, this.pointerWorld()));
     this.equipped = i;
     this.weapon.onEquip();
     this.wheel.hovered = i;
@@ -333,9 +445,8 @@ export class Game {
   // ------------------------------------------------------------------ won ---
 
   private updateWon(dt: number): void {
-    this.sm.update(dt, this.terrain, {
-      left: false, right: false, up: false, down: false, jump: false, jumpHeld: false,
-    }, { x: this.sm.pos.x + 300, y: this.sm.pos.y - 120 });
+    this.sm.update(dt, this.terrain, { axis: 0, down: false, jump: false, jumpHeld: false },
+      { x: this.sm.pos.x + 300, y: this.sm.pos.y - 120 });
     this.sm.setHands(null);
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
@@ -346,23 +457,40 @@ export class Game {
     this.decayEffects(dt);
 
     if (this.phaseTime > 0.7) {
-      const p = this.pointerWorld();
-      if (this.input.mousePressed) {
-        if (hitRect(this.restartBtn, p)) { audio.play('ui'); this.phase = 'playing'; this.phaseTime = 0; this.resetWorld(); }
-        else if (hitRect(this.menuBtn, p)) { audio.play('ui'); audio.stopMusic(); this.phase = 'menu'; this.phaseTime = 0; this.resetWorld(); }
+      const press = this.input.pressPoint();
+      if (press) {
+        const p = this.toWorld(press.x, press.y);
+        if (hitRect(this.restartBtn, p)) this.restart();
+        else if (hitRect(this.menuBtn, p)) this.toMenu();
       }
-      if (this.input.justPressed('KeyR')) { audio.play('ui'); this.phase = 'playing'; this.phaseTime = 0; this.resetWorld(); }
-      if (this.input.justPressed('Escape')) { audio.stopMusic(); this.phase = 'menu'; this.phaseTime = 0; this.resetWorld(); }
+      if (this.input.justPressed('KeyR')) this.restart();
+      if (this.input.justPressed('Escape')) this.toMenu();
     }
+  }
+
+  private restart(): void {
+    audio.play('ui');
+    this.phase = 'playing';
+    this.phaseTime = 0;
+    this.resetWorld();
+  }
+
+  private toMenu(): void {
+    audio.play('ui');
+    audio.stopMusic();
+    this.phase = 'menu';
+    this.phaseTime = 0;
+    this.resetWorld();
   }
 
   // --------------------------------------------------------------- render ---
 
   private render(dt: number): void {
     const c = this.ctx;
-    c.setTransform(this.viewScale, 0, 0, this.viewScale, 0, 0);
+    const { w, h } = this.view;
+    c.setTransform(this.scaleX, 0, 0, this.scaleY, 0, 0);
     c.fillStyle = '#fff';
-    c.fillRect(0, 0, WORLD_W, WORLD_H);
+    c.fillRect(0, 0, w, h);
 
     c.save();
     c.translate(this.shakeOff.x, this.shakeOff.y);
@@ -370,7 +498,7 @@ export class Game {
     this.terrain.draw(c);
     this.particles.draw(this.sk);
 
-    const wctx = this.makeCtx(dt);
+    const wctx = this.makeCtx(dt, this.pointerWorld());
     this.sm.draw(this.sk);
     if (this.phase === 'playing') this.weapon.draw(this.sk, wctx);
     for (const p of this.projectiles) p.draw(this.sk);
@@ -384,55 +512,95 @@ export class Game {
       c.globalCompositeOperation = 'difference';
       c.globalAlpha = this.invertT > 0 ? 1 : clamp(this.flashAmt, 0, 1) * 0.85;
       c.fillStyle = '#fff';
-      c.fillRect(0, 0, WORLD_W, WORLD_H);
+      c.fillRect(0, 0, w, h);
       c.restore();
     }
 
-    if (this.phase === 'playing') this.drawHud();
-    this.wheel.draw(this.sk, { x: WORLD_W / 2, y: WORLD_H / 2 }, this.weapons, this.equipped);
+    if (this.phase === 'playing') {
+      this.drawHud();
+      if (this.isTouch) {
+        this.touch.drawStick(this.sk);
+        this.touch.drawAim(this.sk, this.time);
+        this.touch.drawPad(this.sk, this.view, (x, y, s) => this.weapon.icon(this.sk, x, y, s));
+      }
+    }
+    this.wheel.draw(
+      this.sk, this.wheelLayout(), this.weapons, this.equipped, this.view,
+      this.isTouch ? 'LIFT YOUR FINGER TO EQUIP' : 'RELEASE TAB TO EQUIP',
+    );
     if (this.phase === 'menu') this.drawMenu();
     if (this.phase === 'won') this.drawWin();
-    if (this.phase !== 'menu' || true) this.drawCursor();
+    if (!this.isTouch) this.drawCursor();
   }
 
   private drawHud(): void {
     const sk = this.sk;
     const c = this.ctx;
+    const { w, h } = this.view;
     const frac = this.terrain.destroyed;
-    drawProgress(sk, WORLD_W / 2, 34, 460, frac, `WALL DESTROYED  ${(frac * 100).toFixed(1)}%`);
+    const barW = clamp(w * 0.42, 240, 470);
+    const topY = 34 + this.safe.top;
+    drawProgress(sk, w / 2, topY, barW, frac, `WALL DESTROYED  ${(frac * 100).toFixed(1)}%`);
 
-    // Current weapon, bottom left, with a cooldown or charge readout.
-    const w = this.weapon;
+    // Current weapon. On touch the bottom edge belongs to the thumbs, so the
+    // readout moves up under the meter instead.
+    const w2 = this.weapon;
+    const compact = this.isTouch;
+    const left = 44 + this.safe.left;
+    const baseY = compact ? topY + 58 : h - 70 - this.safe.bottom;
     c.save();
-    inkText(sk, `${(w.id) % 10}`, 44, WORLD_H - 62, 44, { align: 'center', alpha: 0.85 });
-    inkText(sk, w.name, 76, WORLD_H - 70, 26, { align: 'left' });
-    inkText(sk, w.tagline.toUpperCase(), 78, WORLD_H - 46, 13, { align: 'left', alpha: 0.55 });
+    const nameSize = clamp(w * 0.02, 15, 24);
+    inkText(sk, `${w2.id % 10}`, left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85 });
+    inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left' });
+    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55 });
 
-    const barX = 78, barY = WORLD_H - 32, barW = 190;
-    const meter = w.charge > 0 ? w.charge : 1 - w.cooldownFrac;
+    const barX = left + nameSize * 1.35;
+    const barY = baseY + (compact ? nameSize * 0.85 : 38);
+    const cdW = clamp(w * 0.16, 110, 180);
+    const meter = w2.charge > 0 ? w2.charge : 1 - w2.cooldownFrac;
     c.strokeStyle = '#000';
     c.lineWidth = 2;
     sk.polyPath([
-      { x: barX, y: barY }, { x: barX + barW, y: barY },
-      { x: barX + barW, y: barY + 8 }, { x: barX, y: barY + 8 },
+      { x: barX, y: barY }, { x: barX + cdW, y: barY },
+      { x: barX + cdW, y: barY + 8 }, { x: barX, y: barY + 8 },
     ], 0.8);
     c.stroke();
     c.fillStyle = '#000';
-    c.fillRect(barX + 2, barY + 2, Math.max(0, (barW - 4) * clamp(meter, 0, 1)), 4);
-    if (w.charge > 0.02) inkText(sk, 'CHARGING', barX + barW + 46, barY + 4, 13, { alpha: 0.7 });
+    c.fillRect(barX + 2, barY + 2, Math.max(0, (cdW - 4) * clamp(meter, 0, 1)), 4);
+    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7 });
     c.restore();
 
-    // Controls, fading out once the player has clearly got the idea.
+    // Controls, fading out once the player has clearly got the idea. On touch
+    // they sit centred under the meter; the right edge is too narrow for them
+    // and the bottom corners belong to the thumbs.
     if (this.hintFade > 0.01) {
       c.save();
       c.globalAlpha = this.hintFade;
-      const lines = [
-        'WASD / ARROWS  MOVE',
-        'SPACE  JUMP  (again in mid-air to flip)',
-        'MOUSE  AIM     CLICK  ATTACK',
-        'HOLD TAB  WEAPON WHEEL     1-0  QUICK SWAP',
-      ];
-      lines.forEach((l, i) => inkText(sk, l, WORLD_W - 24, WORLD_H - 96 + i * 22, 14, { align: 'right', alpha: 0.6 }));
+      const size = clamp(w * 0.013, 10, 14);
+      if (this.isTouch) {
+        const lines = [
+          'DRAG THE LEFT SIDE TO MOVE  ·  UP JUMPS  ·  DOWN CROUCHES',
+          'TOUCH THE RIGHT SIDE TO AIM AND ATTACK',
+          'HOLD THE PAD BELOW, SLIDE, LIFT TO EQUIP',
+        ];
+        // Centred on the open ground, not the screen: on a narrow portrait
+        // screen the middle is already black wall and the text vanishes into it.
+        const cx = clamp(this.terrain.wallX / 2, w * 0.26, w / 2);
+        lines.forEach((l, i) => inkText(
+          sk, l, cx, topY + 46 + i * (size + 7), size, { align: 'center', alpha: 0.55 },
+        ));
+      } else {
+        const lines = [
+          'WASD / ARROWS  MOVE',
+          'SPACE  JUMP  (again in mid-air to flip)',
+          'MOUSE  AIM     CLICK  ATTACK',
+          'HOLD TAB  WEAPON WHEEL     1-0  QUICK SWAP',
+        ];
+        lines.forEach((l, i) => inkText(
+          sk, l, w - 20 - this.safe.right, h - 96 - this.safe.bottom + i * (size + 8), size,
+          { align: 'right', alpha: 0.6 },
+        ));
+      }
       c.restore();
     }
 
@@ -456,20 +624,25 @@ export class Game {
   private drawMenu(): void {
     const sk = this.sk;
     const c = this.ctx;
+    const { w, h } = this.view;
     const t = this.phaseTime;
 
     c.save();
     c.globalAlpha = 0.86;
     c.fillStyle = '#fff';
-    c.fillRect(0, 0, WORLD_W, WORLD_H);
+    c.fillRect(0, 0, w, h);
     c.restore();
+
+    const big = clamp(w * 0.115, 46, 108);
+    const small = big * 0.7;
+    const titleY = h * 0.22;
 
     const pop = easeOutBack(clamp(t / 0.7, 0, 1));
     c.save();
-    c.translate(WORLD_W / 2, 176);
+    c.translate(w / 2, titleY);
     c.scale(pop, pop);
-    inkText(sk, 'STICK FIGURE', 0, -46, 76, { wobble: 1.4 });
-    inkText(sk, 'PWNAGE', 0, 34, 108, { wobble: 1.6 });
+    inkText(sk, 'STICK FIGURE', 0, -big * 0.46, small, { wobble: 1.4 });
+    inkText(sk, 'PWNAGE', 0, big * 0.34, big, { wobble: 1.6 });
     c.restore();
 
     // Speed lines flanking the title, straight out of the source material.
@@ -477,49 +650,66 @@ export class Game {
     c.save();
     c.globalAlpha = lineFade * 0.8;
     c.strokeStyle = '#000';
-    const titleW = Math.max(360, measureText(sk, 'PWNAGE', 108) / 2 + 40);
+    const titleW = measureText(sk, 'PWNAGE', big) / 2 + big * 0.4;
     for (const side of [-1, 1]) {
-      sk.burst(WORLD_W / 2 + side * titleW, 190, 7, 20, 190, 3, 1.1, side > 0 ? 0 : Math.PI, 40 + side);
+      sk.burst(w / 2 + side * titleW, titleY + big * 0.2, 7, 20, Math.min(190, w * 0.2), 3, 1.1,
+        side > 0 ? 0 : Math.PI, 40 + side);
     }
     c.restore();
 
-    inkText(sk, 'A PLAYABLE TRIBUTE  ·  ONE STICK FIGURE, TEN WEAPONS, ONE VERY DOOMED WALL',
-      WORLD_W / 2, 300, 17, { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.72, wobble: 0.6 });
+    inkText(sk, 'A PLAYABLE TRIBUTE', w / 2, h * 0.4, clamp(w * 0.022, 14, 19),
+      { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.72, wobble: 0.6 });
+    inkText(sk, 'ONE STICK FIGURE, TEN WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
+      clamp(w * 0.019, 12, 17), { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.55, wobble: 0.5 });
 
-    const p = this.pointerWorld();
-    const hovered = hitRect(this.startBtn, p);
+    const press = this.input.pointer;
+    const hovered = !this.isTouch && hitRect(this.startBtn, this.toWorld(press.x, press.y));
     c.save();
     c.globalAlpha = clamp((t - 0.6) / 0.4, 0, 1);
-    inkButton(sk, this.startBtn, 'START PWNAGE', hovered, 34);
+    inkButton(sk, this.startBtn, 'START PWNAGE', hovered, clamp(w * 0.032, 22, 34));
     c.restore();
 
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
-    const rows = [
-      ['WASD / ARROWS', 'run and crouch'],
-      ['SPACE', 'jump — press again in the air to somersault'],
-      ['MOUSE', 'aim   ·   CLICK to attack'],
-      ['HOLD TAB', 'weapon wheel   ·   1-0 to quick swap'],
-      ['GOAL', 'wipe the black wall off the screen'],
-    ];
+    const rows: Array<[string, string]> = this.isTouch
+      ? [
+          ['LEFT THUMB', 'drag to run, up to jump, down to crouch'],
+          ['RIGHT SIDE', 'touch to aim and attack'],
+          ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
+          ['GOAL', 'wipe the black wall off the screen'],
+        ]
+      : [
+          ['WASD / ARROWS', 'run and crouch'],
+          ['SPACE', 'jump — press again in the air to somersault'],
+          ['MOUSE', 'aim   ·   CLICK to attack'],
+          ['HOLD TAB', 'weapon wheel   ·   1-0 to quick swap'],
+          ['GOAL', 'wipe the black wall off the screen'],
+        ];
+    const rowSize = clamp(w * 0.019, 11, 16);
+    const rowGap = rowSize + 10;
+    const rowsTop = h * 0.73;
     rows.forEach((r, i) => {
-      const y = 546 + i * 26;
-      inkText(sk, r[0], WORLD_W / 2 - 16, y, 16, { align: 'right', alpha: cf * 0.9 });
-      inkText(sk, r[1].toUpperCase(), WORLD_W / 2 + 16, y, 15, { align: 'left', alpha: cf * 0.55 });
+      const y = rowsTop + i * rowGap;
+      inkText(sk, r[0], w / 2 - 12, y, rowSize, { align: 'right', alpha: cf * 0.9 });
+      inkText(sk, r[1].toUpperCase(), w / 2 + 12, y, rowSize * 0.94, { align: 'left', alpha: cf * 0.55 });
     });
     inkText(sk, 'SOUND: ORIGINAL POP-ROCK, SYNTHESISED LIVE IN YOUR BROWSER',
-      WORLD_W / 2, WORLD_H - 18, 12, { alpha: cf * 0.4 });
+      w / 2, h - 16, clamp(w * 0.014, 9, 12), { alpha: cf * 0.4 });
   }
 
   private drawWin(): void {
     const sk = this.sk;
     const c = this.ctx;
+    const { w, h } = this.view;
     const t = this.phaseTime;
 
     c.save();
     c.globalAlpha = clamp(t / 0.5, 0, 1) * 0.82;
     c.fillStyle = '#fff';
-    c.fillRect(0, 0, WORLD_W, WORLD_H);
+    c.fillRect(0, 0, w, h);
     c.restore();
+
+    const cy = h * 0.4;
+    const big = clamp(w * 0.14, 54, 138);
 
     // Radiating impact lines behind the banner.
     c.save();
@@ -528,12 +718,12 @@ export class Game {
     const n = 30;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * TAU + this.time * 0.25;
-      const r0 = 210 + Math.sin(this.time * 4 + i) * 12;
-      const r1 = r0 + 120 + hashNoise(i, 3) * 90;
+      const r0 = big * 1.55 + Math.sin(this.time * 4 + i) * 12;
+      const r1 = r0 + big * 0.9 + hashNoise(i, 3) * 90;
       c.lineWidth = 2 + (i % 3);
       c.beginPath();
-      c.moveTo(WORLD_W / 2 + Math.cos(a) * r0, 300 + Math.sin(a) * r0 * 0.62);
-      c.lineTo(WORLD_W / 2 + Math.cos(a) * r1, 300 + Math.sin(a) * r1 * 0.62);
+      c.moveTo(w / 2 + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.62);
+      c.lineTo(w / 2 + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.62);
       c.stroke();
     }
     c.restore();
@@ -541,22 +731,25 @@ export class Game {
     const pop = easeOutBack(clamp(t / 0.55, 0, 1));
     const wob = 1 + Math.sin(this.time * 6) * 0.014;
     c.save();
-    c.translate(WORLD_W / 2, 300);
+    c.translate(w / 2, cy);
     c.scale(pop * wob, pop * wob);
     c.rotate(Math.sin(this.time * 2.2) * 0.012);
-    inkText(sk, 'YOU PWNED', 0, 0, 138, { wobble: 2.2 });
+    inkText(sk, 'YOU PWNED', 0, 0, big, { wobble: 2.2 });
     c.restore();
 
     const sub = clamp((t - 0.5) / 0.5, 0, 1);
     inkText(sk, `WALL ERASED IN ${this.stats.elapsed.toFixed(1)}S  ·  ${this.stats.shots} ATTACKS`,
-      WORLD_W / 2, 392, 19, { alpha: sub * 0.75 });
+      w / 2, cy + big * 0.78, clamp(w * 0.022, 13, 19), { alpha: sub * 0.75 });
 
-    const p = this.pointerWorld();
+    const ptr = this.toWorld(this.input.pointer.x, this.input.pointer.y);
     c.save();
     c.globalAlpha = clamp((t - 0.7) / 0.4, 0, 1);
-    inkButton(sk, this.restartBtn, 'AGAIN', hitRect(this.restartBtn, p), 28);
-    inkButton(sk, this.menuBtn, 'MAIN MENU', hitRect(this.menuBtn, p), 28);
-    inkText(sk, 'R  RESTART        ESC  MENU', WORLD_W / 2, 552, 13, { alpha: 0.45 });
+    const btnSize = clamp(w * 0.026, 18, 28);
+    inkButton(sk, this.restartBtn, 'AGAIN', !this.isTouch && hitRect(this.restartBtn, ptr), btnSize);
+    inkButton(sk, this.menuBtn, 'MAIN MENU', !this.isTouch && hitRect(this.menuBtn, ptr), btnSize);
+    if (!this.isTouch) {
+      inkText(sk, 'R  RESTART        ESC  MENU', w / 2, this.restartBtn.y + this.restartBtn.h + 30, 13, { alpha: 0.45 });
+    }
     c.restore();
   }
 
@@ -584,6 +777,5 @@ export class Game {
       c.stroke();
     }
     c.restore();
-    void easeOutCubic;
   }
 }

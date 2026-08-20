@@ -50,6 +50,15 @@ export interface HandTargets {
 
 export type MoveState = 'idle' | 'run' | 'jump' | 'fall' | 'wallslide' | 'crouch';
 
+/** One control frame, from the keyboard or from the on-screen stick. */
+export interface Controls {
+  /** Analog walk, -1 (left) to 1 (right). */
+  axis: number;
+  down: boolean;
+  jump: boolean;
+  jumpHeld: boolean;
+}
+
 /**
  * The player character. There is not a single sprite or keyframe in here: every
  * joint is solved each frame from the movement state, so the figure reacts to
@@ -114,19 +123,21 @@ export class Stickman {
 
   // ------------------------------------------------------------- physics ---
 
-  update(dt: number, terrain: Terrain, ctrl: {
-    left: boolean; right: boolean; up: boolean; down: boolean; jump: boolean; jumpHeld: boolean;
-  }, aimTarget: Vec2): void {
+  update(dt: number, terrain: Terrain, ctrl: Controls, aimTarget: Vec2): void {
     this.justLanded = false;
     this.justJumped = false;
 
-    const dir = (ctrl.right ? 1 : 0) - (ctrl.left ? 1 : 0);
+    // `axis` is analog: the keyboard sends -1/0/1, the touch stick sends
+    // everything in between, and a half-tilted thumb walks at half speed.
+    const dir = clamp(ctrl.axis, -1, 1);
+    const push = Math.abs(dir);
     this.crouching = ctrl.down && this.onGround;
 
     // --- horizontal acceleration ------------------------------------------
-    const topSpeed = (this.onGround ? RUN_SPEED : AIR_SPEED) * (this.crouching ? 0.45 : 1);
+    const topSpeed = (this.onGround ? RUN_SPEED : AIR_SPEED) * (this.crouching ? 0.45 : 1)
+      * Math.max(0.34, push);
     const accel = this.onGround ? ACCEL : AIR_ACCEL;
-    if (dir !== 0) {
+    if (push > 0.01) {
       this.vel.x += dir * accel * dt;
       this.vel.x = clamp(this.vel.x, -topSpeed, topSpeed);
     } else if (this.onGround) {
@@ -172,7 +183,7 @@ export class Stickman {
     const g = this.vel.y < 0 ? GRAVITY * 0.86 : GRAVITY;
     this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
 
-    if (this.onWall !== 0 && this.vel.y > 0 && dir === this.onWall) {
+    if (this.onWall !== 0 && this.vel.y > 0 && Math.sign(dir) === this.onWall && push > 0.3) {
       this.vel.y = Math.min(this.vel.y, WALL_SLIDE_V);
     }
 

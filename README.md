@@ -33,7 +33,7 @@ npx vercel --prod
 
 ---
 
-## Controls
+## Controls — desktop
 
 | Input | Action |
 | --- | --- |
@@ -45,6 +45,19 @@ npx vercel --prod
 | `1`–`0` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
 | `R` / `Esc` | Restart / main menu, on the win screen |
+
+## Controls — touch
+
+Nothing is shown until you touch it, so the picture stays clean.
+
+| Where | Action |
+| --- | --- |
+| Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways runs (analog — a half tilt walks), up jumps, down crouches. Drag past the edge and the stick follows your thumb. |
+| Right side | Touch to aim; hold to keep attacking, charge, or sustain a beam. |
+| Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
+
+The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
+thumb dragging up from the bottom edge cannot reach the lower half of a ring.
 
 ## The arsenal
 
@@ -91,6 +104,28 @@ Everything else is built on that primitive:
 
 A bedrock line under the floor is never carved, so the player cannot dig
 themselves out of the world.
+
+### Filling any screen (`computeWorldSize`)
+
+There is no fixed 1280x720 stage and no letterbox. The canvas is sized to the
+viewport and the playfield is generated at the viewport's *exact* aspect ratio:
+landscape fixes the height and lets the width grow, portrait fixes the width and
+lets the height grow, both clamped so the fixed-size figure never gets lost in
+the frame. Because the terrain is procedural, it can simply be built at whatever
+size the screen turns out to be.
+
+Rotating the device re-lays the level without losing the damage already done.
+The wall's thickness and the floor's depth clamp differently at different sizes,
+so damage cannot just be copied across at an offset — each axis is remapped
+piecewise around a landmark both sizes share (the wall's face on x, the floor's
+surface on y). Only pixels that were solid in the *old* silhouette count as
+holes, otherwise the wall's ragged edge would read as damage every resize. A
+full portrait/landscape flip preserves the destroyed fraction to within a
+percentage point.
+
+Notch insets are read from a zero-size probe element carrying
+`env(safe-area-inset-*)` and applied to the HUD, so nothing important hides
+under a cutout.
 
 ### Why not Phaser?
 
@@ -149,7 +184,7 @@ src/
   core/
     math.ts            vectors, damping, two-bone IK, hash noise
     sketch.ts          hand-drawn stroke renderer (the "boil")
-    input.ts           keyboard + mouse, with per-frame edges
+    input.ts           keyboard + multi-pointer, with per-frame edges
     audio.ts           procedural soundtrack and SFX
   game/
     game.ts            state machine, loop, screen effects, HUD
@@ -160,6 +195,7 @@ src/
     particles.ts       debris, sparks, smoke, flames, shockwaves
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
+    touch.ts           floating stick, attack zone, weapon pad
 ```
 
 ---

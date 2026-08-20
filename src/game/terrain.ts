@@ -1,14 +1,42 @@
-import { clamp, hashNoise, rand, TAU, type Vec2 } from '../core/math';
+import { clamp, hashNoise, TAU, type Vec2 } from '../core/math';
 
-export const WORLD_W = 1280;
-export const WORLD_H = 720;
+/** How thick the floor slab is, in world units. Fixed, because the figure is. */
+const FLOOR_THICKNESS = 124;
+/** The lowest part of the floor is never carved, so nobody digs out of the world. */
+const BEDROCK_DEPTH = 48;
 
-/** Top surface of the floor slab. */
-export const GROUND_Y = 596;
-/** The bottom of the floor can never be dug through, so the player cannot fall out. */
-const BEDROCK_Y = GROUND_Y + 76;
-/** Nominal left face of the wall; the real edge wobbles around it. */
-export const WALL_X = 902;
+export interface WorldSize { w: number; h: number; }
+
+/**
+ * Picks playfield dimensions that exactly match the viewport's aspect ratio, so
+ * the canvas fills the screen with no letterbox bars in any orientation.
+ *
+ * Landscape keeps a fixed height and lets the width grow (more running room);
+ * portrait keeps a fixed width and lets the height grow (a taller wall). Both
+ * are clamped so the fixed-size stick figure never ends up lost in the frame.
+ */
+export function computeWorldSize(vw: number, vh: number): WorldSize {
+  const aspect = Math.max(0.25, Math.min(4, (vw || 1) / (vh || 1)));
+  let w: number, h: number;
+  if (aspect >= 1) { h = 720; w = h * aspect; }
+  else { w = 640; h = w / aspect; }
+  // Each clamp re-derives the other side from the aspect, so it is preserved.
+  if (w < 820) { w = 820; h = w / aspect; }
+  if (w > 2200) { w = 2200; h = w / aspect; }
+  if (h < 620) { h = 620; w = h * aspect; }
+  if (h > 1500) { h = 1500; w = h * aspect; }
+  return { w: Math.round(w), h: Math.round(h) };
+}
+
+/**
+ * Maps a destination coordinate back to its source, in two linear pieces that
+ * meet at a landmark both sizes share (the wall face, or the floor surface).
+ */
+function remap(v: number, dstSplit: number, dstMax: number, srcSplit: number, srcMax: number): number {
+  if (v <= dstSplit) return dstSplit > 0 ? (v / dstSplit) * srcSplit : srcSplit;
+  const t = (v - dstSplit) / Math.max(1, dstMax - dstSplit);
+  return srcSplit + t * (srcMax - srcSplit);
+}
 
 export interface CarveResult {
   removed: number;
@@ -28,74 +56,72 @@ export interface CarveResult {
  * what you see is always what you collide with.
  */
 export class Terrain {
-  readonly w = WORLD_W;
-  readonly h = WORLD_H;
-  mask: Uint8Array;
+  w: number;
+  h: number;
+  mask!: Uint8Array;
   canvas: HTMLCanvasElement;
   private tctx: CanvasRenderingContext2D;
+
+  /** Top surface of the floor slab. */
+  groundTop = 0;
+  private bedrockY = 0;
+  /** Nominal left face of the wall; the real edge wobbles around it. */
+  wallX = 0;
 
   /** Only wall pixels count towards the win condition; the floor is scenery. */
   private wallTotal = 0;
   private wallLeft = 0;
   /** Marks which solid pixels belong to the wall rather than the floor. */
-  private isWall: Uint8Array;
+  private isWall!: Uint8Array;
 
-  constructor() {
-    this.mask = new Uint8Array(this.w * this.h);
-    this.isWall = new Uint8Array(this.w * this.h);
+  /** Per-row / per-column silhouette, precomputed so building is one cheap pass. */
+  private faceX!: Float32Array;
+  private surfY!: Float32Array;
+
+  constructor(w: number, h: number) {
+    this.w = w;
+    this.h = h;
     this.canvas = document.createElement('canvas');
-    this.canvas.width = this.w;
-    this.canvas.height = this.h;
-    const c = this.canvas.getContext('2d', { willReadFrequently: false });
+    const c = this.canvas.getContext('2d', { willReadFrequently: true });
     if (!c) throw new Error('2D context unavailable');
     this.tctx = c;
-    this.build();
+    this.rebuild();
   }
 
   // --------------------------------------------------------------- build ---
 
-  /**
-   * The silhouette is drawn first with wobbly edges (layered sines, the same
-   * trick as the hand-drawn strokes) and then rasterised into the mask, so the
-   * initial shape and the collision data cannot drift apart.
-   */
-  private build(): void {
-    const c = this.tctx;
-    c.clearRect(0, 0, this.w, this.h);
-    c.fillStyle = '#000';
+  private layout(): void {
+    this.groundTop = this.h - FLOOR_THICKNESS;
+    this.bedrockY = this.h - BEDROCK_DEPTH;
+    // A thinner wall on narrow screens, so portrait still leaves running room.
+    const thickness = clamp(this.w * 0.27, 190, 380);
+    this.wallX = this.w - thickness;
+  }
 
-    // --- floor slab, with a lumpy top surface -------------------------------
-    c.beginPath();
-    c.moveTo(-4, this.h + 4);
-    for (let x = -4; x <= this.w + 4; x += 8) {
-      c.lineTo(x, this.groundSurface(x));
-    }
-    c.lineTo(this.w + 4, this.h + 4);
-    c.closePath();
-    c.fill();
+  /** Builds pristine terrain at the current size, discarding any damage. */
+  private rebuild(): void {
+    this.layout();
+    this.canvas.width = this.w;
+    this.canvas.height = this.h;
+    this.mask = new Uint8Array(this.w * this.h);
+    this.isWall = new Uint8Array(this.w * this.h);
 
-    // --- the wall on the right, with a torn vertical face ------------------
-    c.beginPath();
-    c.moveTo(this.w + 4, -4);
-    c.lineTo(this.w + 4, GROUND_Y + 40);
-    for (let y = GROUND_Y + 40; y >= -4; y -= 6) {
-      c.lineTo(this.wallFace(y), y);
-    }
-    c.closePath();
-    c.fill();
+    this.faceX = new Float32Array(this.h);
+    for (let y = 0; y < this.h; y++) this.faceX[y] = this.wallFace(y);
+    this.surfY = new Float32Array(this.w);
+    for (let x = 0; x < this.w; x++) this.surfY[x] = this.groundSurface(x);
 
-    // Rasterise both regions into the mask / ownership arrays.
+    this.wallTotal = 0;
+    const wallBottom = this.groundTop + 40;
     for (let y = 0; y < this.h; y++) {
-      const face = this.wallFace(y);
-      const surf = this.groundSurface(y); // unused per-row, kept out of the hot path
-      void surf;
+      const face = this.faceX[y];
       const row = y * this.w;
+      const inWallRow = y <= wallBottom;
       for (let x = 0; x < this.w; x++) {
-        const inWall = y <= GROUND_Y + 40 && x >= face;
-        const inGround = y >= this.groundSurface(x);
-        if (inWall || inGround) {
+        const inWall = inWallRow && x >= face;
+        if (inWall || y >= this.surfY[x]) {
           this.mask[row + x] = 1;
-          if (inWall && y < GROUND_Y) {
+          if (inWall && y < this.groundTop) {
             this.isWall[row + x] = 1;
             this.wallTotal++;
           }
@@ -103,11 +129,73 @@ export class Terrain {
       }
     }
     this.wallLeft = this.wallTotal;
+    this.repaintFromMask();
+  }
+
+  /**
+   * Re-lays the world at a new size (rotation, window resize) while keeping the
+   * damage already done.
+   *
+   * Damage cannot simply be copied across: the wall's thickness and the floor's
+   * depth are clamped differently at different sizes, so a straight offset
+   * would drop most holes outside the new wall. Instead each axis is remapped
+   * piecewise about its landmark - the wall's face on x, the floor's surface on
+   * y - so the open ground maps to open ground and the wall maps to the wall,
+   * and the fraction destroyed survives even a full rotation.
+   */
+  resizeTo(nw: number, nh: number): void {
+    if (nw === this.w && nh === this.h) return;
+    const oldMask = this.mask;
+    const ow = this.w, oh = this.h;
+    const oldWallX = this.wallX, oldGround = this.groundTop;
+    // The old silhouette, kept so we can tell a hole the player made from a
+    // spot that was simply never solid. Without this the wall's ragged face
+    // reads as damage, because its wobble lands differently at the new size.
+    const oldFace = this.faceX, oldSurf = this.surfY;
+    const oldWallBottom = oldGround + 40;
+
+    this.w = nw; this.h = nh;
+    this.rebuild();
+
+    // Precompute the source column for every destination column.
+    const srcX = new Int32Array(nw);
+    for (let x = 0; x < nw; x++) {
+      srcX[x] = clamp(Math.round(remap(x, this.wallX, nw, oldWallX, ow)), 0, ow - 1);
+    }
+
+    for (let y = 0; y < nh; y++) {
+      const oy = clamp(Math.round(remap(y, this.groundTop, nh, oldGround, oh)), 0, oh - 1);
+      const orow = oy * ow, nrow = y * nw;
+      const face = oldFace[oy];
+      const inWallRow = oy <= oldWallBottom;
+      for (let x = 0; x < nw; x++) {
+        const ox = srcX[x];
+        if (oldMask[orow + ox] !== 0) continue;
+        // Only a pixel that used to be solid counts as destroyed.
+        if (!((inWallRow && ox >= face) || oy >= oldSurf[ox])) continue;
+        const i = nrow + x;
+        if (this.mask[i] === 1) {
+          this.mask[i] = 0;
+          if (this.isWall[i] === 1) { this.isWall[i] = 0; this.wallLeft--; }
+        }
+      }
+    }
+    this.repaintFromMask();
+  }
+
+  /** Paints the visible bitmap from the mask. Only used on build and resize. */
+  private repaintFromMask(): void {
+    const img = this.tctx.createImageData(this.w, this.h);
+    const px = img.data;
+    for (let i = 0, p = 0; i < this.mask.length; i++, p += 4) {
+      if (this.mask[i] === 1) px[p + 3] = 255; // opaque black; rgb stays 0
+    }
+    this.tctx.putImageData(img, 0, 0);
   }
 
   /** Height of the floor surface at a given x. */
   groundSurface(x: number): number {
-    return GROUND_Y
+    return this.groundTop
       + Math.sin(x * 0.013) * 5
       + Math.sin(x * 0.047 + 1.7) * 2.6
       + Math.sin(x * 0.11 + 0.4) * 1.4;
@@ -115,7 +203,7 @@ export class Terrain {
 
   /** x position of the wall's left face at a given y - deliberately ragged. */
   private wallFace(y: number): number {
-    return WALL_X
+    return this.wallX
       + Math.sin(y * 0.017) * 18
       + Math.sin(y * 0.052 + 2.1) * 9
       + Math.sin(y * 0.131 + 0.9) * 4.5
@@ -183,7 +271,7 @@ export class Terrain {
     // Scanline fill into the mask.
     const xs: number[] = [];
     for (let y = y0; y <= y1; y++) {
-      if (y >= BEDROCK_Y) break; // bedrock is indestructible
+      if (y >= this.bedrockY) break; // bedrock is indestructible
       const cy = y + 0.5;
       xs.length = 0;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -217,9 +305,9 @@ export class Terrain {
     // Same polygon punched out of the visible bitmap.
     const c = this.tctx;
     c.save();
-    if (maxY > BEDROCK_Y) {
+    if (maxY > this.bedrockY) {
       c.beginPath();
-      c.rect(0, 0, this.w, BEDROCK_Y);
+      c.rect(0, 0, this.w, this.bedrockY);
       c.clip();
     }
     c.globalCompositeOperation = 'destination-out';
@@ -291,16 +379,15 @@ export class Terrain {
     return 1 - this.wallLeft / this.wallTotal;
   }
 
-  get wallRemaining(): number { return this.wallLeft; }
-
   /**
    * Near the end the leftovers are a handful of scattered slivers that are no
-   * fun to hunt down, so anything under this many pixels is swept away.
+   * fun to hunt down, so anything still standing is swept away.
    */
   sweepRemains(): void {
-    for (let y = 0; y < GROUND_Y; y++) {
+    const x0 = Math.max(0, Math.floor(this.wallX) - 90);
+    for (let y = 0; y < this.groundTop; y++) {
       const row = y * this.w;
-      for (let x = WALL_X - 80; x < this.w; x++) {
+      for (let x = x0; x < this.w; x++) {
         const idx = row + x;
         if (this.isWall[idx] === 1) { this.isWall[idx] = 0; this.mask[idx] = 0; }
       }
@@ -309,16 +396,17 @@ export class Terrain {
     const c = this.tctx;
     c.save();
     c.globalCompositeOperation = 'destination-out';
-    c.fillRect(WALL_X - 80, 0, this.w - (WALL_X - 80), GROUND_Y);
+    c.fillRect(x0, 0, this.w - x0, this.groundTop);
     c.restore();
   }
 
   /** Bounding box of what is left of the wall, for the "last chunks" hint. */
   wallBounds(): { x0: number; y0: number; x1: number; y1: number } | null {
     let x0 = this.w, y0 = this.h, x1 = 0, y1 = 0, found = false;
-    for (let y = 0; y < GROUND_Y; y += 3) {
+    const startX = Math.max(0, Math.floor(this.wallX) - 90);
+    for (let y = 0; y < this.groundTop; y += 3) {
       const row = y * this.w;
-      for (let x = WALL_X - 90; x < this.w; x += 3) {
+      for (let x = startX; x < this.w; x += 3) {
         if (this.isWall[row + x] === 1) {
           found = true;
           if (x < x0) x0 = x;
@@ -329,16 +417,6 @@ export class Terrain {
       }
     }
     return found ? { x0, y0, x1, y1 } : null;
-  }
-
-  /** Picks a solid point near a position, used to aim splash damage. */
-  randomSolidNear(x: number, y: number, radius: number): Vec2 | null {
-    for (let i = 0; i < 24; i++) {
-      const a = rand(TAU), r = rand(radius);
-      const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
-      if (this.solidAt(px, py)) return { x: px, y: py };
-    }
-    return null;
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
