@@ -38,6 +38,13 @@ export function measureText(sk: Sketch, text: string, size: number, weight = 'bo
 
 export interface Rect { x: number; y: number; w: number; h: number; }
 
+/**
+ * The key that equips slot `i`. The number row runs out at ten weapons, so the
+ * two after it borrow the keys immediately to its right.
+ */
+export const slotKey = (i: number): string =>
+  i < 9 ? String(i + 1) : i === 9 ? '0' : i === 10 ? '-' : '=';
+
 export const hitRect = (r: Rect, p: Vec2): boolean =>
   p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 
@@ -221,7 +228,7 @@ export class WeaponWheel {
       c.strokeStyle = '#000';
       c.fillStyle = '#000';
 
-      inkText(sk, String((i + 1) % 10), p.x, p.y + size * 0.78, size * 0.44, { alpha: k * 0.85, wobble: 0.4 });
+      inkText(sk, slotKey(i), p.x, p.y + size * 0.78, size * 0.44, { alpha: k * 0.85, wobble: 0.4 });
       if (isEquipped) {
         c.lineWidth = 2.2;
         sk.line({ x: p.x - size * 0.7, y: p.y - size * 0.72 }, { x: p.x - size * 0.45, y: p.y - size * 0.5 }, 2.2, 1, 0.4);
