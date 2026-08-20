@@ -1,358 +1,128 @@
-import type { SfxName } from '../core/audio';
 import {
-  clamp, damp, easeInCubic, easeOutCubic, easeOutQuint, hashNoise, lerp, lerpVec, rand,
-  smoothstep, TAU, type Vec2,
+  clamp, damp, easeOutCubic, easeOutQuint, hashNoise, rand, TAU, type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
-import type { Particles } from './particles';
+import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { applyBlast, BLASTS, Projectile } from './projectiles';
-import { ARM_LEN, HEAD_R, type HandTargets, type Stance, type Stickman } from './stickman';
-import type { Terrain } from './terrain';
+import { HEAD_R, type HandTargets, type Stance } from './stickman';
+import { grip, gripAt, mirror, Weapon, type WeaponCtx } from './weapon-base';
 
-export interface WeaponCtx {
-  sm: Stickman;
-  terrain: Terrain;
-  particles: Particles;
-  projectiles: Projectile[];
-  aimPoint: Vec2;
-  dt: number;
-  time: number;
-  shake(a: number): void;
-  flash(a: number): void;
-  invert(seconds: number): void;
-  sfx(name: SfxName, pitch?: number): void;
-}
-
-/**
- * Where a hand sits: `fwd` units in front of the sternum along the aim line,
- * `side` units perpendicular to it. The arm is ARM_LEN long, so anything much
- * under ~26 folds the elbow into a zigzag - keep held poses in the 28..46 band.
- */
-function grip(ctx: WeaponCtx, fwd: number, side = 0): Vec2 {
-  return gripAt(ctx, ctx.sm.pose.aim, fwd, side);
-}
-
-/**
- * The same, but around an arbitrary direction instead of the aim. Melee weapons
- * hang their hands off the *blade* angle, so the arms lead the swing and the
- * whole body reads as throwing the weapon around rather than holding it out.
- */
-function gripAt(ctx: WeaponCtx, ang: number, fwd: number, side = 0): Vec2 {
-  const { chest } = ctx.sm.pose;
-  const c = Math.cos(ang), s = Math.sin(ang);
-  const d = clamp(fwd, -30, ARM_LEN * 0.94);
-  return { x: chest.x + c * d - s * side, y: chest.y + s * d + c * side + 2 };
-}
-
-/** Mirrors a world-space angle when the figure turns around. */
-function mirror(a: number, facing: number): number {
-  return facing > 0 ? a : Math.PI - a;
-}
-
-/** Shortest path between two angles, for swings that must not take the long way. */
-function toward(from: number, to: number, t: number): number {
-  let d = (to - from) % TAU;
-  if (d > Math.PI) d -= TAU;
-  if (d < -Math.PI) d += TAU;
-  return from + d * t;
-}
-
-/**
- * The white crescents a blade leaves hanging in the air for a beat after a cut.
- * They are the single biggest thing separating "a line moved" from "something
- * just got cut in half", so every edged weapon in here feeds this.
- */
-interface Slash {
-  x: number; y: number;
-  r: number; from: number; to: number;
-  width: number; grow: number;
-  life: number; max: number;
-}
-
-class SlashFx {
-  private list: Slash[] = [];
-
-  add(x: number, y: number, r: number, from: number, to: number, width: number, life = 0.26, grow = 34): void {
-    this.list.push({ x, y, r, from, to, width, grow, life, max: life });
-    if (this.list.length > 8) this.list.shift();
-  }
-
-  clear(): void { this.list.length = 0; }
-
-  update(dt: number): void {
-    for (let i = this.list.length - 1; i >= 0; i--) {
-      this.list[i].life -= dt;
-      if (this.list[i].life <= 0) this.list.splice(i, 1);
-    }
-  }
-
-  draw(sk: Sketch): void {
-    const c = sk.ctx;
-    for (const s of this.list) {
-      const k = s.life / s.max;                 // 1 -> 0
-      const spread = easeOutCubic(1 - k);       // the cut keeps opening as it fades
-      const r = s.r + s.grow * spread;
-      const w = s.width * (0.35 + k * 0.9);
-      const steps = 18;
-      const outer: Vec2[] = [], inner: Vec2[] = [];
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const a = s.from + (s.to - s.from) * t;
-        // Thickest in the middle of the sweep, tapering to nothing at the tips.
-        const taper = Math.sin(t * Math.PI) ** 0.7;
-        const half = w * 0.5 * taper + 0.4;
-        outer.push({ x: s.x + Math.cos(a) * (r + half), y: s.y + Math.sin(a) * (r + half) });
-        inner.push({ x: s.x + Math.cos(a) * (r - half), y: s.y + Math.sin(a) * (r - half) });
-      }
-      c.save();
-      c.globalAlpha = clamp(k * 1.5, 0, 1);
-      c.beginPath();
-      c.moveTo(outer[0].x, outer[0].y);
-      for (const p of outer) c.lineTo(p.x, p.y);
-      for (let i = inner.length - 1; i >= 0; i--) c.lineTo(inner[i].x, inner[i].y);
-      c.closePath();
-      c.fillStyle = '#fff';
-      c.fill();
-      c.strokeStyle = '#000';
-      c.lineWidth = 3.4 * k + 1;
-      c.stroke();
-      c.restore();
-    }
-  }
-}
-
-/** Debris, sparks and speed lines wherever something bites into the wall. */
-function impact(ctx: WeaponCtx, x: number, y: number, dir: number, power: number): void {
-  ctx.particles.debris(x, y, Math.round(4 + power * 16), 90 + power * 320, dir + Math.PI, 2.4);
-  ctx.particles.sparks(x, y, Math.round(3 + power * 9), 140 + power * 320, dir + Math.PI, 2.0);
-  ctx.particles.streaks(x, y, Math.round(2 + power * 6), dir + Math.PI, 1.9, 16 + power * 40);
-}
-
-export abstract class Weapon {
-  abstract readonly id: number;
-  abstract readonly name: string;
-  abstract readonly tagline: string;
-
-  /** Held-trigger weapons keep firing; the rest need a fresh click. */
-  auto = false;
-  cooldown = 0.3;
-  /** Seconds of hold before a charged weapon will release. 0 = fires instantly. */
-  chargeTime = 0;
-
-  protected timer = 0;
-  charge = 0;
-  /** Attack animation clock, counting down. */
-  protected anim = 0;
-  protected animLen = 0.2;
-  /**
-   * Length of the animation actually running. Combo weapons retune `animLen`
-   * between hits, so the clock in flight has to remember its own duration.
-   */
-  private animRun = 0.2;
-  protected swap = 1;
-  private chargeSfx = false;
-
-  /** Fraction 0..1 through the current attack animation, 0 when idle. */
-  protected get t(): number {
-    return this.anim > 0 ? 1 - this.anim / this.animRun : 0;
-  }
-
-  /** Starts the attack clock. Combos call it with their own step's length. */
-  protected startAnim(len = this.animLen): void {
-    this.animRun = Math.max(0.01, len);
-    this.anim = this.animRun;
-  }
-  get busy(): boolean { return this.anim > 0; }
-  get ready(): boolean { return this.timer <= 0; }
-  /** Drives the cooldown ring in the HUD. */
-  get cooldownFrac(): number { return this.cooldown > 0 ? clamp(this.timer / this.cooldown, 0, 1) : 0; }
-
-  onEquip(): void { this.charge = 0; this.anim = 0; this.timer = Math.min(this.timer, 0.12); }
-  onUnequip(_ctx: WeaponCtx): void { this.charge = 0; this.chargeSfx = false; }
-
-  update(ctx: WeaponCtx, held: boolean, pressed: boolean): void {
-    this.timer -= ctx.dt;
-    if (this.anim > 0) this.anim = Math.max(0, this.anim - ctx.dt);
-    this.tick(ctx, held);
-
-    if (this.chargeTime > 0) {
-      if (held && this.timer <= 0) {
-        if (this.charge === 0 && !this.chargeSfx) { ctx.sfx('charge'); this.chargeSfx = true; }
-        this.charge = Math.min(1, this.charge + ctx.dt / this.chargeTime);
-      } else if (this.charge > 0) {
-        this.release(ctx, this.charge);
-        this.timer = this.cooldown;
-        this.charge = 0;
-        this.chargeSfx = false;
-      }
-      return;
-    }
-
-    const wants = this.auto ? held : pressed;
-    if (wants && this.timer <= 0) {
-      this.timer = this.cooldown;
-      this.startAnim();
-      this.swap = -this.swap;
-      this.release(ctx, 1);
-    }
-  }
-
-  /** Per-frame hook for weapons with continuous effects (fire, beam). */
-  protected tick(_ctx: WeaponCtx, _held: boolean): void {}
-
-  /** Fires. `power` is the charge fraction for charged weapons, else 1. */
-  protected abstract release(ctx: WeaponCtx, power: number): void;
-
-  /** Where the hands should go this frame. */
-  abstract hands(ctx: WeaponCtx): HandTargets | null;
-
-  /**
-   * A full-body stance to blend into the figure this frame, for weapons whose
-   * pose matters more than their hands. Null means "just move normally".
-   */
-  stance(_ctx: WeaponCtx): Stance | null { return null; }
-
-  /** Anything that belongs *under* the figure - auras, ground effects. */
-  drawBehind(_sk: Sketch, _ctx: WeaponCtx): void {}
-
-  /** Draws the weapon itself, in world space, after the figure. */
-  abstract draw(sk: Sketch, ctx: WeaponCtx): void;
-
-  /** Small emblem for the selection wheel; draw inside a box of `s` units. */
-  abstract icon(sk: Sketch, x: number, y: number, s: number): void;
-
-  /** Shared: a hitscan shot that bores a hole and a short tunnel. */
-  protected hitscan(ctx: WeaponCtx, from: Vec2, angle: number, range: number, holeR: number, depth: number): boolean {
-    const hit = ctx.terrain.raycast(from.x, from.y, Math.cos(angle), Math.sin(angle), range, 3);
-    if (!hit) return false;
-    ctx.terrain.carveBlob(hit.x, hit.y, holeR, 0.34, 14);
-    // The tunnel behind the entry wound is what makes repeated shots eat through.
-    ctx.terrain.carveCapsule(
-      hit.x, hit.y,
-      hit.x + Math.cos(angle) * depth, hit.y + Math.sin(angle) * depth,
-      holeR * 0.72, 0.3,
-    );
-    impact(ctx, hit.x, hit.y, angle, holeR / 26);
-    return true;
-  }
-
-  /** Shared: muzzle flash drawn as a star of ink at the barrel tip. */
-  protected muzzle(sk: Sketch, x: number, y: number, size: number, seed: number): void {
-    const c = sk.ctx;
-    c.lineWidth = 2.6;
-    sk.burst(x, y, 7, size * 0.25, size, 2.6, TAU, 0, seed);
-    sk.poly([
-      { x: x + size * 0.9, y }, { x: x + size * 0.15, y: y - size * 0.5 },
-      { x: x - size * 0.2, y }, { x: x + size * 0.15, y: y + size * 0.5 },
-    ], 2.2, true, 0.8);
-  }
-}
+export { Weapon };
+export type { WeaponCtx };
 
 // ---------------------------------------------------------------------------
 // 1. FISTS
 // ---------------------------------------------------------------------------
-export class Fists extends Weapon {
+/**
+ * Four punches on the ground, a shoulder charge out of a run, a dive out of a
+ * jump and a pair of haymakers if you lean on the button. No weapon to draw, so
+ * everything has to be in the arms.
+ */
+const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  ground: [
+    { kind: 'thrust', from: 0, to: 0, wind: 0.26, strike: 0.24, anim: 0.17, cooldown: 0.16, reach: 0.9, thick: 15, shake: 4, name: 'JAB' },
+    { kind: 'thrust', from: 0, to: 0, wind: 0.24, strike: 0.24, anim: 0.18, cooldown: 0.17, reach: 0.95, thick: 17, shake: 5, name: 'CROSS' },
+    {
+      from: -0.95, to: 0.8, wind: 0.32, strike: 0.22, anim: 0.28, cooldown: 0.28, reach: 1, thick: 26,
+      dash: 90, hitSfx: 'punch', shake: 9, name: 'HOOK',
+    },
+    {
+      from: 1.25, to: -1.35, wind: 0.34, strike: 0.2, anim: 0.34, cooldown: 0.4, reach: 0.95, thick: 30,
+      lift: 130, heavy: true, hitSfx: 'punch', hitPitch: 0.78, flash: 0.14, shake: 13, name: 'UPPERCUT',
+    },
+  ],
+  run: [
+    {
+      kind: 'thrust', from: 0, to: 0, wind: 0.24, strike: 0.24, anim: 0.3, cooldown: 0.34, reach: 1.15, thick: 26,
+      dash: 300, slide: 0.2, stance: 'lunge', stanceHip: -10, stanceLean: 0.14, heavy: true,
+      hitSfx: 'punch', hitPitch: 0.8, shake: 14, name: 'SHOULDER CHARGE',
+    },
+    {
+      from: 2.2, to: -0.9, wind: 0.28, strike: 0.2, anim: 0.4, cooldown: 0.42, reach: 1.05, thick: 28,
+      spin: 1, hop: 150, dash: 120, hitSfx: 'punch', hitPitch: 0.7, flash: 0.16, shake: 15, name: 'SPIN KICK',
+    },
+  ],
+  air: [
+    {
+      kind: 'thrust', from: 0, to: 0, wind: 0.22, strike: 0.24, anim: 0.26, cooldown: 0.28, reach: 1.05, thick: 22,
+      dash: 110, lift: -240, hitSfx: 'punch', hitPitch: 0.85, shake: 10, name: 'DIVE PUNCH',
+    },
+    {
+      from: -2.3, to: 1.2, wind: 0.26, strike: 0.2, anim: 0.36, cooldown: 0.38, reach: 1, thick: 26,
+      spin: 1, hitSfx: 'punch', hitPitch: 0.72, shake: 12, name: 'AXE KICK',
+    },
+  ],
+  hold: [
+    {
+      from: -1.5, to: 1.05, wind: 0.48, strike: 0.16, anim: 0.5, cooldown: 0.5, reach: 1.05, thick: 40,
+      dash: 130, heavy: true, hitSfx: 'punch', hitPitch: 0.62, flash: 0.24, invert: 0.04, shake: 20,
+      quake: 0.7, name: 'HAYMAKER',
+    },
+    {
+      from: 2.5, to: -1.2, wind: 0.42, strike: 0.18, anim: 0.54, cooldown: 0.56, reach: 1.05, thick: 42,
+      spin: 1, hop: 170, heavy: true, hitSfx: 'punch', hitPitch: 0.58, flash: 0.28, invert: 0.05,
+      shake: 22, name: 'BACKFIST',
+    },
+  ],
+};
+
+export class Fists extends MeleeWeapon {
   readonly id = 1;
   readonly name = 'BARE HANDS';
-  readonly tagline = 'no gear, pure attitude';
-  override cooldown = 0.19;
-  override auto = true;
-  private struck = false;
-  /** 0, 1 = jabs; 2 = the hook that ends the combo. */
-  private step = 0;
-  private idle = 0;
+  readonly tagline = 'four punches, then something worse';
+  protected readonly len = 74;
+  protected readonly sets = FIST_SETS;
 
-  constructor() { super(); this.animLen = 0.19; }
+  constructor() { super(); this.animLen = 0.18; this.cooldown = 0.16; }
 
-  override onEquip(): void { super.onEquip(); this.step = 0; }
+  protected restAngle(ctx: WeaponCtx): number { return ctx.sm.pose.aim; }
 
-  private get hook(): boolean { return this.step === 2; }
-
-  protected release(ctx: WeaponCtx): void {
-    this.struck = false;
-    this.idle = 0;
-    if (this.hook) {
-      // The finisher steps into the target and swings the whole body with it.
-      ctx.sfx('heavyswing', rand(1.05, 1.2));
-      ctx.sm.dash(Math.cos(ctx.sm.pose.aim) * 130);
-      ctx.sm.addGhostBurst(0.2);
-    } else {
-      ctx.sfx('swing', rand(0.95, 1.2));
-    }
-    // Queue the next step now: the base class reads these when it starts the
-    // next attack, so each hit in the chain gets its own timing.
-    this.step = (this.step + 1) % 3;
-    this.cooldown = this.hook ? 0.34 : 0.17;   // the hook needs a real recovery
-    this.animLen = this.hook ? 0.3 : 0.17;
+  protected restHands(ctx: WeaponCtx): HandTargets {
+    return { main: grip(ctx, 33, -4), off: grip(ctx, 30, 14) };
   }
 
-  protected override tick(ctx: WeaponCtx): void {
-    // A pause drops the combo back to a jab.
-    if (this.anim <= 0) {
-      this.idle += ctx.dt;
-      if (this.idle > 0.55 && this.step !== 0) {
-        this.step = 0;
-        this.cooldown = 0.17;
-        this.animLen = 0.17;
-      }
-    }
-    if (this.anim > 0 && !this.struck && this.t > 0.42) {
-      this.struck = true;
-      // `step` has already advanced, so the hit that is landing is the one before.
-      const wasHook = this.step === 0;
-      const a = ctx.sm.pose.aim;
-      const from = grip(ctx, 6);
-      const reach = wasHook ? 88 : 74;
-      const hit = ctx.terrain.raycast(from.x, from.y, Math.cos(a), Math.sin(a), reach, 3);
-      if (hit) {
-        const r = wasHook ? 40 : 25;
-        ctx.terrain.carveBlob(hit.x, hit.y, r, 0.35, 18);
-        ctx.terrain.carveCapsule(hit.x, hit.y, hit.x + Math.cos(a) * (wasHook ? 34 : 16), hit.y + Math.sin(a) * (wasHook ? 34 : 16), r * 0.62, 0.3);
-        impact(ctx, hit.x, hit.y, a, wasHook ? 1 : 0.55);
-        ctx.sfx('punch', wasHook ? 0.72 : rand(0.95, 1.15));
-        ctx.shake(wasHook ? 13 : 5);
-        if (wasHook) {
-          ctx.flash(0.14);
-          ctx.particles.shockwave(hit.x, hit.y, 60);
-        }
-        ctx.sm.applyRecoil(wasHook ? 0.7 : 0.35, a, wasHook ? 90 : 40);
-      }
-    }
-  }
-
-  hands(ctx: WeaponCtx): HandTargets | null {
+  /**
+   * Bare hands do not ride a hilt, so the generic blade grip is thrown away and
+   * the arms are driven directly: jabs piston, hooks swing in from outside.
+   */
+  override hands(ctx: WeaponCtx): HandTargets | null {
     const t = this.t;
     const f = ctx.sm.facing;
     // Between punches the arms are released back to the gait, so running with
     // bare hands swings them instead of carrying a frozen guard around.
     if (this.anim <= 0 && Math.abs(ctx.sm.vel.x) > 45) return null;
-    // The hook swings in from outside instead of pistoning straight out.
-    if (this.anim > 0 && this.step === 0) {
-      const swing = t < 0.34 ? -0.9 * (t / 0.34) : lerp(-0.9, 0.75, easeOutCubic((t - 0.34) / 0.5));
-      const ext = 30 + Math.sin(clamp((t - 0.2) / 0.5, 0, 1) * Math.PI) * 18;
+    if (this.anim <= 0) return this.restHands(ctx);
+
+    const mv = this.move;
+    if (mv.kind === 'thrust') {
+      // An ease-out thrust followed by a slower recovery.
+      const push = t < 0.45 ? Math.pow(t / 0.45, 0.55) : 1 - (t - 0.45) / 0.55;
+      const lead = this.swap > 0;
+      const ext = 33 + push * 14;
+      const back = 30 - push * 4;
       return {
-        main: gripAt(ctx, ctx.sm.pose.aim + swing * f, ext, -6 * f),
-        off: grip(ctx, 26, 16),
+        main: grip(ctx, lead ? ext : back, lead ? -4 : 12),
+        off: grip(ctx, lead ? back : ext, lead ? 14 : -4),
       };
     }
-    // A jab is an ease-out thrust followed by a slower recovery.
-    const push = this.anim > 0 ? (t < 0.45 ? Math.pow(t / 0.45, 0.55) : 1 - (t - 0.45) / 0.55) : 0;
-    const lead = this.swap > 0;
-    const ext = 33 + push * 13;
-    const back = 30 - push * 4;
-    const main = grip(ctx, lead ? ext : back, lead ? -4 : 12);
-    const off = grip(ctx, lead ? back : ext, lead ? 14 : -4);
-    return { main, off };
+    // A swinging punch: the fist comes in from outside the shoulder line.
+    const ba = this.bladeAngle(ctx);
+    const ext = 30 + Math.sin(clamp((t - 0.15) / 0.6, 0, 1) * Math.PI) * 18;
+    return {
+      main: gripAt(ctx, ba, ext, -6 * f),
+      off: grip(ctx, 26, 16),
+    };
   }
 
-  draw(sk: Sketch, ctx: WeaponCtx): void {
-    if (this.anim > 0 && this.t < 0.6) {
-      const hook = this.step === 0;
-      const h = hook || this.swap > 0 ? ctx.sm.pose.handR : ctx.sm.pose.handL;
-      const a = ctx.sm.pose.aim;
-      sk.ctx.lineWidth = hook ? 3 : 2.2;
-      sk.burst(h.x, h.y, hook ? 7 : 4, 8, hook ? 40 : 22, hook ? 3 : 2.2, hook ? 2.4 : 1.5, a + Math.PI, 77);
-    }
+  /** No weapon: what you see is the shock coming off the knuckles. */
+  protected drawWeapon(sk: Sketch, ctx: WeaponCtx): void {
+    if (this.anim <= 0 || this.t > 0.62) return;
+    const mv = this.move;
+    const big = !!mv.heavy || (mv.thick ?? 0) > 24;
+    const h = this.swap > 0 || mv.kind !== 'thrust' ? ctx.sm.pose.handR : ctx.sm.pose.handL;
+    const a = ctx.sm.pose.aim;
+    sk.ctx.lineWidth = big ? 3 : 2.2;
+    sk.burst(h.x, h.y, big ? 7 : 4, 8, big ? 40 : 22, big ? 3 : 2.2, big ? 2.4 : 1.5, a + Math.PI, 77);
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
@@ -369,233 +139,99 @@ export class Fists extends Weapon {
 // ---------------------------------------------------------------------------
 // 2. KATANA
 // ---------------------------------------------------------------------------
-
-/** One cut of a sword combo, in blade angles relative to the aim. */
-interface Cut {
-  /** Where the wind-up parks the blade, and where the cut finishes. */
-  from: number; to: number;
-  /** Fractions of the animation spent coiling and then actually cutting. */
-  wind: number; strike: number;
-  anim: number; cooldown: number;
-  /** Carve radius as a fraction of the blade, and how deep the crescent bites. */
-  reach: number; thick: number;
-  heavy: boolean;
-}
-
 /**
- * Three cuts that chain into each other: down through the shoulder, back up the
- * same line, then a full body-turn that takes everything in front of him. Hold
- * the button and the figure keeps cycling the kata.
+ * Standing still it is a three cut kata with a whirlwind on the end. Out of a
+ * run it is the one everybody wants: he drops under his own momentum, slides
+ * past on one knee opening a cut as he goes, and springs straight back out of
+ * it to where he started.
  */
-const KATANA_CUTS: readonly Cut[] = [
-  { from: -1.75, to: 0.95, wind: 0.34, strike: 0.2, anim: 0.32, cooldown: 0.3, reach: 0.76, thick: 26, heavy: false },
-  { from: 1.35, to: -1.45, wind: 0.28, strike: 0.18, anim: 0.28, cooldown: 0.27, reach: 0.76, thick: 26, heavy: false },
-  { from: 2.35, to: -1.15, wind: 0.44, strike: 0.2, anim: 0.5, cooldown: 0.66, reach: 0.92, thick: 44, heavy: true },
-];
+const KATANA_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  ground: [
+    { from: -1.75, to: 0.95, wind: 0.34, strike: 0.2, anim: 0.32, cooldown: 0.3, reach: 0.8, thick: 32, name: 'KESA' },
+    { from: 1.35, to: -1.45, wind: 0.28, strike: 0.18, anim: 0.28, cooldown: 0.27, reach: 0.8, thick: 32, name: 'GYAKU' },
+    {
+      from: 2.35, to: -1.15, wind: 0.44, strike: 0.2, anim: 0.5, cooldown: 0.5, reach: 0.92, thick: 50,
+      heavy: true, dash: 175, lift: 40, flash: 0.3, invert: 0.045, shake: 17, hitPitch: 0.7,
+      stance: 'brace', stanceLean: -0.12, stanceHip: -7, name: 'DO-GIRI',
+    },
+    {
+      from: -2.6, to: 1.4, wind: 0.3, strike: 0.18, anim: 0.52, cooldown: 0.6, reach: 0.95, thick: 52,
+      heavy: true, spin: 1, hop: 190, dash: 90, flash: 0.34, invert: 0.05, shake: 19, hitPitch: 0.66,
+      name: 'TSUMUJI',
+    },
+  ],
+  run: [
+    {
+      // The one out of the source material: down onto one knee, a single flat
+      // cut opening as he slides past, then straight back up and back off.
+      from: 1.15, to: -0.6, wind: 0.3, strike: 0.14, anim: 0.46, cooldown: 0.4, reach: 0.98, thick: 42,
+      dash: 470, slide: 0.3, recover: 330, ghost: 0.42,
+      stance: 'crouch', stanceHip: -26, stanceLean: 0.18, stanceOut: 0.2,
+      flash: 0.18, shake: 12, hitPitch: 0.9, name: 'IAI SLASH',
+    },
+    {
+      from: -1.95, to: 0.7, wind: 0.24, strike: 0.16, anim: 0.34, cooldown: 0.32, reach: 0.9, thick: 36,
+      dash: 210, slide: 0.14, ghost: 0.3, shake: 9, name: 'RETURN CUT',
+    },
+  ],
+  air: [
+    {
+      from: -2.05, to: 1.3, wind: 0.26, strike: 0.18, anim: 0.34, cooldown: 0.3, reach: 0.9, thick: 38,
+      dash: 60, shake: 10, name: 'TSUBAME',
+    },
+    {
+      from: 2.4, to: -1.2, wind: 0.24, strike: 0.18, anim: 0.44, cooldown: 0.42, reach: 0.96, thick: 46,
+      spin: 1, heavy: true, flash: 0.2, shake: 14, hitPitch: 0.78, name: 'FALLING WHEEL',
+    },
+  ],
+  hold: [
+    {
+      from: -2.35, to: 1.1, wind: 0.46, strike: 0.16, anim: 0.55, cooldown: 0.5, reach: 0.96, thick: 52,
+      heavy: true, dash: 70, flash: 0.26, invert: 0.04, shake: 20, quake: 0.6, hitPitch: 0.68,
+      stance: 'lunge', stanceLean: -0.14, stanceHip: -12, name: 'OVERHEAD',
+    },
+    {
+      from: 2.6, to: -1.6, wind: 0.4, strike: 0.18, anim: 0.62, cooldown: 0.6, reach: 1, thick: 58,
+      heavy: true, spin: 1, hop: 205, flash: 0.32, invert: 0.055, shake: 22, hitPitch: 0.6,
+      name: 'WIDE TSUMUJI',
+    },
+  ],
+};
 
-export class Katana extends Weapon {
+export class Katana extends MeleeWeapon {
   readonly id = 2;
   readonly name = 'KATANA';
   readonly tagline = 'three cuts, one breath';
-  override cooldown = 0.3;
-  override auto = true;
-  private struck = false;
-  private readonly len = 92;
-  private step = 0;
-  private active: Cut = KATANA_CUTS[0];
-  private idle = 0;
-  private fx = new SlashFx();
-  private tipTrail: Vec2[] = [];
+  protected readonly len = 92;
+  protected readonly sets = KATANA_SETS;
 
-  constructor() { super(); this.animLen = KATANA_CUTS[0].anim; }
-
-  override onEquip(): void {
-    super.onEquip();
-    this.step = 0;
-    this.animLen = KATANA_CUTS[0].anim;
-    this.cooldown = KATANA_CUTS[0].cooldown;
-  }
-
-  override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.fx.clear(); this.tipTrail.length = 0; }
-
-  protected release(ctx: WeaponCtx): void {
-    this.active = KATANA_CUTS[this.step];
-    this.struck = false;
-    this.idle = 0;
-    this.tipTrail.length = 0;
-    const f = ctx.sm.facing;
-
-    if (this.active.heavy) {
-      // The finisher commits: he steps through the cut, and the afterimages
-      // carry the body around with the blade.
-      ctx.sfx('heavyswing', 0.95);
-      ctx.sm.dash(Math.cos(ctx.sm.pose.aim) * 175, ctx.sm.onGround ? -40 : 0);
-      ctx.sm.addGhostBurst(this.active.anim * 0.8);
-    } else {
-      ctx.sfx('swing', rand(0.9, 1.1));
-      ctx.sm.dash(f * 42);
-      ctx.sm.addGhostBurst(0.12);
-    }
-
-    // Queue the next cut so the base class starts it with the right timing.
-    this.step = (this.step + 1) % KATANA_CUTS.length;
-    this.animLen = KATANA_CUTS[this.step].anim;
-    this.cooldown = KATANA_CUTS[this.step].cooldown;
-  }
+  constructor() { super(); this.animLen = 0.32; this.cooldown = 0.3; }
 
   /** The resting guard: blade up beside the head, edge towards the target. */
-  private kamae(ctx: WeaponCtx): number {
+  protected restAngle(ctx: WeaponCtx): number {
     const f = ctx.sm.facing;
     return ctx.sm.pose.aim + (-1.48 + Math.sin(ctx.time * 1.5) * 0.06) * f;
   }
 
-  private bladeAngle(ctx: WeaponCtx): number {
-    const a = ctx.sm.pose.aim;
-    const f = ctx.sm.facing;
-    const rest = this.kamae(ctx);
-    if (this.anim <= 0) return rest;
-
-    const cut = this.active;
-    const t = this.t;
-    const from = a + cut.from * f;
-    const to = a + cut.to * f;
-
-    if (t < cut.wind) {
-      // Coil: slow at first, then snapping into the top of the swing.
-      return toward(rest, from, easeInCubic(t / cut.wind) * 0.4 + easeOutCubic(t / cut.wind) * 0.6);
-    }
-    if (t < cut.wind + cut.strike) {
-      // The cut itself: almost all of the travel happens in the first third.
-      return from + (to - from) * easeOutQuint((t - cut.wind) / cut.strike);
-    }
-    // Follow-through, then the blade drifts back up into the guard.
-    const k = clamp((t - cut.wind - cut.strike) / Math.max(0.01, 1 - cut.wind - cut.strike), 0, 1);
-    return toward(to, rest, k * k * 0.7);
-  }
-
-  protected override tick(ctx: WeaponCtx): void {
-    this.fx.update(ctx.dt);
-
-    if (this.anim <= 0) {
-      this.idle += ctx.dt;
-      // Losing the rhythm drops him back to the opening cut.
-      if (this.idle > 0.7 && this.step !== 0) {
-        this.step = 0;
-        this.animLen = KATANA_CUTS[0].anim;
-        this.cooldown = KATANA_CUTS[0].cooldown;
-      }
-      return;
-    }
-
-    // Sample the tip every frame of the swing: that ribbon is the whole look.
-    const h = ctx.sm.pose.handR;
-    const ba = this.bladeAngle(ctx);
-    this.tipTrail.push({ x: h.x + Math.cos(ba) * this.len, y: h.y + Math.sin(ba) * this.len });
-    if (this.tipTrail.length > 16) this.tipTrail.shift();
-
-    const cut = this.active;
-    if (!this.struck && this.t > cut.wind + cut.strike * 0.4) {
-      this.struck = true;
-      const a = ctx.sm.pose.aim;
-      const f = ctx.sm.facing;
-      const from = a + cut.from * f;
-      const to = a + cut.to * f;
-      const r = this.len * cut.reach;
-      const res = ctx.terrain.carveArc(h.x, h.y, r, from, to, cut.thick);
-
-      // The visible crescent goes up whether or not it found anything: a cut
-      // through empty air still has to look like a cut.
-      this.fx.add(h.x, h.y, r, from, to, cut.thick * (cut.heavy ? 1.15 : 1.1),
-        cut.heavy ? 0.32 : 0.22, cut.heavy ? 30 : 20);
-
-      if (cut.heavy) {
-        ctx.sfx('slash', 0.7);
-        ctx.shake(17);
-        ctx.flash(0.3);
-        ctx.invert(0.045);
-        ctx.particles.shockwave(h.x + Math.cos(a) * r, h.y + Math.sin(a) * r, r * 0.6);
-      } else if (res.removed > 0) {
-        ctx.sfx('slash', rand(0.95, 1.2));
-        ctx.shake(7);
-      } else {
-        ctx.sfx('slash', rand(1.2, 1.4));
-      }
-
-      if (res.removed > 0) {
-        const tip = { x: h.x + Math.cos(a) * r, y: h.y + Math.sin(a) * r };
-        impact(ctx, tip.x, tip.y, a, cut.heavy ? 1.3 : 0.8);
-        ctx.sm.applyRecoil(cut.heavy ? 0.55 : 0.3, a, cut.heavy ? 60 : 25);
-      }
-    }
-  }
-
-  /** The finisher drops into a low, wide stance and drives up out of it. */
-  override stance(ctx: WeaponCtx): Stance | null {
-    if (this.anim <= 0 || !this.active.heavy) return null;
-    const t = this.t;
-    const cut = this.active;
-    const k = t < cut.wind ? easeOutCubic(t / cut.wind) : Math.max(0, 1 - (t - cut.wind) / 0.34);
-    if (k < 0.02) return null;
-    return { kind: 'brace', weight: k * (ctx.sm.onGround ? 0.7 : 0.25), lean: -0.12, hip: -7 };
-  }
-
-  hands(ctx: WeaponCtx): HandTargets {
-    const ba = this.bladeAngle(ctx);
+  protected restHands(ctx: WeaponCtx): HandTargets {
     const f = ctx.sm.facing;
     // At rest the hands sit in front of the chest and the blade stands up out
-    // of them - the guard. Mid-swing they ride the hilt instead, so the arms
-    // lead the sword around rather than the sword floating off a static grip.
-    const guardMain = grip(ctx, 33, 11 * f);
-    const guardOff = grip(ctx, 27, 21 * f);
-    if (this.anim <= 0) return { main: guardMain, off: guardOff };
-    const k = smoothstep(Math.min(this.t, 1 - this.t) / 0.18);
-    return {
-      main: lerpVec(guardMain, gripAt(ctx, ba - 0.3 * f, 36, 3 * f), k),
-      off: lerpVec(guardOff, gripAt(ctx, ba - 0.5 * f, 30, 13 * f), k),
-    };
+    // of them - the guard.
+    return { main: grip(ctx, 33, 11 * f), off: grip(ctx, 27, 21 * f) };
   }
 
-  /** The cuts hang behind the figure, so a big slash never hides him. */
-  override drawBehind(sk: Sketch): void { this.fx.draw(sk); }
+  /** A crouching slash throws grit off the floor for as long as it slides. */
+  protected override onRelease(ctx: WeaponCtx, mv: MeleeMove): void {
+    if (mv.stance !== 'crouch') return;
+    const f = ctx.sm.facing;
+    ctx.particles.dust(ctx.sm.pos.x - f * 10, ctx.sm.pos.y - 3, 6, f > 0 ? Math.PI : 0, 1.2);
+    ctx.particles.streaks(ctx.sm.pos.x, ctx.sm.pos.y - 24, 6, f > 0 ? Math.PI : 0, 0.6, 70);
+  }
 
-  draw(sk: Sketch, ctx: WeaponCtx): void {
+  protected drawWeapon(sk: Sketch, ctx: WeaponCtx, ba: number): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
-    const ba = this.bladeAngle(ctx);
     const ca = Math.cos(ba), sa = Math.sin(ba);
-
-    // Motion trail: a fan of afterimages plus the ribbon the tip carved.
-    if (this.anim > 0) {
-      const f = ctx.sm.facing;
-      const cut = this.active;
-      const swinging = this.t > cut.wind && this.t < cut.wind + cut.strike * 2.2;
-      if (swinging) {
-        c.save();
-        c.globalAlpha = 0.32;
-        c.lineWidth = 2;
-        const back = Math.sign(cut.to - cut.from) * f;
-        for (let i = 1; i <= 5; i++) {
-          const a2 = ba - back * i * 0.17 * f;
-          c.beginPath();
-          c.moveTo(h.x + Math.cos(a2) * 16, h.y + Math.sin(a2) * 16);
-          c.lineTo(h.x + Math.cos(a2) * this.len, h.y + Math.sin(a2) * this.len);
-          c.stroke();
-        }
-        c.restore();
-      }
-      if (this.tipTrail.length > 2) {
-        c.save();
-        c.globalAlpha = 0.5;
-        c.lineWidth = 2.4;
-        c.beginPath();
-        for (let i = 0; i < this.tipTrail.length; i++) {
-          const p = this.tipTrail[i];
-          if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
-        }
-        c.stroke();
-        c.restore();
-      }
-    }
 
     // Guard, wrapped grip and blade.
     c.lineWidth = 3;
@@ -617,8 +253,7 @@ export class Katana extends Weapon {
     sk.line({ x: tip.x - ca * 16 - sa * 4, y: tip.y - sa * 16 + ca * 4 }, tip, 2.2, 1, 0.4);
 
     // A glint running along the edge, brightest in the middle of a cut.
-    const t = this.t;
-    if (this.anim > 0 && t > this.active.wind * 0.6) {
+    if (this.striking > 0.02) {
       c.lineWidth = 2;
       sk.burst(tip.x, tip.y, 3, 4, 20, 2, 1.4, ba, 771);
     }
@@ -633,155 +268,109 @@ export class Katana extends Weapon {
 // ---------------------------------------------------------------------------
 // 3. TWIN SHORTSWORDS
 // ---------------------------------------------------------------------------
-export class Shortswords extends Weapon {
+const SHORTSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  ground: [
+    { from: 0.85, to: -0.5, wind: 0.24, strike: 0.18, anim: 0.14, cooldown: 0.13, reach: 1.35, thick: 18, hitSfx: 'stab', hitPitch: 1.2, shake: 3, name: 'SLICE' },
+    { from: -0.85, to: 0.5, wind: 0.24, strike: 0.18, anim: 0.14, cooldown: 0.13, reach: 1.35, thick: 18, hitSfx: 'stab', hitPitch: 1.25, shake: 3, name: 'SLICE' },
+    { from: 0.7, to: -0.75, wind: 0.22, strike: 0.18, anim: 0.15, cooldown: 0.13, reach: 1.4, thick: 19, hitSfx: 'stab', hitPitch: 1.15, shake: 3.4, name: 'SLICE' },
+    {
+      from: -1.15, to: 1.05, wind: 0.36, strike: 0.2, anim: 0.34, cooldown: 0.42, reach: 1.6, thick: 30,
+      cross: true, dash: 150, heavy: true, flash: 0.24, shake: 13, hitPitch: 0.85, name: 'CROSS CUT',
+    },
+  ],
+  run: [
+    {
+      from: -1.0, to: 0.95, wind: 0.24, strike: 0.18, anim: 0.28, cooldown: 0.3, reach: 1.55, thick: 24,
+      cross: true, dash: 360, slide: 0.22, ghost: 0.3, stance: 'lunge', stanceHip: -8, stanceLean: 0.12,
+      shake: 9, hitPitch: 1.0, name: 'SCISSOR PASS',
+    },
+    {
+      from: 1.2, to: -1.1, wind: 0.2, strike: 0.16, anim: 0.22, cooldown: 0.24, reach: 1.45, thick: 22,
+      dash: 180, slide: 0.12, shake: 6, hitSfx: 'stab', name: 'PASSING CUT',
+    },
+  ],
+  air: [
+    {
+      from: 2.5, to: -1.4, wind: 0.2, strike: 0.2, anim: 0.4, cooldown: 0.4, reach: 1.5, thick: 26,
+      spin: 2, cross: true, flash: 0.2, shake: 11, hitPitch: 0.95, name: 'PROPELLER',
+    },
+  ],
+  hold: [
+    {
+      from: -1.3, to: 1.2, wind: 0.4, strike: 0.18, anim: 0.42, cooldown: 0.44, reach: 1.65, thick: 34,
+      cross: true, heavy: true, dash: 90, flash: 0.26, invert: 0.035, shake: 15, hitPitch: 0.8, name: 'RENDING X',
+    },
+    {
+      from: 1.4, to: -1.4, wind: 0.34, strike: 0.18, anim: 0.46, cooldown: 0.5, reach: 1.6, thick: 34,
+      spin: 1, hop: 175, cross: true, heavy: true, flash: 0.28, shake: 16, hitPitch: 0.76, name: 'BLENDER',
+    },
+  ],
+};
+
+export class Shortswords extends MeleeWeapon {
   readonly id = 3;
   readonly name = 'TWIN SHORTSWORDS';
   readonly tagline = 'a blur, then a cross';
-  override cooldown = 0.13;
-  override auto = true;
-  private struck = false;
-  private readonly len = 54;
-  /** 0-2 are the fast alternating cuts, 3 is the spinning cross. */
-  private step = 0;
-  private idle = 0;
-  private fx = new SlashFx();
-  private spin = 0;
+  protected readonly len = 54;
+  protected readonly sets = SHORTSWORD_SETS;
 
-  constructor() { super(); this.animLen = 0.13; }
-
-  override onEquip(): void {
-    super.onEquip();
-    this.step = 0;
-    this.animLen = 0.13;
+  constructor() {
+    super();
+    this.animLen = 0.14;
     this.cooldown = 0.13;
+    this.gripFwd = 33;
+    this.trailLen = 10;
   }
 
-  override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.fx.clear(); this.spin = 0; }
+  protected restAngle(ctx: WeaponCtx): number { return ctx.sm.pose.aim; }
 
-  /** True while the animation currently running is the cross finisher. */
-  private get crossing(): boolean { return this.step === 0 && this.anim > 0; }
-
-  protected release(ctx: WeaponCtx): void {
-    this.struck = false;
-    this.idle = 0;
-    const finisher = this.step === 3;
-
-    if (finisher) {
-      // Leap, turn over, and put both blades through the same point.
-      const f = ctx.sm.facing;
-      ctx.sm.spinFlourish(f, 1);
-      ctx.sm.dash(Math.cos(ctx.sm.pose.aim) * 150);
-      ctx.sfx('heavyswing', 1.25);
-      this.spin = 1;
-    } else {
-      ctx.sfx('stab', rand(1.05, 1.4));
-    }
-
-    this.step = (this.step + 1) % 4;
-    const next = this.step === 3;
-    this.animLen = next ? 0.34 : 0.13;
-    this.cooldown = next ? 0.42 : 0.115;
-  }
-
-  protected override tick(ctx: WeaponCtx): void {
-    this.fx.update(ctx.dt);
-    this.spin = Math.max(0, this.spin - ctx.dt * 2.4);
-
-    if (this.anim <= 0) {
-      this.idle += ctx.dt;
-      if (this.idle > 0.5 && this.step !== 0) {
-        this.step = 0;
-        this.animLen = 0.13;
-        this.cooldown = 0.13;
-      }
-      return;
-    }
-    if (this.struck || this.t < 0.34) return;
-    this.struck = true;
-
-    const a = ctx.sm.pose.aim;
-    const f = ctx.sm.facing;
-    const hand = grip(ctx, 30);
-
-    if (this.crossing) {
-      // Two crossing diagonals: an X cut straight into the face of the wall.
-      const hit = ctx.terrain.raycast(hand.x, hand.y, Math.cos(a), Math.sin(a), 150, 3);
-      const cx = hit ? hit.x : hand.x + Math.cos(a) * 96;
-      const cy = hit ? hit.y : hand.y + Math.sin(a) * 96;
-      const arm = 62;
-      for (const d of [-0.7, 0.7]) {
-        const ang = a + Math.PI / 2 + d;
-        ctx.terrain.carveCapsule(
-          cx - Math.cos(ang) * arm, cy - Math.sin(ang) * arm,
-          cx + Math.cos(ang) * arm, cy + Math.sin(ang) * arm, 11, 0.3,
-        );
-        // Each stroke of the X gets its own hanging crescent.
-        this.fx.add(hand.x, hand.y, 88, a - 1.15 * f * Math.sign(d), a + 1.05 * f * Math.sign(d), 22, 0.28, 34);
-      }
-      ctx.sfx('slash', 0.85);
-      ctx.shake(13);
-      ctx.flash(0.24);
-      impact(ctx, cx, cy, a, 1.1);
-      ctx.particles.shockwave(cx, cy, 74);
-      ctx.sm.applyRecoil(0.4, a, 30);
-      return;
-    }
-
-    // A fast alternating cut: short, shallow, and there are a lot of them.
-    const lean = this.swap > 0 ? 1 : -1;
-    const ang = a + rand(-0.05, 0.05);
-    const from = ang + lean * f * 0.85;
-    const to = ang - lean * f * 0.5;
-    const res = ctx.terrain.carveArc(hand.x, hand.y, this.len + 22, from, to, 15);
-    this.fx.add(hand.x, hand.y, this.len + 22, from, to, 13, 0.16, 22);
-    if (res.removed > 0) {
-      const tip = { x: hand.x + Math.cos(ang) * (this.len + 22), y: hand.y + Math.sin(ang) * (this.len + 22) };
-      impact(ctx, tip.x, tip.y, ang, 0.32);
-      ctx.shake(3.4);
-    }
-  }
-
-  hands(ctx: WeaponCtx): HandTargets {
-    const t = this.t;
-    const f = ctx.sm.facing;
-    if (this.crossing) {
-      // Arms thrown wide open, then snapped shut across the body.
-      const open = t < 0.4 ? easeOutCubic(t / 0.4) : 1 - easeOutQuint((t - 0.4) / 0.6);
-      const spread = 10 + open * 26;
-      return {
-        main: gripAt(ctx, ctx.sm.pose.aim - 0.5 * f * open, 34 + open * 8, -spread),
-        off: gripAt(ctx, ctx.sm.pose.aim + 0.5 * f * open, 34 + open * 8, spread),
-      };
-    }
-    const push = this.anim > 0 ? (t < 0.4 ? t / 0.4 : 1 - (t - 0.4) / 0.6) : 0;
+  protected restHands(ctx: WeaponCtx): HandTargets {
     const lead = this.swap > 0;
-    const a = 34 + push * 14, b = 27 - push * 2;
     return {
-      main: grip(ctx, lead ? a : b, lead ? -5 : 14),
-      off: grip(ctx, lead ? b : a, lead ? 16 : -5),
+      main: grip(ctx, lead ? 36 : 28, lead ? -5 : 14),
+      off: grip(ctx, lead ? 28 : 36, lead ? 16 : -5),
     };
   }
 
-  override drawBehind(sk: Sketch): void { this.fx.draw(sk); }
-
-  draw(sk: Sketch, ctx: WeaponCtx): void {
-    const c = sk.ctx;
-    const aim = ctx.sm.pose.aim;
-    const f = ctx.sm.facing;
+  /**
+   * Both blades move: the main hand rides the cut, the off hand mirrors it, and
+   * on a cross they open wide and snap shut through the same point.
+   */
+  override hands(ctx: WeaponCtx): HandTargets {
+    if (this.anim <= 0) return this.restHands(ctx);
     const t = this.t;
-    const hands: Array<[Vec2, number]> = [
-      [ctx.sm.pose.handR, this.crossing ? aim + 0.55 * f * (1 - t) : aim],
-      [ctx.sm.pose.handL, this.crossing ? aim - 0.55 * f * (1 - t) : aim],
-    ];
-
-    for (const [h, ang] of hands) {
-      this.blade(sk, h, ang);
+    const f = ctx.sm.facing;
+    const mv = this.move;
+    const ba = this.bladeAngle(ctx);
+    if (mv.cross) {
+      const open = t < 0.4 ? easeOutCubic(t / 0.4) : 1 - easeOutQuint((t - 0.4) / 0.6);
+      const spread = 10 + open * 26;
+      return {
+        main: gripAt(ctx, ba - 0.35 * f * open, 34 + open * 8, -spread),
+        off: gripAt(ctx, ba + 0.5 * f * open, 34 + open * 8, spread),
+      };
     }
+    const push = t < 0.4 ? t / 0.4 : 1 - (t - 0.4) / 0.6;
+    return {
+      main: gripAt(ctx, ba - 0.2 * f, 32 + push * 10, -5),
+      off: gripAt(ctx, ba + 0.55 * f, 28, 15),
+    };
+  }
 
-    if (this.anim > 0 && this.t < 0.5 && !this.crossing) {
-      const h = this.swap > 0 ? ctx.sm.pose.handR : ctx.sm.pose.handL;
+  protected drawWeapon(sk: Sketch, ctx: WeaponCtx, ba: number): void {
+    const c = sk.ctx;
+    const f = ctx.sm.facing;
+    const mv = this.move;
+    const swinging = this.anim > 0;
+    // The off blade trails the main one, or mirrors it through a cross.
+    const offAngle = swinging && mv.cross ? ba + (mv.to - mv.from) * f * 0.55 : ba + 0.28 * f;
+    this.blade(sk, ctx.sm.pose.handR, swinging ? ba : ctx.sm.pose.aim);
+    this.blade(sk, ctx.sm.pose.handL, swinging ? offAngle : ctx.sm.pose.aim + 0.16 * f);
+
+    if (this.striking > 0.02 && !mv.cross) {
+      const h = ctx.sm.pose.handR;
       c.lineWidth = 1.8;
-      sk.burst(h.x + Math.cos(aim) * (this.len + 12), h.y + Math.sin(aim) * (this.len + 12), 3, 4, 16, 1.8, 1.2, aim, 31);
+      sk.burst(h.x + Math.cos(ba) * (this.len + 12), h.y + Math.sin(ba) * (this.len + 12), 3, 4, 16, 1.8, 1.2, ba, 31);
     }
   }
 
@@ -819,153 +408,128 @@ export class Shortswords extends Weapon {
 /**
  * A slab of a sword. Everything about it is slower than the katana - the coil,
  * the swing, the recovery - and in exchange one hit takes a bite out of the
- * wall that a dozen dagger cuts could not.
+ * wall that a dozen dagger cuts could not. Walking with it, he cannot hold the
+ * thing up: the tip drags along the floor and throws sparks the whole way.
  */
-export class Greatsword extends Weapon {
+const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  ground: [
+    {
+      from: -1.8, to: 0.8, wind: 0.44, strike: 0.16, anim: 0.8, cooldown: 0.95, reach: 0.82, thick: 54,
+      heavy: true, flash: 0.4, invert: 0.06, shake: 24, quake: 1, hitSfx: 'slam', hitPitch: 0.85,
+      stance: 'brace', stanceLean: -0.16, stanceHip: -8, name: 'CLEAVE',
+    },
+    {
+      from: 2.0, to: -0.9, wind: 0.4, strike: 0.16, anim: 0.78, cooldown: 0.9, reach: 0.84, thick: 54,
+      heavy: true, dash: 70, flash: 0.34, invert: 0.05, shake: 22, hitSfx: 'slam', hitPitch: 0.9,
+      stance: 'brace', stanceLean: -0.14, stanceHip: -8, name: 'SWEEP',
+    },
+    {
+      // The whole body turns with the sword and everything in front of him goes.
+      from: -2.7, to: 1.5, wind: 0.34, strike: 0.18, anim: 0.9, cooldown: 1.1, reach: 0.95, thick: 62,
+      heavy: true, spin: 1, hop: 215, dash: 110, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
+      hitSfx: 'slam', hitPitch: 0.78, name: 'WHIRLWIND',
+    },
+  ],
+  run: [
+    {
+      // Out of the drag: the tip is already on the floor, so he just keeps
+      // running and rips it up through everything in the way.
+      from: 1.4, to: -1.35, wind: 0.3, strike: 0.18, anim: 0.62, cooldown: 0.7, reach: 0.9, thick: 50,
+      heavy: true, dash: 230, slide: 0.26, lift: 90, flash: 0.3, shake: 20, quake: 0.8,
+      hitSfx: 'slam', hitPitch: 0.95, name: 'RISING DRAG',
+    },
+    {
+      from: -2.2, to: 1.0, wind: 0.32, strike: 0.16, anim: 0.68, cooldown: 0.78, reach: 0.88, thick: 52,
+      heavy: true, dash: 150, slide: 0.16, flash: 0.34, invert: 0.04, shake: 22, quake: 1,
+      hitSfx: 'slam', hitPitch: 0.85, stance: 'lunge', stanceHip: -12, name: 'RUNNING CLEAVE',
+    },
+  ],
+  air: [
+    {
+      from: -1.6, to: 1.45, wind: 0.3, strike: 0.16, anim: 0.5, cooldown: 0.66, reach: 0.92, thick: 58,
+      heavy: true, lift: -430, flash: 0.45, invert: 0.06, shake: 26, quake: 1.4,
+      hitSfx: 'slam', hitPitch: 0.7, name: 'PLUNGE',
+    },
+  ],
+  hold: [
+    {
+      from: -2.8, to: 1.6, wind: 0.38, strike: 0.2, anim: 1.15, cooldown: 1.3, reach: 1, thick: 68,
+      heavy: true, spin: 2, hop: 265, dash: 90, flash: 0.55, invert: 0.08, shake: 30, quake: 1.4,
+      hitSfx: 'slam', hitPitch: 0.66, name: 'DOUBLE WHIRLWIND',
+    },
+  ],
+};
+
+export class Greatsword extends MeleeWeapon {
   readonly id = 4;
   readonly name = 'GREATSWORD';
-  readonly tagline = 'winds up slow, lands like a truck';
-  override cooldown = 1.05;
-  override auto = true;
-  private struck = false;
-  private readonly len = 158;
-  private fx = new SlashFx();
-  /** Alternates between the overhead chop and the horizontal sweep. */
-  private overhead = true;
-  private tipTrail: Vec2[] = [];
+  readonly tagline = 'drags on the floor, lands like a truck';
+  protected readonly len = 158;
+  protected readonly sets = GREATSWORD_SETS;
 
-  constructor() { super(); this.animLen = 0.86; }
+  /** 0..1 blend into the "too heavy to carry" drag pose. */
+  private dragT = 0;
+  /** Metres of floor dragged since the last scrape, so sparks track speed. */
+  private scraped = 0;
 
-  override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.fx.clear(); this.tipTrail.length = 0; }
-
-  private get wind(): number { return 0.44; }
-  private get strike(): number { return 0.16; }
-
-  protected release(ctx: WeaponCtx): void {
-    this.struck = false;
-    this.overhead = !this.overhead;
-    this.tipTrail.length = 0;
-    ctx.sfx('heavyswing', 0.8);
-    ctx.sm.addGhostBurst(0.5);
+  constructor() {
+    super();
+    this.animLen = 0.8;
+    this.cooldown = 0.95;
+    this.gripFwd = 38;
+    this.gripLead = 0.34;
+    this.trailLen = 14;
   }
 
-  private rest(ctx: WeaponCtx): number {
-    // Carried on the shoulder, tip up and back. Where he happens to be aiming
-    // does not enter into it: the thing is too heavy to point at anything.
-    return mirror(-2.45 + Math.sin(ctx.time * 1.1) * 0.05, ctx.sm.facing);
+  override onEquip(): void { super.onEquip(); this.dragT = 0; }
+
+  /**
+   * Carried on the shoulder when he is standing, dragged behind him the moment
+   * he starts moving: the tip finds the floor and stays on it.
+   */
+  protected restAngle(ctx: WeaponCtx): number {
+    const shoulder = mirror(-2.45 + Math.sin(ctx.time * 1.1) * 0.05, ctx.sm.facing);
+    if (this.dragT < 0.01) return shoulder;
+    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - 4, ctx.sm.facing);
+    return drag === null ? shoulder : shoulder + (drag - shoulder) * this.dragT;
   }
 
-  private bladeAngle(ctx: WeaponCtx): number {
-    const a = ctx.sm.pose.aim;
-    const f = ctx.sm.facing;
-    if (this.anim <= 0) return this.rest(ctx);
-    const t = this.t;
-    const from = a + (this.overhead ? -1.8 : 2.0) * f;
-    const to = a + (this.overhead ? 0.8 : -0.9) * f;
-    if (t < this.wind) {
-      // The coil takes its time and drags the whole body back with it.
-      return toward(this.rest(ctx), from, easeOutCubic(t / this.wind));
-    }
-    if (t < this.wind + this.strike) {
-      return from + (to - from) * easeOutQuint((t - this.wind) / this.strike);
-    }
-    const k = clamp((t - this.wind - this.strike) / Math.max(0.01, 1 - this.wind - this.strike), 0, 1);
-    // A long, heavy recovery: the blade hangs where it landed, then comes up.
-    return toward(to, this.rest(ctx), easeInCubic(k) * 0.9);
+  /** The drag itself: sparks, grit and a scraping edge for as long as he walks. */
+  protected override idleTick(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    const speed = Math.abs(sm.vel.x);
+    const wants = sm.onGround && speed > 26 ? 1 : 0;
+    this.dragT = damp(this.dragT, wants, wants > 0 ? 7 : 5, ctx.dt);
+    if (this.dragT < 0.4 || wants === 0) return;
+
+    const ang = this.restAngle(ctx);
+    const h = sm.pose.handR;
+    const tip = { x: h.x + Math.cos(ang) * this.len, y: h.y + Math.sin(ang) * this.len };
+    this.scraped += speed * ctx.dt;
+    if (this.scraped < 26) return;
+    this.scraped = 0;
+    const back = sm.vel.x > 0 ? Math.PI : 0;
+    ctx.particles.sparks(tip.x, tip.y - 2, 2, 90 + speed * 0.6, back, 1.5);
+    ctx.particles.dust(tip.x, tip.y, 1, back, 0.5);
+    ctx.sfx('scrape', clamp(0.7 + speed / 500, 0.7, 1.5));
   }
 
-  protected override tick(ctx: WeaponCtx): void {
-    this.fx.update(ctx.dt);
-    if (this.anim <= 0) return;
-
-    const h = ctx.sm.pose.handR;
-    const ba = this.bladeAngle(ctx);
-    this.tipTrail.push({ x: h.x + Math.cos(ba) * this.len, y: h.y + Math.sin(ba) * this.len });
-    if (this.tipTrail.length > 14) this.tipTrail.shift();
-
-    // The wind-up hauls dust off the floor: the swing is telegraphed on purpose.
-    if (this.t < this.wind && Math.random() < 0.3) {
-      ctx.particles.updraft(ctx.sm.pos.x, ctx.sm.pos.y - 4, 1, 26, 90);
-    }
-
-    if (this.struck || this.t < this.wind + this.strike * 0.4) return;
-    this.struck = true;
-
-    const a = ctx.sm.pose.aim;
-    const f = ctx.sm.facing;
-    const from = a + (this.overhead ? -1.8 : 2.0) * f;
-    const to = a + (this.overhead ? 0.8 : -0.9) * f;
-    const r = this.len * 0.82;
-    const res = ctx.terrain.carveArc(h.x, h.y, r, from, to, 54);
-    this.fx.add(h.x, h.y, r, from, to, 60, 0.36, 26);
-
-    ctx.sfx('slam', 0.85);
-    ctx.shake(24);
-    ctx.flash(0.4);
-    ctx.invert(0.06);
-    ctx.sm.applyRecoil(0.8, a, 40);
-    const tip = { x: h.x + Math.cos(a) * r, y: h.y + Math.sin(a) * r };
-    ctx.particles.shockwave(tip.x, tip.y, r * 0.6);
-    ctx.particles.streaks(tip.x, tip.y, 14, a, 1.4, 90);
-
-    if (res.removed > 0) {
-      impact(ctx, tip.x, tip.y, a, 1.6);
-      ctx.particles.debris(tip.x, tip.y, 30, 420, a + Math.PI, 2.6);
-    }
-
-    // An overhead chop keeps going into the floor and splits it open ahead.
-    if (this.overhead) {
-      const gy = ctx.sm.pos.y - 6;
-      const x0 = ctx.sm.pos.x + f * 40;
-      ctx.terrain.carveCapsule(x0, gy, x0 + f * 260, gy + 10, 13, 0.5);
-      ctx.particles.debris(x0 + f * 120, gy, 16, 300, -Math.PI / 2, 1.6);
-      ctx.particles.updraft(x0 + f * 130, gy, 10, 110, 190);
-    }
-  }
-
-  hands(ctx: WeaponCtx): HandTargets {
-    const ba = this.bladeAngle(ctx);
+  protected restHands(ctx: WeaponCtx, ba: number): HandTargets {
     const f = ctx.sm.facing;
     // Both fists on a long hilt, dragged around by the weight of the head.
-    const drive = this.anim > 0 ? 38 : 30;
     return {
-      main: gripAt(ctx, ba - 0.34 * f, drive, 4 * f),
-      off: gripAt(ctx, ba - 0.52 * f, drive - 12, 12 * f),
+      main: gripAt(ctx, ba - 0.34 * f, 30, 4 * f),
+      off: gripAt(ctx, ba - 0.52 * f, 18, 12 * f),
     };
   }
 
-  override stance(ctx: WeaponCtx): Stance | null {
-    if (this.anim <= 0) return null;
-    const t = this.t;
-    // Sink into the coil, then drive up through the swing.
-    const k = t < this.wind ? easeOutCubic(t / this.wind) : Math.max(0, 1 - (t - this.wind) / 0.3);
-    if (k < 0.02) return null;
-    return { kind: 'brace', weight: k * (ctx.sm.onGround ? 0.75 : 0.3), lean: -0.16, hip: -8 };
-  }
-
-  override drawBehind(sk: Sketch): void { this.fx.draw(sk); }
-
-  draw(sk: Sketch, ctx: WeaponCtx): void {
+  protected drawWeapon(sk: Sketch, ctx: WeaponCtx, ba: number): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
-    const ba = this.bladeAngle(ctx);
     const ca = Math.cos(ba), sa = Math.sin(ba);
     const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
-
-    if (this.anim > 0 && this.tipTrail.length > 2) {
-      c.save();
-      c.globalAlpha = 0.45;
-      c.lineWidth = 3;
-      c.beginPath();
-      for (let i = 0; i < this.tipTrail.length; i++) {
-        const p = this.tipTrail[i];
-        if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
-      }
-      c.stroke();
-      c.restore();
-    }
-
     const L = this.len;
+
     // Hilt, then a huge cross guard, then a slab of a blade with a bevel line.
     sk.line(at(-26, 0), at(20, 0), 4.6, 2, 0.5);
     sk.line(at(-26, -5), at(-26, 5), 4, 1, 0.4);
@@ -979,19 +543,13 @@ export class Greatsword extends Weapon {
     sk.line(at(30, -6), at(L * 0.9, -4), 1.6, 2, 0.4);
     sk.line(at(30, 6), at(L * 0.9, 4), 1.6, 2, 0.4);
 
-    // Weight lines trailing the head of the blade through the swing.
-    if (this.anim > 0 && this.t > this.wind && this.t < this.wind + this.strike * 2.6) {
+    // Sparks where the edge is actually touching the floor.
+    if (this.anim <= 0 && this.dragT > 0.5) {
+      const tip = at(L, 0);
       c.save();
-      c.globalAlpha = 0.3;
-      c.lineWidth = 2.4;
-      const dir = this.overhead ? 1 : -1;
-      for (let i = 1; i <= 4; i++) {
-        const a2 = ba - dir * ctx.sm.facing * i * 0.2;
-        c.beginPath();
-        c.moveTo(h.x + Math.cos(a2) * 28, h.y + Math.sin(a2) * 28);
-        c.lineTo(h.x + Math.cos(a2) * L, h.y + Math.sin(a2) * L);
-        c.stroke();
-      }
+      c.globalAlpha = this.dragT;
+      c.lineWidth = 2;
+      sk.burst(tip.x, tip.y - 2, 4, 3, 14, 2, 1.5, ctx.sm.vel.x > 0 ? Math.PI : 0, 4141);
       c.restore();
     }
   }
@@ -1015,135 +573,111 @@ export class Greatsword extends Weapon {
  * of an anvil coming down. It craters instead of cutting, and the ground picks
  * the shock up and carries it forward.
  */
-export class Warhammer extends Weapon {
+const MAUL = BLASTS.maul;
+const MAUL_LIGHT = { ...MAUL, radius: MAUL.radius * 0.85, debris: Math.round(MAUL.debris * 0.8) };
+const MAUL_BIG = { ...MAUL, radius: MAUL.radius * 1.4, debris: Math.round(MAUL.debris * 1.4) };
+
+const HAMMER_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  ground: [
+    {
+      from: -2.35, to: 1.25, wind: 0.48, strike: 0.15, anim: 0.9, cooldown: 1.0, reach: 0.9, thick: 46,
+      blast: MAUL, heavy: true, flash: 0.55, invert: 0.075, shake: 30, quake: 1.4,
+      hitSfx: 'slam', hitPitch: 0.95, stance: 'brace', stanceLean: -0.2, stanceHip: -12, name: 'SMASH',
+    },
+    {
+      from: 2.2, to: -0.55, wind: 0.42, strike: 0.16, anim: 0.78, cooldown: 0.9, reach: 0.92, thick: 62,
+      heavy: true, dash: 90, flash: 0.34, invert: 0.05, shake: 24, quake: 0.9,
+      hitSfx: 'slam', hitPitch: 1.05, name: 'LOW SWEEP',
+    },
+  ],
+  run: [
+    {
+      from: -2.0, to: 1.1, wind: 0.34, strike: 0.16, anim: 0.72, cooldown: 0.85, reach: 0.92, thick: 54,
+      blast: MAUL_LIGHT, heavy: true, dash: 260, slide: 0.22, flash: 0.4, invert: 0.05, shake: 26,
+      quake: 1.1, hitSfx: 'slam', hitPitch: 1.0, stance: 'lunge', stanceHip: -12, name: 'RUNNING SWING',
+    },
+  ],
+  air: [
+    {
+      from: -1.5, to: 1.5, wind: 0.28, strike: 0.16, anim: 0.52, cooldown: 0.9, reach: 0.95, thick: 54,
+      blast: MAUL_BIG, heavy: true, lift: -520, flash: 0.6, invert: 0.08, shake: 32, quake: 1.6,
+      hitSfx: 'slam', hitPitch: 0.8, name: 'METEOR',
+    },
+  ],
+  hold: [
+    {
+      from: 2.7, to: -1.4, wind: 0.4, strike: 0.18, anim: 1.0, cooldown: 1.2, reach: 0.95, thick: 70,
+      blast: MAUL_BIG, heavy: true, spin: 1, hop: 225, flash: 0.6, invert: 0.085, shake: 34, quake: 1.5,
+      hitSfx: 'slam', hitPitch: 0.72, name: 'GIANT SWING',
+    },
+  ],
+};
+
+export class Warhammer extends MeleeWeapon {
   readonly id = 5;
   readonly name = 'WARHAMMER';
   readonly tagline = 'one swing, one crater';
-  override cooldown = 1.25;
-  override auto = true;
-  private struck = false;
-  private readonly shaft = 112;
-  private smashT = 0;
+  protected readonly len = 112;
+  protected readonly sets = HAMMER_SETS;
 
-  constructor() { super(); this.animLen = 0.98; }
+  private dragT = 0;
+  private scraped = 0;
 
-  private get wind(): number { return 0.48; }
-  private get strike(): number { return 0.15; }
-
-  protected release(ctx: WeaponCtx): void {
-    this.struck = false;
-    ctx.sfx('heavyswing', 0.62);
-    ctx.sm.addGhostBurst(0.55);
+  constructor() {
+    super();
+    this.animLen = 0.95;
+    this.cooldown = 1.15;
+    this.gripFwd = 36;
+    this.gripLead = 0.3;
+    this.trailLen = 12;
   }
 
-  private rest(ctx: WeaponCtx): number {
-    // Head resting on the floor in front of him: he has to heave it up off the
-    // ground before anything happens, which is the whole point of the weapon.
-    return mirror(0.86 + Math.sin(ctx.time * 1.05) * 0.03, ctx.sm.facing);
+  /**
+   * Head resting on the floor in front of him: he has to heave it up off the
+   * ground before anything happens, which is the whole point of the weapon -
+   * and walking, it simply ploughs along behind.
+   */
+  protected restAngle(ctx: WeaponCtx): number {
+    const carried = mirror(0.86 + Math.sin(ctx.time * 1.05) * 0.03, ctx.sm.facing);
+    if (this.dragT < 0.01) return carried;
+    // The head is a block hanging off the end of the shaft, so it rides a
+    // little short of the full length.
+    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - 18, ctx.sm.facing);
+    return drag === null ? carried : carried + (drag - carried) * this.dragT;
   }
 
-  private headAngle(ctx: WeaponCtx): number {
-    const a = ctx.sm.pose.aim;
+  protected override idleTick(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    const speed = Math.abs(sm.vel.x);
+    const wants = sm.onGround && speed > 26 ? 1 : 0;
+    this.dragT = damp(this.dragT, wants, wants > 0 ? 6 : 5, ctx.dt);
+    if (this.dragT < 0.45 || wants === 0) return;
+    const ang = this.restAngle(ctx);
+    const h = sm.pose.handR;
+    const tip = { x: h.x + Math.cos(ang) * this.len, y: h.y + Math.sin(ang) * this.len };
+    this.scraped += speed * ctx.dt;
+    if (this.scraped < 34) return;
+    this.scraped = 0;
+    const back = sm.vel.x > 0 ? Math.PI : 0;
+    ctx.particles.dust(tip.x, tip.y, 2, back, 0.8);
+    ctx.particles.sparks(tip.x, tip.y - 2, 1, 80, back, 1.4);
+    ctx.sfx('scrape', clamp(0.45 + speed / 900, 0.45, 0.9));
+  }
+
+  protected restHands(ctx: WeaponCtx, ba: number): HandTargets {
     const f = ctx.sm.facing;
-    if (this.anim <= 0) return this.rest(ctx);
-    const t = this.t;
-    const from = a - 2.35 * f;      // hauled up and over behind the shoulder
-    const to = a + 1.25 * f;        // straight down through the target
-    if (t < this.wind) return toward(this.rest(ctx), from, easeOutCubic(t / this.wind));
-    if (t < this.wind + this.strike) {
-      return from + (to - from) * easeOutQuint((t - this.wind) / this.strike);
-    }
-    const k = clamp((t - this.wind - this.strike) / Math.max(0.01, 1 - this.wind - this.strike), 0, 1);
-    return toward(to, this.rest(ctx), easeInCubic(k) * 0.85);
-  }
-
-  protected override tick(ctx: WeaponCtx): void {
-    this.smashT = Math.max(0, this.smashT - ctx.dt);
-    if (this.anim <= 0) return;
-
-    if (this.t < this.wind && Math.random() < 0.34) {
-      ctx.particles.updraft(ctx.sm.pos.x, ctx.sm.pos.y - 4, 1, 30, 80);
-    }
-    if (this.struck || this.t < this.wind + this.strike * 0.55) return;
-    this.struck = true;
-
-    const f = ctx.sm.facing;
-    const h = ctx.sm.pose.handR;
-    const ang = this.headAngle(ctx);
-    const tip = { x: h.x + Math.cos(ang) * this.shaft, y: h.y + Math.sin(ang) * this.shaft };
-
-    // Find something to hit: whatever the head sweeps into, or the floor below.
-    const swept = ctx.terrain.raycast(h.x, h.y, Math.cos(ang), Math.sin(ang), this.shaft + 26, 3);
-    let at: Vec2 | null = swept;
-    if (!at) {
-      const drop = ctx.terrain.groundBelow(tip.x, tip.y, 110);
-      if (drop < 110) at = { x: tip.x, y: tip.y + drop };
-    }
-
-    this.smashT = 0.22;
-    ctx.sm.applyRecoil(1.0, ctx.sm.pose.aim, 30);
-
-    if (!at) {
-      // A clean miss still moves air.
-      ctx.sfx('heavyswing', 1.1);
-      ctx.shake(6);
-      ctx.particles.streaks(tip.x, tip.y, 8, ang, 1.6, 60);
-      return;
-    }
-
-    applyBlast(ctx.terrain, at.x, at.y, BLASTS.maul);
-    ctx.sfx('slam', 0.95);
-    ctx.shake(30);
-    ctx.flash(0.55);
-    ctx.invert(0.075);
-    ctx.particles.shockwave(at.x, at.y, 150);
-    ctx.particles.shockwave(at.x, at.y, 96);
-    ctx.particles.debris(at.x, at.y, 46, 460);
-    ctx.particles.sparks(at.x, at.y, 22, 520);
-    ctx.particles.smoke(at.x, at.y, 8, 26);
-    ctx.particles.updraft(at.x, at.y, 14, 60, 240);
-
-    // The shock runs out along the ground on both sides of the impact.
-    for (const d of [-1, 1]) {
-      const gx = at.x + d * 40;
-      const drop = ctx.terrain.groundBelow(gx, at.y - 10, 140);
-      if (drop >= 140) continue;
-      const gy = at.y - 10 + drop;
-      ctx.terrain.carveCapsule(gx, gy, gx + d * 150, gy + 12, 12, 0.55);
-      ctx.particles.updraft(gx + d * 80, gy, 6, 60, 200);
-    }
-    // Everything nearby gets thrown, the player included.
-    const dx = ctx.sm.pos.x - at.x, dy = (ctx.sm.pos.y - 40) - at.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 200) ctx.sm.dash(-Math.cos(ctx.sm.pose.aim) * 90, -110 * (1 - dist / 200));
-    void f;
-  }
-
-  hands(ctx: WeaponCtx): HandTargets {
-    const ba = this.headAngle(ctx);
-    const f = ctx.sm.facing;
-    const drive = this.anim > 0 ? 36 : 26;
     return {
-      main: gripAt(ctx, ba - 0.3 * f, drive, 5 * f),
-      off: gripAt(ctx, ba - 0.5 * f, drive - 16, 14 * f),
+      main: gripAt(ctx, ba - 0.3 * f, 26, 5 * f),
+      off: gripAt(ctx, ba - 0.5 * f, 12, 14 * f),
     };
   }
 
-  override stance(ctx: WeaponCtx): Stance | null {
-    if (this.anim <= 0) return null;
-    const t = this.t;
-    const k = t < this.wind ? easeOutCubic(t / this.wind) : Math.max(0, 1 - (t - this.wind) / 0.34);
-    if (k < 0.02) return null;
-    return { kind: 'brace', weight: k * (ctx.sm.onGround ? 0.85 : 0.3), lean: -0.2, hip: -12 };
-  }
-
-  draw(sk: Sketch, ctx: WeaponCtx): void {
+  protected drawWeapon(sk: Sketch, ctx: WeaponCtx, ang: number): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
-    const ang = this.headAngle(ctx);
     const ca = Math.cos(ang), sa = Math.sin(ang);
     const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
-    const L = this.shaft;
+    const L = this.len;
 
     // Haft.
     sk.line(at(-30, 0), at(L - 26, 0), 5, 2, 0.6);
@@ -1156,25 +690,11 @@ export class Warhammer extends Weapon {
     sk.poly([at(L - 30, -13), at(L - 46, -6), at(L - 46, 6), at(L - 30, 13)], 3, false, 0.5);
     sk.line(at(L - 30, -25), at(L - 30, 25), 2.6, 1, 0.5);
 
-    // Weight lines through the fall, and a flash of impact on landing.
-    if (this.anim > 0 && this.t > this.wind && this.t < this.wind + this.strike * 3) {
-      c.save();
-      c.globalAlpha = 0.32;
-      c.lineWidth = 3;
-      for (let i = 1; i <= 4; i++) {
-        const a2 = ang - ctx.sm.facing * i * 0.22;
-        c.beginPath();
-        c.moveTo(h.x + Math.cos(a2) * 40, h.y + Math.sin(a2) * 40);
-        c.lineTo(h.x + Math.cos(a2) * (L + 8), h.y + Math.sin(a2) * (L + 8));
-        c.stroke();
-      }
-      c.restore();
-    }
-    if (this.smashT > 0) {
-      const k = this.smashT / 0.22;
+    // A flash of impact on landing.
+    if (this.striking > 0.55 && this.striking < 0.95) {
       const tip = at(L + 6, 0);
       c.lineWidth = 3.4;
-      sk.burst(tip.x, tip.y, 11, 12, 30 + k * 70, 3.4, TAU, 0, 909);
+      sk.burst(tip.x, tip.y, 11, 12, 60, 3.4, TAU, 0, 909);
     }
   }
 
@@ -1186,6 +706,7 @@ export class Warhammer extends Weapon {
     ], 2.4, false, 0.5);
   }
 }
+
 // ---------------------------------------------------------------------------
 // 6. PISTOL
 // ---------------------------------------------------------------------------

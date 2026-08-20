@@ -28,6 +28,8 @@ const RUN_SPEED = 340;
 const SPRINT_SPEED = 486;
 /** Deflection at which the gait reads as a full run; past it, a sprint. */
 export const RUN_PUSH = 0.72;
+/** Ground speed past which an attack comes out of a run instead of a stand. */
+export const RUN_ATTACK_SPEED = 215;
 
 const AIR_SPEED = 330;
 const ACCEL = 2900;
@@ -64,8 +66,15 @@ export interface HandTargets {
  * pose. `hover` also switches gravity off, which is what lets the beam be
  * charged and fired in mid-air before the figure drops back to the floor.
  */
+export type StanceKind = 'brace' | 'hover' | 'crouch' | 'lunge';
+
 export interface Stance {
-  kind: 'brace' | 'hover';
+  /**
+   * `brace` plants and coils, `hover` switches gravity off, `crouch` drops the
+   * whole figure to the floor (the ninja slash), `lunge` throws the front leg
+   * out ahead and drives off the back one.
+   */
+  kind: StanceKind;
   /** 0..1 how strongly the stance takes over. */
   weight: number;
   /** Torso lean relative to facing; negative arches backwards. */
@@ -142,9 +151,11 @@ export class Stickman {
 
   // --- stances and floating -------------------------------------------------
   private stance: Stance | null = null;
-  private stanceKind: 'brace' | 'hover' = 'brace';
+  private stanceKind: StanceKind = 'brace';
   private stanceW = 0;
   private hoverT = 0;
+  /** Seconds of low-friction ground travel left; what makes a slash slide. */
+  private slideT = 0;
 
   // --- afterimages ----------------------------------------------------------
   private ghosts: Ghost[] = [];
@@ -174,6 +185,7 @@ export class Stickman {
     this.stance = null;
     this.stanceW = 0;
     this.hoverT = 0;
+    this.slideT = 0;
     this.ghosts.length = 0;
     this.ghostBurst = 0;
     this.sprintT = 0;
@@ -186,6 +198,7 @@ export class Stickman {
     this.justLanded = false;
     this.justJumped = false;
     this.justStepped = false;
+    this.slideT = Math.max(0, this.slideT - dt);
 
     // `axis` is analog: a half-tilted thumb (or a keyboard without SHIFT)
     // walks, the far end of the travel sprints.
@@ -208,7 +221,8 @@ export class Stickman {
       this.vel.x += Math.sign(dir) * accel * dt * lerp(1, 0.45, this.hoverT);
       this.vel.x = clamp(this.vel.x, -topSpeed, topSpeed);
     } else if (this.onGround) {
-      const f = FRICTION * dt;
+      // A slash that slides keeps its speed: the floor lets go for a moment.
+      const f = FRICTION * (this.slideT > 0 ? 0.1 : 1) * dt;
       this.vel.x = Math.abs(this.vel.x) <= f ? 0 : this.vel.x - Math.sign(this.vel.x) * f;
     } else {
       this.vel.x *= Math.exp(-(0.9 + this.hoverT * 5) * dt);
@@ -442,14 +456,23 @@ export class Stickman {
     if (vy < 0) this.onGround = false;
   }
 
-  /** A spinning flourish; on the ground it hops first so the feet stay clear. */
-  spinFlourish(dir: number, turns = 1): void {
-    if (this.onGround) {
-      this.vel.y = -235;
+  /**
+   * A spinning flourish. `hop` lifts him off the floor first, which is what a
+   * full somersaulting swing needs; a low hop keeps a grounded spin-slash from
+   * dragging its own feet through the ground.
+   */
+  spinFlourish(dir: number, turns = 1, hop = 235): void {
+    if (this.onGround && hop > 0) {
+      this.vel.y = -hop;
       this.onGround = false;
     }
     this.flipSpin = Math.sign(dir || 1) * TAU * turns;
     this.addGhostBurst(0.34);
+  }
+
+  /** Cuts ground friction for a moment: a committed step becomes a slide. */
+  slide(seconds: number): void {
+    this.slideT = Math.max(this.slideT, seconds);
   }
 
   // ----------------------------------------------------------- animation ---
@@ -550,7 +573,12 @@ export class Stickman {
     // Head looks where the weapon points; while bracing it tips up and back,
     // which is most of what makes a charge-up read as defiant.
     const look = this.aimVisual;
-    const braceUp = this.stanceKind === 'brace' ? this.stanceW : this.stanceW * 0.5;
+    // A brace tips the head up and back; a crouch or a lunge ducks it forward
+    // over the strike instead, which is the difference between defiance and
+    // committing to a cut.
+    const braceUp = this.stanceKind === 'brace' ? this.stanceW
+      : this.stanceKind === 'hover' ? this.stanceW * 0.5
+        : -this.stanceW * 0.7;
     const headOff = rotate({ x: 0, y: -HEAD_R * 1.02 }, this.lean * 0.5);
     const head = {
       x: neck.x + headOff.x + Math.cos(look) * 3.2,
@@ -671,6 +699,20 @@ export class Stickman {
   /** Where a foot goes in the current stance. */
   private stanceTarget(front: boolean, px: number, py: number, terrain: Terrain): Vec2 {
     const f = this.facing;
+    /** Drops a foot onto whatever is actually under it at that x. */
+    const onFloor = (x: number): Vec2 => {
+      const drop = terrain.groundBelow(x, this.pos.y - 26, 80);
+      return { x, y: clamp(this.pos.y - 26 + drop, this.pos.y - 26, this.pos.y + 26) };
+    };
+    if (this.stanceKind === 'crouch') {
+      // Folded right down over the floor, front leg thrown out along the slide,
+      // back leg tucked under the hips. The pose the katana cuts out of.
+      return onFloor(front ? px + f * 44 : px - f * 8);
+    }
+    if (this.stanceKind === 'lunge') {
+      // Everything committed forward: the step a heavy swing lands on.
+      return onFloor(front ? px + f * 54 : px - f * 44);
+    }
     if (this.stanceKind === 'hover' && !this.onGround) {
       // Floating: the front leg folds up, the back leg trails, both drifting
       // with a slow bob. Nothing touches the ground, and it should look like it.
@@ -681,10 +723,7 @@ export class Stickman {
     }
     // Braced: a wide, low, planted stance - front foot forward and turned out,
     // back leg driving into the floor.
-    const x = front ? px + f * 27 : px - f * 40;
-    const drop = terrain.groundBelow(x, this.pos.y - 26, 80);
-    const surface = clamp(this.pos.y - 26 + drop, this.pos.y - 26, this.pos.y + 26);
-    return { x, y: surface };
+    return onFloor(front ? px + f * 27 : px - f * 40);
   }
 
   // --------------------------------------------------------- afterimages ---

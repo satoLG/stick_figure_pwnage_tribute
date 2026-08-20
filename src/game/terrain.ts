@@ -2,8 +2,14 @@ import { clamp, hashNoise, TAU, type Vec2 } from '../core/math';
 
 /** How thick the floor slab is, in world units. Fixed, because the figure is. */
 const FLOOR_THICKNESS = 124;
-/** The lowest part of the floor is never carved, so nobody digs out of the world. */
-const BEDROCK_DEPTH = 48;
+
+/**
+ * Every carve is scaled by this before it touches the bitmap. It is the single
+ * knob for how tough the wall is: at 1 a rifle magazine opens a doorway, and
+ * the whole thing is gone in well under a minute. Well below 1 the wall reads
+ * as real masonry - you can see each hit land, but you have to keep working.
+ */
+const DAMAGE_SCALE = 0.6;
 
 export interface WorldSize { w: number; h: number; }
 
@@ -64,8 +70,7 @@ export class Terrain {
 
   /** Top surface of the floor slab. */
   groundTop = 0;
-  private bedrockY = 0;
-  /** Nominal left face of the wall; the real edge wobbles around it. */
+  /** Left face of the wall. It starts perfectly straight and gets eaten away. */
   wallX = 0;
 
   /** Only wall pixels count towards the win condition; the floor is scenery. */
@@ -92,9 +97,8 @@ export class Terrain {
 
   private layout(): void {
     this.groundTop = this.h - FLOOR_THICKNESS;
-    this.bedrockY = this.h - BEDROCK_DEPTH;
     // A thinner wall on narrow screens, so portrait still leaves running room.
-    const thickness = clamp(this.w * 0.27, 190, 380);
+    const thickness = clamp(this.w * 0.32, 240, 460);
     this.wallX = this.w - thickness;
   }
 
@@ -173,10 +177,12 @@ export class Terrain {
         if (oldMask[orow + ox] !== 0) continue;
         // Only a pixel that used to be solid counts as destroyed.
         if (!((inWallRow && ox >= face) || oy >= oldSurf[ox])) continue;
+        // Only the wall can have been damaged, so only the wall is re-punched.
         const i = nrow + x;
-        if (this.mask[i] === 1) {
+        if (this.isWall[i] === 1) {
+          this.isWall[i] = 0;
           this.mask[i] = 0;
-          if (this.isWall[i] === 1) { this.isWall[i] = 0; this.wallLeft--; }
+          this.wallLeft--;
         }
       }
     }
@@ -201,13 +207,12 @@ export class Terrain {
       + Math.sin(x * 0.11 + 0.4) * 1.4;
   }
 
-  /** x position of the wall's left face at a given y - deliberately ragged. */
-  private wallFace(y: number): number {
-    return this.wallX
-      + Math.sin(y * 0.017) * 18
-      + Math.sin(y * 0.052 + 2.1) * 9
-      + Math.sin(y * 0.131 + 0.9) * 4.5
-      + hashNoise(y | 0, 7) * 3;
+  /**
+   * x position of the wall's left face at a given y. Dead straight: the wall is
+   * built, not eroded, and every notch in it should be one the player put there.
+   */
+  private wallFace(_y: number): number {
+    return this.wallX;
   }
 
   // ---------------------------------------------------------- collision ---
@@ -252,6 +257,10 @@ export class Terrain {
    * Removes a polygon from both the mask and the picture. This is the single
    * primitive every weapon is built on: craters are noisy circles, sword cuts
    * are thin arcs, beams are long capsules.
+   *
+   * Only the wall is destructible. The floor is a fixed stage the fight happens
+   * on - it keeps its uneven surface, but nothing digs into it - so both the
+   * mask pass and the bitmap pass are confined to the wall's rectangle.
    */
   carvePolygon(pts: readonly Vec2[]): CarveResult {
     const result: CarveResult = { removed: 0, edges: [] };
@@ -264,14 +273,17 @@ export class Terrain {
       if (p.x < minX) minX = p.x;
       if (p.x > maxX) maxX = p.x;
     }
-    const y0 = clamp(Math.floor(minY), 0, this.h - 1);
-    const y1 = clamp(Math.ceil(maxY), 0, this.h - 1);
-    if (maxX < 0 || minX > this.w || maxY < 0 || minY > this.h) return result;
+    // The destructible region: the wall, from the top of the world down to the
+    // floor. Anything outside it is scenery and is left alone.
+    const zoneX = Math.max(0, Math.floor(this.wallX));
+    const zoneY = Math.max(0, Math.floor(this.groundTop));
+    if (maxX < zoneX || minX > this.w || maxY < 0 || minY > zoneY) return result;
+    const y0 = clamp(Math.floor(minY), 0, zoneY - 1);
+    const y1 = clamp(Math.ceil(maxY), 0, zoneY - 1);
 
     // Scanline fill into the mask.
     const xs: number[] = [];
     for (let y = y0; y <= y1; y++) {
-      if (y >= this.bedrockY) break; // bedrock is indestructible
       const cy = y + 0.5;
       xs.length = 0;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -284,17 +296,15 @@ export class Terrain {
       xs.sort((p, q) => p - q);
       const row = y * this.w;
       for (let s = 0; s + 1 < xs.length; s += 2) {
-        const sx = clamp(Math.ceil(xs[s]), 0, this.w - 1);
-        const ex = clamp(Math.floor(xs[s + 1]), 0, this.w - 1);
+        const sx = clamp(Math.ceil(xs[s]), zoneX, this.w - 1);
+        const ex = clamp(Math.floor(xs[s + 1]), zoneX, this.w - 1);
         for (let x = sx; x <= ex; x++) {
           const idx = row + x;
-          if (this.mask[idx] === 1) {
+          if (this.isWall[idx] === 1) {
+            this.isWall[idx] = 0;
             this.mask[idx] = 0;
+            this.wallLeft--;
             result.removed++;
-            if (this.isWall[idx] === 1) {
-              this.isWall[idx] = 0;
-              this.wallLeft--;
-            }
             // Cheap sampling for debris spawn points.
             if ((result.removed & 255) === 0) result.edges.push({ x, y });
           }
@@ -302,14 +312,12 @@ export class Terrain {
       }
     }
 
-    // Same polygon punched out of the visible bitmap.
+    // Same polygon punched out of the visible bitmap, clipped to the wall.
     const c = this.tctx;
     c.save();
-    if (maxY > this.bedrockY) {
-      c.beginPath();
-      c.rect(0, 0, this.w, this.bedrockY);
-      c.clip();
-    }
+    c.beginPath();
+    c.rect(zoneX, 0, this.w - zoneX, zoneY);
+    c.clip();
     c.globalCompositeOperation = 'destination-out';
     c.beginPath();
     c.moveTo(pts[0].x, pts[0].y);
@@ -325,6 +333,7 @@ export class Terrain {
   carveBlob(x: number, y: number, radius: number, roughness = 0.22, sides = 22): CarveResult {
     const pts: Vec2[] = [];
     const seed = (x * 13 + y * 7) | 0;
+    radius *= DAMAGE_SCALE;
     for (let i = 0; i < sides; i++) {
       const a = (i / sides) * TAU;
       const r = radius * (1 + hashNoise(seed + i, i * 3) * roughness);
@@ -341,6 +350,7 @@ export class Terrain {
     const pts: Vec2[] = [];
     const steps = Math.max(4, Math.min(28, Math.round(len / 12)));
     const seed = (ax * 3 + ay * 11) | 0;
+    radius *= DAMAGE_SCALE;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const r = radius * (1 + hashNoise(seed + i, 1) * roughness) * (0.75 + Math.sin(t * Math.PI) * 0.35);
@@ -358,6 +368,7 @@ export class Terrain {
   carveArc(cx: number, cy: number, radius: number, from: number, to: number, thickness: number): CarveResult {
     const pts: Vec2[] = [];
     const steps = 16;
+    thickness *= DAMAGE_SCALE;
     for (let i = 0; i <= steps; i++) {
       const a = from + (to - from) * (i / steps);
       const r = radius + thickness * 0.5 * (0.8 + Math.sin((i / steps) * Math.PI) * 0.6);

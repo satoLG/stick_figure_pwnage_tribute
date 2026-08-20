@@ -567,26 +567,36 @@ export class Game {
     const compact = this.isTouch;
     const left = 44 + this.safe.left;
     const baseY = compact ? topY + 58 : h - 70 - this.safe.bottom;
+    // The bottom strip of the screen is the floor slab, which is solid black.
+    // Anything printed down there has to be knocked out in white to be read.
+    const ink = baseY > this.terrain.groundTop ? '#fff' : '#000';
     c.save();
     const nameSize = clamp(w * 0.02, 15, 24);
-    inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85 });
-    inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left' });
-    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55 });
+    inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85, color: ink });
+    inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left', color: ink });
+    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55, color: ink });
 
     const barX = left + nameSize * 1.35;
     const barY = baseY + (compact ? nameSize * 0.85 : 38);
     const cdW = clamp(w * 0.16, 110, 180);
     const meter = w2.charge > 0 ? w2.charge : 1 - w2.cooldownFrac;
-    c.strokeStyle = '#000';
+    c.strokeStyle = ink;
     c.lineWidth = 2;
     sk.polyPath([
       { x: barX, y: barY }, { x: barX + cdW, y: barY },
       { x: barX + cdW, y: barY + 8 }, { x: barX, y: barY + 8 },
     ], 0.8);
     c.stroke();
-    c.fillStyle = '#000';
+    c.fillStyle = ink;
     c.fillRect(barX + 2, barY + 2, Math.max(0, (cdW - 4) * clamp(meter, 0, 1)), 4);
-    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7 });
+    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7, color: ink });
+
+    // The running melee chain, so the player can see the combo they are on.
+    const combo = w2.comboLabel;
+    if (combo) {
+      inkText(sk, combo, barX + cdW + 16, barY + 5, clamp(w * 0.017, 12, 17),
+        { align: 'left', alpha: 0.85, wobble: 1.2, color: ink });
+    }
     c.restore();
 
     // Controls, fading out once the player has clearly got the idea. On touch
@@ -612,12 +622,14 @@ export class Game {
         const lines = [
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip)',
-          'MOUSE  AIM     CLICK  ATTACK',
+          'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
           'HOLD TAB  WEAPON WHEEL     1-0 - =  QUICK SWAP',
         ];
+        const y0 = h - 96 - this.safe.bottom;
+        const hintInk = y0 > this.terrain.groundTop ? '#fff' : '#000';
         lines.forEach((l, i) => inkText(
-          sk, l, w - 20 - this.safe.right, h - 96 - this.safe.bottom + i * (size + 8), size,
-          { align: 'right', alpha: 0.6 },
+          sk, l, w - 20 - this.safe.right, y0 + i * (size + 8), size,
+          { align: 'right', alpha: 0.6, color: hintInk },
         ));
       }
       c.restore();
@@ -693,15 +705,15 @@ export class Game {
       ? [
           ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
           ['UP / DOWN', 'jump and crouch, on the same thumb'],
-          ['RIGHT SIDE', 'touch to aim and attack'],
+          ['RIGHT SIDE', 'aim and attack — hold it for heavy combos'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : [
           ['WASD / ARROWS', 'run and crouch'],
-          ['SHIFT', 'sprint — the gait changes with the speed'],
+          ['SHIFT', 'sprint — attacking from a run is its own move'],
           ['SPACE', 'jump — press again in the air to somersault'],
-          ['MOUSE', 'aim   ·   CLICK to attack'],
+          ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
           ['HOLD TAB', 'weapon wheel   ·   1-0 - = to quick swap'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
@@ -713,7 +725,7 @@ export class Game {
       inkText(sk, r[0], w / 2 - 12, y, rowSize, { align: 'right', alpha: cf * 0.9 });
       inkText(sk, r[1].toUpperCase(), w / 2 + 12, y, rowSize * 0.94, { align: 'left', alpha: cf * 0.55 });
     });
-    inkText(sk, 'SOUND: ORIGINAL POP-ROCK, SYNTHESISED LIVE IN YOUR BROWSER',
+    inkText(sk, 'SOUND: GUITAR, BASS AND DRUMS, ALL SYNTHESISED LIVE IN YOUR BROWSER',
       w / 2, h - 16, clamp(w * 0.014, 9, 12), { alpha: cf * 0.4 });
   }
 
