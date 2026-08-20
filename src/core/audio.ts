@@ -392,6 +392,26 @@ export class AudioEngine {
       case 'charge':
         this.tone(w, 'sawtooth', 180, 1500, 0.9, 0.14);
         break;
+      case 'heavyswing':
+        // A slow, heavy weapon tearing the air open: a long low whoosh.
+        this.noiseHit(w, { gain: 0.34, attack: 0.07, decay: 0.26, type: 'bandpass', from: 300 * pitch, to: 1500, q: 1.6, rate: 0.6 });
+        this.tone(w + 0.04, 'sine', 170 * pitch, 70, 0.24, 0.14);
+        break;
+      case 'slam':
+        // The hammer landing: a body blow with a tail of tumbling rubble.
+        this.noiseHit(w, { gain: 0.85, attack: 0.002, decay: 0.55, type: 'lowpass', from: 1500, to: 60, rate: 0.45 });
+        this.tone(w, 'sine', 105 * pitch, 24, 0.45, 0.55);
+        this.tone(w + 0.03, 'triangle', 62, 20, 0.3, 0.24);
+        this.noiseHit(w + 0.09, { gain: 0.24, attack: 0.02, decay: 0.5, type: 'bandpass', from: 900, to: 260, q: 1.1 });
+        break;
+      case 'aura':
+        // The charge-up bed: a rising, resonant swell under the whole pose.
+        this.noiseHit(w, { gain: 0.16, attack: 0.09, decay: 0.5, type: 'bandpass', from: 260 * pitch, to: 1700, q: 7 });
+        this.tone(w, 'sawtooth', 90 * pitch, 260 * pitch, 0.55, 0.07);
+        break;
+      case 'step':
+        this.noiseHit(w, { gain: 0.075 * pitch, attack: 0.001, decay: 0.055, type: 'lowpass', from: 1100, to: 200 });
+        break;
       case 'jump':
         this.tone(w, 'triangle', 420, 700, 0.1, 0.1);
         break;
@@ -416,6 +436,7 @@ export class AudioEngine {
 export type SfxName =
   | 'punch' | 'swing' | 'slash' | 'stab' | 'pistol' | 'rifle' | 'shotgun'
   | 'cannon' | 'explosion' | 'launch' | 'fire' | 'beam' | 'charge'
+  | 'heavyswing' | 'slam' | 'aura' | 'step'
   | 'jump' | 'land' | 'ui' | 'wheel' | 'win';
 
 function makeDistortionCurve(amount: number): Float32Array<ArrayBuffer> {

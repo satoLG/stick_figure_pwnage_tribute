@@ -2,7 +2,7 @@ import { rand, randInt, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Terrain } from './terrain';
 
-type Kind = 'chunk' | 'spark' | 'smoke' | 'flame' | 'shockwave' | 'streak';
+type Kind = 'chunk' | 'spark' | 'smoke' | 'flame' | 'shockwave' | 'streak' | 'mote';
 
 interface Particle {
   kind: Kind;
@@ -90,6 +90,35 @@ export class Particles {
         vx: Math.cos(a) * speed * rand(0.5, 1.3), vy: Math.sin(a) * speed * rand(0.5, 1.3) - rand(10, 70),
         life: rand(0.18, 0.4), maxLife: 0.4, size: rand(7, 19),
         spin: rand(-6, 6), rot: rand(TAU), gravity: -180, drag: 1.6,
+      });
+    }
+  }
+
+  /** Footfall dust: low, wide, short-lived puffs kicked backwards off a stride. */
+  dust(x: number, y: number, count: number, dir: number, power: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = dir + rand(-0.6, 0.6);
+      const s = (40 + power * 130) * rand(0.5, 1.2);
+      this.push({
+        kind: 'smoke', x: x + rand(-5, 5), y,
+        vx: Math.cos(a) * s, vy: -Math.abs(Math.sin(a) * s) - rand(10, 60),
+        life: rand(0.16, 0.36) * (0.7 + power), maxLife: 0.62, size: rand(5, 13) * (0.7 + power * 0.6),
+        spin: rand(-2, 2), rot: rand(TAU), gravity: -40, drag: 2.6,
+      });
+    }
+  }
+
+  /**
+   * The rubble that lifts off the floor around a power-up: little chips rising
+   * and spinning against gravity, which is the whole language of a charge-up.
+   */
+  updraft(x: number, y: number, count: number, spread: number, rise: number): void {
+    for (let i = 0; i < count; i++) {
+      this.push({
+        kind: 'mote', x: x + rand(-spread, spread), y: y + rand(-8, 14),
+        vx: rand(-26, 26), vy: -rise * rand(0.5, 1.35),
+        life: rand(0.35, 0.85), maxLife: 0.85, size: rand(2.4, 6.5),
+        spin: rand(-12, 12), rot: rand(TAU), gravity: -110, drag: 0.7,
       });
     }
   }
@@ -218,6 +247,21 @@ export class Particles {
             p.x + Math.cos(a) * r * 1.9, p.y + Math.sin(a) * r * 1.9,
           );
           c.stroke();
+          break;
+        }
+        case 'mote': {
+          // A rising chip of the floor, drawn as a small solid shard.
+          const s = p.size * (0.4 + t * 0.8);
+          c.save();
+          c.translate(p.x, p.y);
+          c.rotate(p.rot);
+          c.beginPath();
+          c.moveTo(-s, s * 0.6);
+          c.lineTo(0, -s);
+          c.lineTo(s, s * 0.5);
+          c.closePath();
+          c.fill();
+          c.restore();
           break;
         }
         case 'shockwave': {

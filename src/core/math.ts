@@ -43,6 +43,10 @@ export const smoothstep = (t: number): number => {
 };
 
 export const easeOutCubic = (t: number): number => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+/** Very sharp ease-out; the whip of a sword actually passing through a target. */
+export const easeOutQuint = (t: number): number => 1 - Math.pow(1 - clamp(t, 0, 1), 5);
+/** Slow to start, for a wind-up that coils before it fires. */
+export const easeInCubic = (t: number): number => Math.pow(clamp(t, 0, 1), 3);
 export const easeOutBack = (t: number): number => {
   const c = 1.70158, c3 = c + 1, x = clamp(t, 0, 1);
   return 1 + c3 * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2);

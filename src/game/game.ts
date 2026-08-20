@@ -4,12 +4,12 @@ import { clamp, damp, easeOutBack, hashNoise, rand, TAU, vec, type Vec2 } from '
 import { Sketch } from '../core/sketch';
 import { TouchControls } from '../ui/touch';
 import {
-  drawProgress, hitRect, inkButton, inkText, measureText, WeaponWheel,
+  drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
 } from '../ui/ui';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
-import { Stickman, type Controls } from './stickman';
+import { RUN_PUSH, Stickman, type Controls } from './stickman';
 import { computeWorldSize, Terrain } from './terrain';
 import { createArsenal, type Weapon, type WeaponCtx } from './weapons';
 
@@ -18,9 +18,11 @@ type Phase = 'menu' | 'playing' | 'won';
 /** The wall is never quite 100% clean; sweep the last slivers instead. */
 const WIN_THRESHOLD = 0.994;
 
+/** Slots 11 and 12 run off the two keys sitting right after the number row. */
 const NUMBER_KEYS = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0',
+  'Minus', 'Equal',
 ];
 
 /** Everything the player is asking for this frame, whatever device said it. */
@@ -280,7 +282,11 @@ export class Game {
       if (inp.justPressed(NUMBER_KEYS[i])) numberKey = i;
     }
 
-    const keyAxis = (inp.anyDown('KeyD', 'ArrowRight') ? 1 : 0) - (inp.anyDown('KeyA', 'ArrowLeft') ? 1 : 0);
+    // A key has no in-between, so it reports exactly the deflection that means
+    // "run", and SHIFT pushes it the rest of the way into a sprint. A thumb on
+    // the analog stick gets the whole range for free.
+    const keyAxis = ((inp.anyDown('KeyD', 'ArrowRight') ? 1 : 0) - (inp.anyDown('KeyA', 'ArrowLeft') ? 1 : 0))
+      * (inp.anyDown('ShiftLeft', 'ShiftRight') ? 1 : RUN_PUSH);
     const tabOpen = inp.down('Tab');
     const wheelOpen = tabOpen || t.wheelOpen;
 
@@ -362,6 +368,14 @@ export class Game {
     this.sm.update(dt, this.terrain, intent, intent.aim);
     if (this.sm.justJumped) audio.play('jump', rand(0.9, 1.15));
     if (this.sm.justLanded) audio.play('land', rand(0.9, 1.1));
+    if (this.sm.justStepped) {
+      // Every footfall throws a little dust back down the track, which is most
+      // of what sells the difference between walking and flat-out running.
+      const p = this.sm.stepPower;
+      audio.play('step', 0.85 + p * 0.5);
+      const back = -Math.sign(this.sm.vel.x || 1);
+      this.particles.dust(this.sm.pos.x - back * 4, this.sm.pos.y - 3, 1 + Math.round(p * 2), back > 0 ? 0 : Math.PI, p);
+    }
 
     // --- weapon ------------------------------------------------------------
     const wctx = this.makeCtx(dt, intent.aim);
@@ -370,6 +384,9 @@ export class Game {
     if (pressed) this.stats.shots++;
     this.weapon.update(wctx, firing, pressed);
     this.sm.setHands(this.weapon.hands(wctx));
+    // Weapons that own the whole body - a charge-up, a heavy wind-up - say so
+    // here, every frame, so dropping the stance is just saying nothing.
+    this.sm.setStance(this.weapon.stance(wctx));
 
     // --- projectiles + their craters ---------------------------------------
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
@@ -448,6 +465,7 @@ export class Game {
     this.sm.update(dt, this.terrain, { axis: 0, down: false, jump: false, jumpHeld: false },
       { x: this.sm.pos.x + 300, y: this.sm.pos.y - 120 });
     this.sm.setHands(null);
+    this.sm.setStance(null);
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.update(dt, this.terrain);
@@ -499,6 +517,7 @@ export class Game {
     this.particles.draw(this.sk);
 
     const wctx = this.makeCtx(dt, this.pointerWorld());
+    if (this.phase === 'playing') this.weapon.drawBehind(this.sk, wctx);
     this.sm.draw(this.sk);
     if (this.phase === 'playing') this.weapon.draw(this.sk, wctx);
     for (const p of this.projectiles) p.draw(this.sk);
@@ -550,7 +569,7 @@ export class Game {
     const baseY = compact ? topY + 58 : h - 70 - this.safe.bottom;
     c.save();
     const nameSize = clamp(w * 0.02, 15, 24);
-    inkText(sk, `${w2.id % 10}`, left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85 });
+    inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85 });
     inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left' });
     if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55 });
 
@@ -579,8 +598,8 @@ export class Game {
       const size = clamp(w * 0.013, 10, 14);
       if (this.isTouch) {
         const lines = [
-          'DRAG THE LEFT SIDE TO MOVE  ·  UP JUMPS  ·  DOWN CROUCHES',
-          'TOUCH THE RIGHT SIDE TO AIM AND ATTACK',
+          'TILT THE LEFT SIDE TO WALK  ·  PUSH IT FURTHER TO SPRINT',
+          'UP JUMPS  ·  DOWN CROUCHES  ·  RIGHT SIDE AIMS AND ATTACKS',
           'HOLD THE PAD BELOW, SLIDE, LIFT TO EQUIP',
         ];
         // Centred on the open ground, not the screen: on a narrow portrait
@@ -591,10 +610,10 @@ export class Game {
         ));
       } else {
         const lines = [
-          'WASD / ARROWS  MOVE',
+          'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip)',
           'MOUSE  AIM     CLICK  ATTACK',
-          'HOLD TAB  WEAPON WHEEL     1-0  QUICK SWAP',
+          'HOLD TAB  WEAPON WHEEL     1-0 - =  QUICK SWAP',
         ];
         lines.forEach((l, i) => inkText(
           sk, l, w - 20 - this.safe.right, h - 96 - this.safe.bottom + i * (size + 8), size,
@@ -659,7 +678,7 @@ export class Game {
 
     inkText(sk, 'A PLAYABLE TRIBUTE', w / 2, h * 0.4, clamp(w * 0.022, 14, 19),
       { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.72, wobble: 0.6 });
-    inkText(sk, 'ONE STICK FIGURE, TEN WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
+    inkText(sk, 'ONE STICK FIGURE, TWELVE WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
       clamp(w * 0.019, 12, 17), { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.55, wobble: 0.5 });
 
     const press = this.input.pointer;
@@ -672,16 +691,18 @@ export class Game {
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
     const rows: Array<[string, string]> = this.isTouch
       ? [
-          ['LEFT THUMB', 'drag to run, up to jump, down to crouch'],
+          ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
+          ['UP / DOWN', 'jump and crouch, on the same thumb'],
           ['RIGHT SIDE', 'touch to aim and attack'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : [
           ['WASD / ARROWS', 'run and crouch'],
+          ['SHIFT', 'sprint — the gait changes with the speed'],
           ['SPACE', 'jump — press again in the air to somersault'],
           ['MOUSE', 'aim   ·   CLICK to attack'],
-          ['HOLD TAB', 'weapon wheel   ·   1-0 to quick swap'],
+          ['HOLD TAB', 'weapon wheel   ·   1-0 - = to quick swap'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
     const rowSize = clamp(w * 0.019, 11, 16);

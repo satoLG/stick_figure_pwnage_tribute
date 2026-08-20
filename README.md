@@ -1,7 +1,7 @@
 # Stick Figure Pwnage — Tribute
 
 A playable tribute to the early-2000s stick figure fight animations: one stick
-figure, ten weapons, and a very destructible black wall.
+figure, twelve weapons, and a very destructible black wall.
 
 Everything on screen is drawn from code. There are no sprites, no textures and
 no audio files anywhere in this repository — the figure, the weapons, the
@@ -38,11 +38,12 @@ npx vercel --prod
 | Input | Action |
 | --- | --- |
 | `W` `A` `S` `D` / arrows | Run, crouch |
+| Hold `Shift` | Sprint — a different gait, not just a bigger number |
 | `Space` | Jump — press again mid-air to somersault; also wall-jumps off the wall |
 | Mouse | Aim |
 | Left click | Attack (hold for automatic and continuous weapons) |
-| Hold `Tab` | Weapon wheel — time slows, pick with the mouse or `1`–`0` |
-| `1`–`0` | Quick-swap without opening the wheel |
+| Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
+| `1`–`0`, `-`, `=` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
 | `R` / `Esc` | Restart / main menu, on the win screen |
 
@@ -52,7 +53,7 @@ Nothing is shown until you touch it, so the picture stays clean.
 
 | Where | Action |
 | --- | --- |
-| Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways runs (analog — a half tilt walks), up jumps, down crouches. Drag past the edge and the stick follows your thumb. |
+| Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
 | Right side | Touch to aim; hold to keep attacking, charge, or sustain a beam. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
@@ -61,18 +62,20 @@ thumb dragging up from the bottom edge cannot reach the lower half of a ring.
 
 ## The arsenal
 
-| # | Weapon | Behaviour |
-| --- | --- | --- |
-| 1 | Bare hands | Fast alternating punches, small dents |
-| 2 | Katana | Sweeping crescent cut with a motion-trail fan |
-| 3 | Twin daggers | Very fast alternating stabs, narrow punctures |
-| 4 | Sidearm | Semi-auto, crisp holes with a short tunnel |
-| 5 | Assault rifle | Full auto; accuracy degrades as it heats up |
-| 6 | Shotgun | Eleven pellets in a cone, heavy self-knockback, pump action |
-| 7 | Rocket tube | Arcing projectile, 62px crater |
-| 8 | Siege cannon | Hold to charge; the biggest crater and a shove backwards |
-| 9 | Pyro stream | Hold to melt the wall away gradually |
-| 10 | Pwnage beam | Charge, then bore a wide channel clean through |
+| # | Key | Weapon | Behaviour |
+| --- | --- | --- | --- |
+| 1 | `1` | Bare hands | Jab, jab, then a hook that steps in and shoves |
+| 2 | `2` | Katana | A three-cut kata: down through the shoulder, back up the same line, then a body-turn finisher |
+| 3 | `3` | Twin shortswords | A blur of alternating cuts, every fourth one a spinning cross |
+| 4 | `4` | Greatsword | Slow coil, enormous arc; an overhead chop splits the floor ahead of it |
+| 5 | `5` | Warhammer | Slower still, and it craters instead of cutting; the shock runs out along the ground |
+| 6 | `6` | Sidearm | Semi-auto, crisp holes with a short tunnel |
+| 7 | `7` | Assault rifle | Full auto; accuracy degrades as it heats up |
+| 8 | `8` | Shotgun | Eleven pellets in a cone, heavy self-knockback, pump action |
+| 9 | `9` | Rocket tube | Arcing projectile, 62px crater |
+| 10 | `0` | Siege cannon | Hold to charge; the biggest crater and a shove backwards |
+| 11 | `-` | Pyro stream | Hold to melt the wall away gradually |
+| 12 | `=` | Pwnage beam | Gather an aura, then bore a wide channel clean through — in mid-air it holds him up while he fires |
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
@@ -144,12 +147,63 @@ There is not a single keyframe. Every joint is solved each frame:
   invert.
 - **A distance-driven gait** — the walk cycle advances with ground covered, not
   with time, so footfalls always match the ground speed.
+- **Three gaits out of one analog axis.** How far the stick is pushed picks the
+  speed *and* the animation: a stroll keeps the figure upright with short
+  strides and a small arm swing; a run lengthens the stride and leans into it;
+  a sprint stretches the stride again, folds the arms into a pump, deepens the
+  lean and starts leaving afterimages, speed lines and a dust trail. Everything
+  between them is interpolated, so there are no gait "modes" to pop between.
+  A keyboard has no in-between, so it reports the run deflection and `Shift`
+  pushes it the rest of the way.
+- **Counter-rotating shoulders** against the hips, without which a run reads as
+  a cardboard cut-out sliding along the floor.
+- **Footfall events** — each half-stride fires one, which is what kicks the dust
+  and ticks the step sound at exactly the right moment.
+- **Weapon-driven stances.** A weapon can ask for a whole-body pose for the
+  frame — `brace` plants the feet wide and arches the torso back, `hover` folds
+  the legs up and switches gravity off. They blend in and out over the solved
+  pose, so a charge-up or a heavy wind-up moves the entire figure rather than
+  just the hands.
+- **Afterimages** — a short ring of frozen skeletons drawn faintly behind the
+  live one, on the sprint and on every big swing.
 - **Terrain-adaptive feet** — each planted foot probes downward and lands on
   whatever rubble is actually there, so the figure clambers over its own mess.
 - **Springs on everything** — lean, hip height, aim, recoil and landing squash
   are all exponentially damped, so states blend instead of snapping.
 - Coyote time, a jump buffer, variable jump height, an air somersault and
   wall-jumping.
+
+### Melee, and making a cut read as a cut (`src/game/weapons.ts`)
+
+Every edged weapon feeds a shared `SlashFx`: the crescent it just swung through
+stays hanging in the air for a fraction of a second, filled white with a heavy
+ink edge, opening and thinning as it fades. It is drawn *behind* the figure, so
+a swing that takes half the screen never hides the person who threw it.
+
+The blades themselves hang off the swing rather than the aim. `gripAt` places
+the hands around the *blade* angle, so the arms lead the sword around and the
+whole body follows the weight; the katana blends between a guard grip at rest
+and a hilt grip mid-cut. Each combo step carries its own timing — coil, an
+almost instantaneous strike, then a long recovery — and retunes the next step's
+animation length as it fires, which is what lets three cuts of different weights
+chain out of one held button.
+
+The two heavy weapons are the same machinery with the numbers pushed: a coil
+long enough to be read and answered, an arc big enough to take a bite out of the
+wall in one hit, and a `brace` stance that sinks the figure into the swing.
+
+### The aura (`EnergyBeam.drawBehind`)
+
+The charge-up is a jagged silhouette around the figure, filled white and stroked
+in ink, with tongues licking up past his head and chips of the floor tearing
+loose and climbing it. Filling it white is what keeps the picture readable: the
+aura burns the black wall back off him instead of scribbling on top of him, and
+the figure is stroked once in fat white before it is drawn in black, so it stays
+clean through the whole thicket.
+
+Charging in mid-air latches a `hover` stance: the fall stops dead, the legs fold
+up, and the beam is fired from a slow climb. When the power lets go, so does the
+float.
 
 ### The hand-drawn look (`src/core/sketch.ts`)
 
@@ -189,8 +243,8 @@ src/
   game/
     game.ts            state machine, loop, screen effects, HUD
     terrain.ts         destructible bitmap terrain
-    stickman.ts        procedural skeleton and animation
-    weapons.ts         the ten weapons
+    stickman.ts        procedural skeleton, gaits, stances and afterimages
+    weapons.ts         the twelve weapons
     projectiles.ts     rockets, shells, blasts
     particles.ts       debris, sparks, smoke, flames, shockwaves
   ui/
