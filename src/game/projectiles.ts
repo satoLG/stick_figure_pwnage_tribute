@@ -164,11 +164,11 @@ export function applyBlast(terrain: Terrain, x: number, y: number, blast: Blast)
 }
 
 export const BLASTS: Record<string, Blast> = {
-  rocket: { radius: 62, shake: 16, flash: 0.5, debris: 34, sfx: 'explosion', bites: 7 },
-  cannon: { radius: 104, shake: 30, flash: 0.9, debris: 60, sfx: 'cannon', bites: 10 },
+  rocket: { radius: 48, shake: 16, flash: 0.5, debris: 34, sfx: 'explosion', bites: 7 },
+  cannon: { radius: 80, shake: 30, flash: 0.9, debris: 60, sfx: 'cannon', bites: 10 },
   /** The warhammer does not explode, but it craters exactly like something did. */
-  maul: { radius: 86, shake: 30, flash: 0.5, debris: 50, sfx: 'explosion', bites: 11 },
-  fireball: { radius: 34, shake: 6, flash: 0.18, debris: 14, sfx: 'fire', bites: 5 },
+  maul: { radius: 68, shake: 30, flash: 0.5, debris: 50, sfx: 'explosion', bites: 11 },
+  fireball: { radius: 28, shake: 6, flash: 0.18, debris: 14, sfx: 'fire', bites: 5 },
 };
 
 export const clampBlast = (b: Blast, scale: number): Blast => ({

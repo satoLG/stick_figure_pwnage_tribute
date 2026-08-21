@@ -9,7 +9,18 @@ const FLOOR_THICKNESS = 124;
  * the whole thing is gone in well under a minute. Well below 1 the wall reads
  * as real masonry - you can see each hit land, but you have to keep working.
  */
-const DAMAGE_SCALE = 0.6;
+const DAMAGE_SCALE = 1.05;
+/**
+ * Radii scale by the square root of it, so the knob above stays a straight
+ * multiplier on *area removed* whatever shape does the removing.
+ */
+const DAMAGE_SCALE_LEN = Math.sqrt(DAMAGE_SCALE);
+/**
+ * Wall fragments smaller than this, once cut free of everything around them,
+ * are not left hanging in the air: they fall away as debris and count as
+ * destroyed. Nobody should have to chase single specks around the screen.
+ */
+const SPECK_LIMIT = 620;
 
 export interface WorldSize { w: number; h: number; }
 
@@ -98,7 +109,7 @@ export class Terrain {
   private layout(): void {
     this.groundTop = this.h - FLOOR_THICKNESS;
     // A thinner wall on narrow screens, so portrait still leaves running room.
-    const thickness = clamp(this.w * 0.32, 240, 460);
+    const thickness = clamp(this.w * 0.4, 300, 560);
     this.wallX = this.w - thickness;
   }
 
@@ -326,14 +337,97 @@ export class Terrain {
     c.fill();
     c.restore();
 
+    // Anything the cut just stranded goes with it.
+    if (result.removed > 0) {
+      const swept = this.sweepSpecks(minX, minY, maxX, maxY);
+      result.removed += swept.removed;
+      for (const p of swept.pts) result.edges.push(p);
+    }
     return result;
+  }
+
+  /**
+   * Cuts loose any small fragment left standing on its own around a fresh hole.
+   *
+   * Carving shapes out of a wall constantly strands little islands - a sliver
+   * between two overlapping bites, a chip in the middle of a crater - and
+   * leaving them floating there looks broken and makes the last few percent of
+   * the wall a scavenger hunt. So after every carve the neighbourhood is walked:
+   * anything that no longer reaches the edge of that neighbourhood and is
+   * smaller than a fragment worth keeping is knocked out and counted as
+   * destroyed. Returns where the pieces fell, for debris.
+   */
+  private sweepSpecks(x0: number, y0: number, x1: number, y1: number): { pts: Vec2[]; removed: number } {
+    const bx0 = clamp(Math.floor(x0) - 4, 0, this.w - 1);
+    const by0 = clamp(Math.floor(y0) - 4, 0, this.h - 1);
+    const bx1 = clamp(Math.ceil(x1) + 4, 0, this.w - 1);
+    const by1 = clamp(Math.ceil(y1) + 4, 0, this.h - 1);
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+    // A beam's box can be most of the screen; walking that every frame is not
+    // worth it, and long thin cuts do not strand islands anyway.
+    if (bw < 3 || bh < 3 || bw * bh > 90000) return { pts: [], removed: 0 };
+
+    const seen = new Uint8Array(bw * bh);
+    const stack = new Int32Array(bw * bh);
+    const comp = new Int32Array(bw * bh);
+    const fell: Vec2[] = [];
+    let swept = 0;
+
+    for (let sy = 0; sy < bh; sy++) {
+      for (let sx = 0; sx < bw; sx++) {
+        const si = sy * bw + sx;
+        if (seen[si] === 1 || this.isWall[(by0 + sy) * this.w + bx0 + sx] !== 1) continue;
+        // Flood this fragment, noting whether it escapes the neighbourhood.
+        let top = 0, size = 0, open = false;
+        stack[top++] = si;
+        seen[si] = 1;
+        while (top > 0) {
+          const i = stack[--top];
+          comp[size++] = i;
+          const cx = i % bw, cy = (i / bw) | 0;
+          if (cx === 0 || cy === 0 || cx === bw - 1 || cy === bh - 1) open = true;
+          if (size > SPECK_LIMIT) { open = true; break; }
+          for (let k = 0; k < 4; k++) {
+            const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
+            const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
+            if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
+            const ni = ny * bw + nx;
+            if (seen[ni] === 1 || this.isWall[(by0 + ny) * this.w + bx0 + nx] !== 1) continue;
+            seen[ni] = 1;
+            stack[top++] = ni;
+          }
+        }
+        if (open) continue;
+
+        // Marooned and small: let it go.
+        let mx = 0, my = 0;
+        for (let k = 0; k < size; k++) {
+          const i = comp[k];
+          const px = bx0 + (i % bw), py = by0 + ((i / bw) | 0);
+          this.isWall[py * this.w + px] = 0;
+          this.mask[py * this.w + px] = 0;
+          this.wallLeft--;
+          swept++;
+          mx += px; my += py;
+        }
+        this.tctx.save();
+        this.tctx.globalCompositeOperation = 'destination-out';
+        for (let k = 0; k < size; k++) {
+          const i = comp[k];
+          this.tctx.fillRect(bx0 + (i % bw), by0 + ((i / bw) | 0), 1, 1);
+        }
+        this.tctx.restore();
+        fell.push({ x: mx / size, y: my / size });
+      }
+    }
+    return { pts: fell, removed: swept };
   }
 
   /** A crater: a circle whose radius wobbles, so nothing looks stamped. */
   carveBlob(x: number, y: number, radius: number, roughness = 0.22, sides = 22): CarveResult {
     const pts: Vec2[] = [];
     const seed = (x * 13 + y * 7) | 0;
-    radius *= DAMAGE_SCALE;
+    radius *= DAMAGE_SCALE_LEN;
     for (let i = 0; i < sides; i++) {
       const a = (i / sides) * TAU;
       const r = radius * (1 + hashNoise(seed + i, i * 3) * roughness);
@@ -350,7 +444,7 @@ export class Terrain {
     const pts: Vec2[] = [];
     const steps = Math.max(4, Math.min(28, Math.round(len / 12)));
     const seed = (ax * 3 + ay * 11) | 0;
-    radius *= DAMAGE_SCALE;
+    radius *= DAMAGE_SCALE_LEN;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const r = radius * (1 + hashNoise(seed + i, 1) * roughness) * (0.75 + Math.sin(t * Math.PI) * 0.35);
@@ -364,20 +458,34 @@ export class Terrain {
     return this.carvePolygon(pts);
   }
 
-  /** A crescent slice, for sword swings. */
-  carveArc(cx: number, cy: number, radius: number, from: number, to: number, thickness: number): CarveResult {
+  /**
+   * The wedge a swung blade actually sweeps: everything between the hilt and
+   * the tip, right across the arc.
+   *
+   * This used to carve a thin crescent out at the tip's radius, which left the
+   * wall standing *between* the figure and the bite - as if the blade had
+   * teleported past it. Nothing can be cut at arm's length without the stuff in
+   * front of it going first, so the sweep is a solid sector now.
+   */
+  carveSector(cx: number, cy: number, inner: number, outer: number, from: number, to: number): CarveResult {
+    const r1 = outer * DAMAGE_SCALE_LEN;
+    const r0 = Math.max(0, inner * DAMAGE_SCALE_LEN);
     const pts: Vec2[] = [];
-    const steps = 16;
-    thickness *= DAMAGE_SCALE;
+    const steps = Math.max(6, Math.min(28, Math.round(Math.abs(to - from) * 9)));
+    const seed = (cx * 5 + cy * 3) | 0;
     for (let i = 0; i <= steps; i++) {
       const a = from + (to - from) * (i / steps);
-      const r = radius + thickness * 0.5 * (0.8 + Math.sin((i / steps) * Math.PI) * 0.6);
+      // The far edge is ragged: a cut edge is torn, not compass-drawn.
+      const r = r1 * (1 + hashNoise(seed + i, 1) * 0.07);
       pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
     }
-    for (let i = steps; i >= 0; i--) {
-      const a = from + (to - from) * (i / steps);
-      const r = Math.max(1, radius - thickness * 0.5 * (0.8 + Math.sin((i / steps) * Math.PI) * 0.6));
-      pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+    if (r0 < 2) {
+      pts.push({ x: cx, y: cy });
+    } else {
+      for (let i = steps; i >= 0; i--) {
+        const a = from + (to - from) * (i / steps);
+        pts.push({ x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0 });
+      }
     }
     return this.carvePolygon(pts);
   }

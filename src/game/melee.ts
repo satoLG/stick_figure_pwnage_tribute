@@ -225,10 +225,17 @@ export abstract class MeleeWeapon extends Weapon {
     } else {
       const from = a + mv.from * f;
       const to = a + mv.to * f;
-      removed = ctx.terrain.carveArc(h.x, h.y, reach, from, to, thick).removed;
+      // The blade sweeps everything between the hilt and the tip, so the cut is
+      // the whole wedge - it cannot bite past a slab of wall and leave it
+      // standing. `thick` scales how deep along the blade the cut reaches.
+      const bite = thick / 44;
+      const cut = ctx.terrain.carveSector(h.x, h.y, reach * (1 - bite), reach, from, to);
+      removed = cut.removed;
+      // Fragments the cut stranded and knocked loose fall as real debris.
+      for (const p of cut.edges.slice(0, 5)) ctx.particles.debris(p.x, p.y, 1, 190, a + Math.PI, 2.2);
       if (mv.cross) {
         const from2 = a - mv.from * f, to2 = a - mv.to * f;
-        removed += ctx.terrain.carveArc(h.x, h.y, reach, from2, to2, thick).removed;
+        removed += ctx.terrain.carveSector(h.x, h.y, reach * (1 - bite), reach, from2, to2).removed;
       }
     }
 

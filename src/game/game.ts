@@ -56,6 +56,8 @@ export class Game {
    * to read the impact pose in, which no amount of extra ink does.
    */
   private freezeT = 0;
+  /** Damage waiting on its own round to arrive, so nothing lands early. */
+  private pending: Array<{ t: number; fn: () => void }> = [];
   private projectiles: Projectile[] = [];
   private weapons: Weapon[] = createArsenal();
   private equipped = 0;
@@ -219,6 +221,7 @@ export class Game {
     this.particles.clear();
     this.impacts.clear();
     this.freezeT = 0;
+    this.pending.length = 0;
     this.projectiles.length = 0;
     this.weapons = createArsenal();
     this.equipped = 0;
@@ -259,6 +262,7 @@ export class Game {
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => this.impacts.add(x, y, dir, power),
       freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
+      after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
   }
@@ -451,6 +455,7 @@ export class Game {
     }
 
     this.particles.update(dt, this.terrain);
+    this.runPending(dt);
     this.decayEffects(rawDt);
 
     // --- win check ---------------------------------------------------------
@@ -464,6 +469,17 @@ export class Game {
       this.shake(30);
       this.particles.shockwave(this.view.w * 0.84, this.view.h * 0.42, 320);
       audio.play('win');
+    }
+  }
+
+  /** Fires anything whose flight time has run out - a bullet reaching the wall. */
+  private runPending(dt: number): void {
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const p = this.pending[i];
+      p.t -= dt;
+      if (p.t > 0) continue;
+      this.pending.splice(i, 1);
+      p.fn();
     }
   }
 

@@ -251,12 +251,6 @@ export class Katana extends MeleeWeapon {
     sk.curve(guard, bow, tip, 3.6, 0.5);
     sk.line({ x: guard.x - sa * 4, y: guard.y + ca * 4 }, tip, 1.6, 2, 0.5);
     sk.line({ x: tip.x - ca * 16 - sa * 4, y: tip.y - sa * 16 + ca * 4 }, tip, 2.2, 1, 0.4);
-
-    // A glint running along the edge, brightest in the middle of a cut.
-    if (this.striking > 0.02) {
-      c.lineWidth = 2;
-      sk.burst(tip.x, tip.y, 3, 4, 20, 2, 1.4, ba, 771);
-    }
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
@@ -717,14 +711,14 @@ export class Pistol extends Weapon {
   constructor() { super(); this.animLen = 0.16; }
 
   protected release(ctx: WeaponCtx): void {
-    const a = ctx.sm.pose.aim + rand(-0.012, 0.012);
     const muzzle = grip(ctx, 57);
+    const a = this.aimFrom(ctx, muzzle) + rand(-0.012, 0.012);
     this.flashT = 0.055;
     ctx.sfx('pistol', rand(0.95, 1.08));
     ctx.sm.applyRecoil(0.5, a, 20);
     ctx.shake(3.5);
     ctx.particles.streaks(muzzle.x, muzzle.y, 3, a, 0.3, 40);
-    this.hitscan(ctx, muzzle, a, 1400, 12, 30);
+    this.hitscan(ctx, muzzle, a, 1400, 6.5, 26);
   }
 
   protected override tick(ctx: WeaponCtx): void {
@@ -776,15 +770,15 @@ export class Rifle extends Weapon {
 
   protected release(ctx: WeaponCtx): void {
     this.heat = Math.min(1, this.heat + 0.16);
-    const a = ctx.sm.pose.aim + rand(-1, 1) * (0.008 + this.heat * 0.055);
     const muzzle = grip(ctx, 90);
+    const a = this.aimFrom(ctx, muzzle) + rand(-1, 1) * (0.008 + this.heat * 0.055);
     this.flashT = 0.045;
     ctx.sfx('rifle', rand(0.94, 1.06));
     ctx.sm.applyRecoil(0.34, a, 12);
     ctx.shake(2.6);
     // Ejected brass.
     ctx.particles.sparks(muzzle.x - Math.cos(a) * 34, muzzle.y - Math.sin(a) * 34, 1, 150, -Math.PI / 2 + rand(-0.5, 0.5), 0.6);
-    this.hitscan(ctx, muzzle, a, 1500, 10.5, 34);
+    this.hitscan(ctx, muzzle, a, 1500, 5.6, 30);
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
@@ -840,8 +834,8 @@ export class Shotgun extends Weapon {
   constructor() { super(); this.animLen = 0.5; }
 
   protected release(ctx: WeaponCtx): void {
-    const base = ctx.sm.pose.aim;
     const muzzle = grip(ctx, 84);
+    const base = this.aimFrom(ctx, muzzle);
     this.flashT = 0.09;
     ctx.sfx('shotgun');
     ctx.shake(13);
@@ -849,7 +843,7 @@ export class Shotgun extends Weapon {
     ctx.sm.applyRecoil(1.1, base, 260);
     for (let i = 0; i < 11; i++) {
       const a = base + rand(-1, 1) * 0.17;
-      this.hitscan(ctx, muzzle, a, 700, 13, 22);
+      this.hitscan(ctx, muzzle, a, 700, 6.8, 20);
     }
     ctx.particles.smoke(muzzle.x, muzzle.y, 5, 8);
     ctx.particles.streaks(muzzle.x, muzzle.y, 9, base, 0.5, 60);
@@ -914,8 +908,8 @@ export class RocketLauncher extends Weapon {
   constructor() { super(); this.animLen = 0.6; }
 
   protected release(ctx: WeaponCtx): void {
-    const a = ctx.sm.pose.aim;
     const muzzle = grip(ctx, 88);
+    const a = this.aimFrom(ctx, muzzle);
     ctx.projectiles.push(new Projectile({
       x: muzzle.x, y: muzzle.y,
       vx: Math.cos(a) * 900, vy: Math.sin(a) * 900,
@@ -975,8 +969,8 @@ export class Cannon extends Weapon {
   private fireT = 0;
 
   protected release(ctx: WeaponCtx, power: number): void {
-    const a = ctx.sm.pose.aim;
     const muzzle = grip(ctx, 106);
+    const a = this.aimFrom(ctx, muzzle);
     const scale = 0.55 + power * 0.75;
     ctx.projectiles.push(new Projectile({
       x: muzzle.x, y: muzzle.y,
@@ -1285,7 +1279,7 @@ export class EnergyBeam extends Weapon {
     this.beamAngle += d * Math.min(1, ctx.dt * 6);
 
     const origin = grip(ctx, 44);
-    const radius = (34 * this.power) * (0.45 + k * 0.55);
+    const radius = (26 * this.power) * (0.45 + k * 0.55);
     const a = this.beamAngle;
     // Bore straight through: a capsule out to the far edge of the world.
     ctx.terrain.carveCapsule(

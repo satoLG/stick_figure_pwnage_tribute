@@ -21,6 +21,8 @@ export interface WeaponCtx {
   hit(x: number, y: number, dir: number, power?: number): void;
   /** Stop the world for a couple of frames, so the impact pose can be read. */
   freeze(frames: number): void;
+  /** Run something once, `seconds` from now - a round arriving, for instance. */
+  after(seconds: number, fn: () => void): void;
   sfx(name: SfxName, pitch?: number): void;
 }
 
@@ -227,23 +229,40 @@ export abstract class Weapon {
   abstract icon(sk: Sketch, x: number, y: number, s: number): void;
 
   /**
+   * The angle from a point to whatever the crosshair is on.
+   *
+   * Firing along the figure's aim angle from a muzzle that sits a barrel's
+   * length in front of him is not the same line: it is parallel to it and
+   * offset, so shots land off the crosshair by that offset. Every barrel aims
+   * from where the barrel actually is.
+   */
+  protected aimFrom(ctx: WeaponCtx, from: Vec2): number {
+    return Math.atan2(ctx.aimPoint.y - from.y, ctx.aimPoint.x - from.x);
+  }
+
+  /**
    * Shared: a hitscan shot that bores a hole and a short tunnel, and draws the
    * round travelling down the firing line so the burst reads as bullets.
+   *
+   * The wall does not open until the round gets there. Punching the hole on the
+   * frame the trigger goes means the damage appears ahead of its own tracer,
+   * which reads as the wall breaking by itself.
    */
   protected hitscan(ctx: WeaponCtx, from: Vec2, angle: number, range: number, holeR: number, depth: number): boolean {
     const ca = Math.cos(angle), sa = Math.sin(angle);
     const hit = ctx.terrain.raycast(from.x, from.y, ca, sa, range, 3);
     const end = hit ?? { x: from.x + ca * range, y: from.y + sa * range };
-    ctx.particles.tracer(from.x, from.y, end.x, end.y, 3600, clamp(holeR / 13, 0.4, 1.6));
+    const speed = 3600;
+    ctx.particles.tracer(from.x, from.y, end.x, end.y, speed, clamp(holeR / 10, 0.4, 1.6));
     if (!hit) return false;
-    ctx.terrain.carveBlob(hit.x, hit.y, holeR, 0.34, 14);
-    // The tunnel behind the entry wound is what makes repeated shots eat through.
-    ctx.terrain.carveCapsule(
-      hit.x, hit.y,
-      hit.x + ca * depth, hit.y + sa * depth,
-      holeR * 0.72, 0.3,
-    );
-    impact(ctx, hit.x, hit.y, angle, holeR / 26);
+    const flight = Math.hypot(end.x - from.x, end.y - from.y) / speed;
+    const terrain = ctx.terrain;
+    ctx.after(flight, () => {
+      terrain.carveBlob(hit.x, hit.y, holeR, 0.34, 14);
+      // The tunnel behind the entry wound is what makes repeated shots eat through.
+      terrain.carveCapsule(hit.x, hit.y, hit.x + ca * depth, hit.y + sa * depth, holeR * 0.72, 0.3);
+      impact(ctx, hit.x, hit.y, angle, holeR / 34);
+    });
     return true;
   }
 

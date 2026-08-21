@@ -139,8 +139,9 @@ export class Particles {
       kind: 'tracer', x, y, ex, ey, travel,
       vx: 0, vy: 0,
       life, maxLife: life,
-      // `size` carries the length of the bright dash at the head of the shot.
-      size: 40 + weight * 60,
+      // `size` is the bright tip at the very head of the round - just the nose,
+      // not a long bold streak dragging behind it.
+      size: 13 + weight * 9,
       spin: 0, rot: weight, gravity: 0, drag: 0,
     });
   }
