@@ -2,7 +2,7 @@ import { rand, randInt, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Terrain } from './terrain';
 
-type Kind = 'chunk' | 'spark' | 'smoke' | 'flame' | 'shockwave' | 'streak' | 'mote';
+type Kind = 'chunk' | 'spark' | 'smoke' | 'flame' | 'shockwave' | 'streak' | 'mote' | 'tracer';
 
 interface Particle {
   kind: Kind;
@@ -15,6 +15,8 @@ interface Particle {
   drag: number;
   verts?: Vec2[];
   bounced?: boolean;
+  /** Tracers only: the far end of the shot, and how long the flight takes. */
+  ex?: number; ey?: number; travel?: number;
 }
 
 /**
@@ -123,6 +125,27 @@ export class Particles {
     }
   }
 
+  /**
+   * The path of a bullet: a bright dash racing down the firing line with a very
+   * faint line hanging behind it. Hitscan weapons resolve their damage the
+   * instant the trigger goes, so this is the only thing that tells the player
+   * where the rounds actually went - which is exactly what makes a burst from
+   * the rifle read as a burst instead of a stuttering muzzle flash.
+   */
+  tracer(x: number, y: number, ex: number, ey: number, speed = 3400, weight = 1): void {
+    const travel = Math.max(0.012, Math.hypot(ex - x, ey - y) / speed);
+    const life = travel + 0.13;
+    this.push({
+      kind: 'tracer', x, y, ex, ey, travel,
+      vx: 0, vy: 0,
+      life, maxLife: life,
+      // `size` is the bright tip at the very head of the round - just the nose,
+      // not a long bold streak dragging behind it.
+      size: 13 + weight * 9,
+      spin: 0, rot: weight, gravity: 0, drag: 0,
+    });
+  }
+
   shockwave(x: number, y: number, size: number): void {
     this.push({
       kind: 'shockwave', x, y, vx: 0, vy: 0,
@@ -148,7 +171,7 @@ export class Particles {
       const p = this.pool[i];
       p.life -= dt;
       if (p.life <= 0) { this.pool.splice(i, 1); continue; }
-      if (p.kind === 'shockwave') continue;
+      if (p.kind === 'shockwave' || p.kind === 'tracer') continue;
 
       const d = Math.exp(-p.drag * dt);
       p.vx *= d;
@@ -262,6 +285,37 @@ export class Particles {
           c.closePath();
           c.fill();
           c.restore();
+          break;
+        }
+        case 'tracer': {
+          const travel = p.travel!;
+          const elapsed = p.maxLife - p.life;
+          const u = Math.min(1, elapsed / travel);
+          const dx = p.ex! - p.x, dy = p.ey! - p.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          // Fades out only once the round has arrived, so a long shot stays
+          // legible for its whole flight however far away the wall is.
+          const fade = Math.min(1, p.life / (p.maxLife - travel));
+          const hx = p.x + dx * u, hy = p.y + dy * u;
+          const back = Math.max(0, u - p.size / dist);
+          const bx = p.x + dx * back, by = p.y + dy * back;
+
+          // The line the round has already covered: barely there, just enough
+          // to read as a trajectory.
+          c.globalAlpha = 0.13 * fade;
+          c.lineWidth = 1.1;
+          c.beginPath();
+          c.moveTo(p.x, p.y);
+          c.lineTo(hx, hy);
+          c.stroke();
+          // The round itself.
+          c.globalAlpha = (0.45 + p.rot * 0.25) * fade;
+          c.lineWidth = 1.5 + p.rot * 0.9;
+          c.beginPath();
+          c.moveTo(bx, by);
+          c.lineTo(hx, hy);
+          c.stroke();
+          c.globalAlpha = 1;
           break;
         }
         case 'shockwave': {

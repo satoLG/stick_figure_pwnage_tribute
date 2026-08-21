@@ -41,7 +41,9 @@ npx vercel --prod
 | Hold `Shift` | Sprint — a different gait, not just a bigger number |
 | `Space` | Jump — press again mid-air to somersault; also wall-jumps off the wall |
 | Mouse | Aim |
-| Left click | Attack (hold for automatic and continuous weapons) |
+| Left click | Attack — keep attacking to chain a combo |
+| Hold left click | The heavy chain: slower, bigger, more committed strikes |
+| Attack while running / in the air | Its own chain again — four per melee weapon |
 | Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
 | `1`–`0`, `-`, `=` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
@@ -54,7 +56,7 @@ Nothing is shown until you touch it, so the picture stays clean.
 | Where | Action |
 | --- | --- |
 | Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
-| Right side | Touch to aim; hold to keep attacking, charge, or sustain a beam. |
+| Right side | Touch to aim; tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
 The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
@@ -64,14 +66,14 @@ thumb dragging up from the bottom edge cannot reach the lower half of a ring.
 
 | # | Key | Weapon | Behaviour |
 | --- | --- | --- | --- |
-| 1 | `1` | Bare hands | Jab, jab, then a hook that steps in and shoves |
-| 2 | `2` | Katana | A three-cut kata: down through the shoulder, back up the same line, then a body-turn finisher |
-| 3 | `3` | Twin shortswords | A blur of alternating cuts, every fourth one a spinning cross |
-| 4 | `4` | Greatsword | Slow coil, enormous arc; an overhead chop splits the floor ahead of it |
-| 5 | `5` | Warhammer | Slower still, and it craters instead of cutting; the shock runs out along the ground |
-| 6 | `6` | Sidearm | Semi-auto, crisp holes with a short tunnel |
-| 7 | `7` | Assault rifle | Full auto; accuracy degrades as it heats up |
-| 8 | `8` | Shotgun | Eleven pellets in a cone, heavy self-knockback, pump action |
+| 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run, a spinning backfist if you lean on it |
+| 2 | `2` | Katana | A three-cut kata with a whirlwind on the end — and out of a run, the ninja slash: down onto one knee, one flat cut as he slides past, straight back up |
+| 3 | `3` | Twin shortswords | A blur of alternating cuts, every fourth a cross; a full propeller in mid-air |
+| 4 | `4` | Greatsword | Too heavy to carry: the tip drags along the floor throwing sparks, and a run rips it back up through everything in front |
+| 5 | `5` | Warhammer | Ploughs along behind him, then craters instead of cutting; the shock runs out along the ground |
+| 6 | `6` | Sidearm | Semi-auto, crisp holes with a short tunnel; you can watch each round go |
+| 7 | `7` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
+| 8 | `8` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
 | 9 | `9` | Rocket tube | Arcing projectile, 62px crater |
 | 10 | `0` | Siege cannon | Hold to charge; the biggest crater and a shove backwards |
 | 11 | `-` | Pyro stream | Hold to melt the wall away gradually |
@@ -105,8 +107,17 @@ Everything else is built on that primitive:
 - `carveCapsule` — for sword thrusts, bullet tunnels and the energy beam
 - `carveArc` — a crescent, for sword swings
 
-A bedrock line under the floor is never carved, so the player cannot dig
-themselves out of the world.
+**Only the wall breaks.** The floor is the stage the fight happens on: it keeps
+its uneven, rolling surface, but nothing digs into it. Both passes of
+`carvePolygon` are clipped to the wall's rectangle, so the mask, the picture and
+the win counter cannot disagree about what is destructible. The wall itself
+starts perfectly straight and vertical — every notch in its face is one the
+player put there.
+
+Every carve is scaled by a single `DAMAGE_SCALE` constant before it touches the
+bitmap. It is the one knob for how tough the wall is: sustained fire from the
+rifle takes well over a minute to clear it, and the heavy weapons still have to
+be swung at the wall from arm's length to pay off.
 
 ### Filling any screen (`computeWorldSize`)
 
@@ -122,9 +133,8 @@ The wall's thickness and the floor's depth clamp differently at different sizes,
 so damage cannot just be copied across at an offset — each axis is remapped
 piecewise around a landmark both sizes share (the wall's face on x, the floor's
 surface on y). Only pixels that were solid in the *old* silhouette count as
-holes, otherwise the wall's ragged edge would read as damage every resize. A
-full portrait/landscape flip preserves the destroyed fraction to within a
-percentage point.
+holes. A full portrait/landscape flip preserves the destroyed fraction to within
+a percentage point.
 
 Notch insets are read from a zero-size probe element carrying
 `env(safe-area-inset-*)` and applied to the HUD, so nothing important hides
@@ -160,10 +170,15 @@ There is not a single keyframe. Every joint is solved each frame:
 - **Footfall events** — each half-stride fires one, which is what kicks the dust
   and ticks the step sound at exactly the right moment.
 - **Weapon-driven stances.** A weapon can ask for a whole-body pose for the
-  frame — `brace` plants the feet wide and arches the torso back, `hover` folds
-  the legs up and switches gravity off. They blend in and out over the solved
-  pose, so a charge-up or a heavy wind-up moves the entire figure rather than
-  just the hands.
+  frame — `brace` plants the feet wide and arches the torso back, `crouch` drops
+  him onto one knee over the floor, `lunge` throws the front leg out ahead, and
+  `hover` folds the legs up and switches gravity off. They blend in and out over
+  the solved pose, so a charge-up, a heavy wind-up or a sliding slash moves the
+  entire figure rather than just the hands.
+- **Slides and grounded spins.** `slide()` cuts ground friction for a moment, so
+  a committed step keeps travelling instead of stopping dead; `spinFlourish()`
+  turns the whole figure about its own pelvis, with an optional hop under it so
+  a spinning swing does not drag its own feet through the floor.
 - **Afterimages** — a short ring of frozen skeletons drawn faintly behind the
   live one, on the sprint and on every big swing.
 - **Terrain-adaptive feet** — each planted foot probes downward and lands on
@@ -173,7 +188,42 @@ There is not a single keyframe. Every joint is solved each frame:
 - Coyote time, a jump buffer, variable jump height, an air somersault and
   wall-jumping.
 
-### Melee, and making a cut read as a cut (`src/game/weapons.ts`)
+### Melee combos (`src/game/melee.ts`)
+
+Every melee weapon is a table of moves, not a pile of `if`s. A `MeleeMove` says
+where the weapon coils to and where the strike ends, how long each phase takes,
+how big a bite it takes, and what the body does with it — a forward impulse, a
+lift, a slide, whole turns of body spin, a stance to hold, a shove backwards
+once the hit lands, and how much screen the impact is worth.
+
+Each weapon carries **four chains**, and which one a swing comes from is decided
+by what the player was doing at the moment they attacked — there is no separate
+button:
+
+| Chain | When |
+| --- | --- |
+| `ground` | Standing or walking: the light combo, cycled while you keep attacking |
+| `run` | Attacking above running speed |
+| `air` | Attacking off the ground |
+| `hold` | The trigger held down past a third of a second: heavier, slower, more committed |
+
+Keep the rhythm and the chain advances; lose it for two thirds of a second and
+it drops back to its first strike. The chain the figure is on is printed next to
+the cooldown meter.
+
+The base class owns everything the chains share — the coil/strike/recovery
+curve, the carve, the crescent, the tip ribbon, the stance blend, the hand
+placement and the impact. A weapon only says how long it is, what its four
+chains are, where it rests and how to draw itself, which is why the katana's
+sliding one-knee slash and the hammer's meteor are the same twelve lines of
+data with different numbers.
+
+`dragAngle` solves for the angle that puts the far end of a weapon flat on the
+floor behind the figure. The greatsword and the warhammer blend into it the
+moment he starts walking: the tip finds the ground, throws sparks and grit along
+it, and the running attack rips it straight back up out of the floor.
+
+### Making a cut read as a cut (`src/game/weapon-base.ts`)
 
 Every edged weapon feeds a shared `SlashFx`: the crescent it just swung through
 stays hanging in the air for a fraction of a second, filled white with a heavy
@@ -191,6 +241,15 @@ chain out of one held button.
 The two heavy weapons are the same machinery with the numbers pushed: a coil
 long enough to be read and answered, an arc big enough to take a bite out of the
 wall in one hit, and a `brace` stance that sinks the figure into the swing.
+
+### Bullet trajectories (`Particles.tracer`)
+
+Hitscan weapons resolve their damage the instant the trigger goes, which leaves
+nothing on screen between the muzzle and the hole. Every shot now spawns a
+tracer: a very faint line along the path the round took, with a brighter dash
+racing down it at 3600 units a second and fading only once it has arrived. It is
+what makes a rifle burst read as a burst, and it turns the shotgun into eleven
+separate lines fanning into the wall.
 
 ### The aura (`EnergyBeam.drawBehind`)
 
@@ -213,13 +272,36 @@ eleven times a second, which reproduces that "boil" instead of the dead-still
 geometry a vector renderer would give. Heads are drawn as rough ten-sided
 polygons for the same reason.
 
-### Sound (`src/core/audio.ts`)
+### Sound — a real band, synthesised (`src/core/audio.ts`)
 
-The soundtrack is an original upbeat pop-rock loop synthesised live with the
-Web Audio API — kick/snare/hats, a distorted power-chord guitar through a
-`WaveShaper`, a filtered saw bass and a delayed square lead, arranged over a
-common four-chord vamp with alternating verse and chorus phrases. Notes are
-queued by a lookahead scheduler so timing does not drift.
+There are no samples anywhere, so the instruments are modelled rather than
+played back:
+
+- **Guitars and bass are plucked strings.** Karplus-Strong: a burst of noise is
+  written into a ring buffer one wavelength long and averaged with its neighbour
+  on every lap, losing a little amplitude each time. The high harmonics die
+  first and the fundamental hangs on — which is what a real string does, and why
+  it sounds like one. The buffers are built once per note and cached.
+- **The guitar rig is a rig.** Three strings (root, fifth, octave) are strummed
+  a few milliseconds apart into a distortion curve, then a speaker cabinet —
+  lowpass, a highpass to clear the mud, and a presence peak at 2.3 kHz. The
+  verse plays palm-muted sixteenth chugs (shorter decay, darker cabinet), the
+  chorus lets the same chords ring.
+- **The bass** is a long dark string through a sweeping lowpass and a gentle
+  overdrive, with a sine sub underneath so phone speakers still feel the root.
+- **The kit** is a drum machine: a pitch-swept sine with a beater click for the
+  kick, noise plus two detuned tuned bodies for the snare, and the classic stack
+  of six inharmonic square waves through a highpass for the metal of the hats
+  and cymbals. Toms fill the last beat of every fourth bar.
+- **A room.** A generated impulse response — decaying noise with a few discrete
+  early reflections — feeds a `ConvolverNode` that the snare, cymbals, lead and
+  the big explosions all send to.
+
+The arrangement is a sixteen bar loop over a vi-IV-I-V vamp, four bars each of
+verse, build and two choruses, with the kick, snare and hat patterns written as
+sixteen-character strings. Notes are queued by a lookahead scheduler so timing
+never drifts, and the whole band is trimmed to leave headroom for a shotgun and
+two explosions on top of it.
 
 Weapon sounds are shaped noise bursts and pitch-swept oscillators from the same
 graph. Nothing is sampled, so there is no third-party audio in this project and
@@ -244,9 +326,11 @@ src/
     game.ts            state machine, loop, screen effects, HUD
     terrain.ts         destructible bitmap terrain
     stickman.ts        procedural skeleton, gaits, stances and afterimages
+    weapon-base.ts     the Weapon contract, grips, slash crescents, hitscan
+    melee.ts           the melee combo framework (four chains per weapon)
     weapons.ts         the twelve weapons
     projectiles.ts     rockets, shells, blasts
-    particles.ts       debris, sparks, smoke, flames, shockwaves
+    particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
     touch.ts           floating stick, attack zone, weapon pad

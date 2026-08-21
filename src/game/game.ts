@@ -7,6 +7,7 @@ import {
   drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
 } from '../ui/ui';
+import { ImpactFx } from './impact';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
 import { RUN_PUSH, Stickman, type Controls } from './stickman';
@@ -48,6 +49,15 @@ export class Game {
   private terrain: Terrain;
   private sm = new Stickman();
   private particles = new Particles();
+  private impacts = new ImpactFx();
+  /**
+   * Held time left after a hit, in seconds. Stopping the world for a couple of
+   * drawings is what turns a swing into a blow: it gives the eye a still frame
+   * to read the impact pose in, which no amount of extra ink does.
+   */
+  private freezeT = 0;
+  /** Damage waiting on its own round to arrive, so nothing lands early. */
+  private pending: Array<{ t: number; fn: () => void }> = [];
   private projectiles: Projectile[] = [];
   private weapons: Weapon[] = createArsenal();
   private equipped = 0;
@@ -209,6 +219,9 @@ export class Game {
   private resetWorld(): void {
     this.terrain = new Terrain(this.view.w, this.view.h);
     this.particles.clear();
+    this.impacts.clear();
+    this.freezeT = 0;
+    this.pending.length = 0;
     this.projectiles.length = 0;
     this.weapons = createArsenal();
     this.equipped = 0;
@@ -247,6 +260,9 @@ export class Game {
       shake: (a) => this.shake(a),
       flash: (a) => { this.flashAmt = Math.min(1, this.flashAmt + a); },
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
+      hit: (x, y, dir, power) => this.impacts.add(x, y, dir, power),
+      freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
+      after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
   }
@@ -257,10 +273,50 @@ export class Game {
 
   // ----------------------------------------------------------------- loop ---
 
+  /**
+   * The whole game is drawn on twos.
+   *
+   * The reference animation runs at about fifteen drawings a second, and that
+   * is not a limitation of the medium - it is the medium. Sixty smoothly
+   * interpolated frames a second read as floating; fifteen stepped ones read as
+   * drawn. So the world is simulated and painted on a fixed 15 Hz step and
+   * simply held in between, and the ink wobble advances once per step with it.
+   */
+  private frameAcc = 0;
+  /**
+   * Frames drawn per second. 60 is smooth and responsive; 15 is the reference
+   * film's own cadence, and costs the input latency that comes with it. V
+   * toggles, because the two really are different games to play.
+   */
+  private animFps = 60;
+
   private step(rawDt: number): void {
+    const stepLen = 1 / this.animFps;
+    this.frameAcc += rawDt;
+    if (this.frameAcc < stepLen) return;      // hold the frame already on screen
+    // Catch up after a stall, but never in one huge leap.
+    const dt = Math.min(stepLen * 3, this.frameAcc);
+    this.frameAcc = 0;
+    this.tickFrame(dt);
+  }
+
+  private tickFrame(rawDt: number): void {
     this.time += rawDt;
     this.phaseTime += rawDt;
     this.sk.update(this.time);
+    // A/B the cadence against plain 60 fps while we tune the feel.
+    if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 60 ? 15 : 60;
+
+    // Held time: the world stops, the picture stays up, the screen keeps
+    // shaking. Input still reaches the buffer, it just cannot move anything yet.
+    if (this.freezeT > 0) {
+      this.freezeT = Math.max(0, this.freezeT - rawDt);
+      this.decayEffects(rawDt);
+      this.render(rawDt);
+      this.input.endFrame(rawDt);
+      return;
+    }
+    this.impacts.step(rawDt);
 
     switch (this.phase) {
       case 'menu': this.updateMenu(rawDt); break;
@@ -399,6 +455,7 @@ export class Game {
     }
 
     this.particles.update(dt, this.terrain);
+    this.runPending(dt);
     this.decayEffects(rawDt);
 
     // --- win check ---------------------------------------------------------
@@ -412,6 +469,17 @@ export class Game {
       this.shake(30);
       this.particles.shockwave(this.view.w * 0.84, this.view.h * 0.42, 320);
       audio.play('win');
+    }
+  }
+
+  /** Fires anything whose flight time has run out - a bullet reaching the wall. */
+  private runPending(dt: number): void {
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      const p = this.pending[i];
+      p.t -= dt;
+      if (p.t > 0) continue;
+      this.pending.splice(i, 1);
+      p.fn();
     }
   }
 
@@ -515,6 +583,8 @@ export class Game {
 
     this.terrain.draw(c);
     this.particles.draw(this.sk);
+    // The impact fan sits under the figure: a hit must never hide who threw it.
+    this.impacts.draw(this.sk, w, this.invertT > 0);
 
     const wctx = this.makeCtx(dt, this.pointerWorld());
     if (this.phase === 'playing') this.weapon.drawBehind(this.sk, wctx);
@@ -567,26 +637,36 @@ export class Game {
     const compact = this.isTouch;
     const left = 44 + this.safe.left;
     const baseY = compact ? topY + 58 : h - 70 - this.safe.bottom;
+    // The bottom strip of the screen is the floor slab, which is solid black.
+    // Anything printed down there has to be knocked out in white to be read.
+    const ink = baseY > this.terrain.groundTop ? '#fff' : '#000';
     c.save();
     const nameSize = clamp(w * 0.02, 15, 24);
-    inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85 });
-    inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left' });
-    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55 });
+    inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85, color: ink });
+    inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left', color: ink });
+    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55, color: ink });
 
     const barX = left + nameSize * 1.35;
     const barY = baseY + (compact ? nameSize * 0.85 : 38);
     const cdW = clamp(w * 0.16, 110, 180);
     const meter = w2.charge > 0 ? w2.charge : 1 - w2.cooldownFrac;
-    c.strokeStyle = '#000';
+    c.strokeStyle = ink;
     c.lineWidth = 2;
     sk.polyPath([
       { x: barX, y: barY }, { x: barX + cdW, y: barY },
       { x: barX + cdW, y: barY + 8 }, { x: barX, y: barY + 8 },
     ], 0.8);
     c.stroke();
-    c.fillStyle = '#000';
+    c.fillStyle = ink;
     c.fillRect(barX + 2, barY + 2, Math.max(0, (cdW - 4) * clamp(meter, 0, 1)), 4);
-    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7 });
+    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7, color: ink });
+
+    // The running melee chain, so the player can see the combo they are on.
+    const combo = w2.comboLabel;
+    if (combo) {
+      inkText(sk, combo, barX + cdW + 16, barY + 5, clamp(w * 0.017, 12, 17),
+        { align: 'left', alpha: 0.85, wobble: 1.2, color: ink });
+    }
     c.restore();
 
     // Controls, fading out once the player has clearly got the idea. On touch
@@ -612,12 +692,14 @@ export class Game {
         const lines = [
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip)',
-          'MOUSE  AIM     CLICK  ATTACK',
+          'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
           'HOLD TAB  WEAPON WHEEL     1-0 - =  QUICK SWAP',
         ];
+        const y0 = h - 96 - this.safe.bottom;
+        const hintInk = y0 > this.terrain.groundTop ? '#fff' : '#000';
         lines.forEach((l, i) => inkText(
-          sk, l, w - 20 - this.safe.right, h - 96 - this.safe.bottom + i * (size + 8), size,
-          { align: 'right', alpha: 0.6 },
+          sk, l, w - 20 - this.safe.right, y0 + i * (size + 8), size,
+          { align: 'right', alpha: 0.6, color: hintInk },
         ));
       }
       c.restore();
@@ -693,15 +775,15 @@ export class Game {
       ? [
           ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
           ['UP / DOWN', 'jump and crouch, on the same thumb'],
-          ['RIGHT SIDE', 'touch to aim and attack'],
+          ['RIGHT SIDE', 'aim and attack — hold it for heavy combos'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : [
           ['WASD / ARROWS', 'run and crouch'],
-          ['SHIFT', 'sprint — the gait changes with the speed'],
+          ['SHIFT', 'sprint — attacking from a run is its own move'],
           ['SPACE', 'jump — press again in the air to somersault'],
-          ['MOUSE', 'aim   ·   CLICK to attack'],
+          ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
           ['HOLD TAB', 'weapon wheel   ·   1-0 - = to quick swap'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
@@ -713,7 +795,7 @@ export class Game {
       inkText(sk, r[0], w / 2 - 12, y, rowSize, { align: 'right', alpha: cf * 0.9 });
       inkText(sk, r[1].toUpperCase(), w / 2 + 12, y, rowSize * 0.94, { align: 'left', alpha: cf * 0.55 });
     });
-    inkText(sk, 'SOUND: ORIGINAL POP-ROCK, SYNTHESISED LIVE IN YOUR BROWSER',
+    inkText(sk, 'SOUND: GUITAR, BASS AND DRUMS, ALL SYNTHESISED LIVE IN YOUR BROWSER',
       w / 2, h - 16, clamp(w * 0.014, 9, 12), { alpha: cf * 0.4 });
   }
 

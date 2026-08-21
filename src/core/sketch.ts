@@ -18,9 +18,13 @@ export class Sketch {
     this.ctx = ctx;
   }
 
-  /** Called once per rendered frame; `t` is elapsed seconds. */
+  /**
+   * Called once per drawn frame; `t` is elapsed seconds. The wobble advances on
+   * its own clock, about twelve times a second, so the ink looks re-drawn at a
+   * hand-drawn rate whether the game is painting 15 frames a second or 60.
+   */
   update(t: number): void {
-    this.boil = Math.floor(t * 11);
+    this.boil = Math.floor(t * 12);
     this.strokeId = 0;
   }
 
