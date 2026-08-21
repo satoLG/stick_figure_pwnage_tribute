@@ -4,14 +4,22 @@ import type { Sketch } from '../core/sketch';
 import type { WheelLayout } from './ui';
 import { inkText } from './ui';
 
+/** A floating stick: where the thumb landed, and where it is now. */
+interface Stick { id: number; ox: number; oy: number; x: number; y: number }
+
 /** How far the stick knob travels before it reads as fully deflected. */
 const STICK_R = 74;
-/** The stick only owns the screen below this fraction of the height. */
-const STICK_TOP = 0.4;
 const DEAD = 0.2;
 const JUMP_ON = 0.44;
 const JUMP_OFF = 0.3;
 const CROUCH_ON = 0.46;
+
+/** The aiming stick is smaller: a flick of the thumb should swing him round. */
+const AIM_R = 56;
+/** Below this the thumb has not really been dragged, so the aim stands. */
+const AIM_DEAD = 13;
+/** How far out from the shoulder the aim mark is drawn. */
+const AIM_MARK = 150;
 
 export interface TouchState {
   /** Analog walk, -1..1. */
@@ -19,7 +27,8 @@ export interface TouchState {
   crouch: boolean;
   jump: boolean;
   jumpHeld: boolean;
-  aim: Vec2 | null;
+  /** Unit vector the aiming thumb has swung to; null until it is first used. */
+  aimDir: Vec2 | null;
   firing: boolean;
   firePressed: boolean;
   wheelOpen: boolean;
@@ -29,21 +38,26 @@ export interface TouchState {
 }
 
 /**
- * The on-screen controls.
+ * The on-screen controls: two floating sticks and a pad.
  *
- * The left side of the screen is a floating stick: it appears wherever the
- * thumb lands, and its direction alone drives walking, crouching and jumping -
- * there are no separate buttons for those. The right side aims and attacks.
- * A translucent pad at the bottom centre opens the weapon fan while held; the
- * weapon the thumb is over when it lifts is the one equipped.
+ * Neither stick is drawn until a thumb lands on it, and neither cares where on
+ * its side of the screen that was - only which way it is then dragged. The
+ * bottom left one walks, jumps and crouches. The other one aims: a press
+ * attacks along the aim he already has, and dragging swings the aim, and him
+ * with it, round to point that way. A translucent pad at the bottom centre
+ * opens the weapon fan while held; the weapon the thumb is over when it lifts
+ * is the one equipped.
  */
 export class TouchControls {
-  private stick: { id: number; ox: number; oy: number; x: number; y: number } | null = null;
+  private stick: Stick | null = null;
   private stickFade = 0;
   private jumpLatched = false;
 
   private attackId = -1;
-  private aim: Vec2 | null = null;
+  private aimStick: Stick | null = null;
+  private aimFade = 0;
+  /** Sticky: a tap that never drags keeps whatever the last drag chose. */
+  private aimDir: Vec2 | null = null;
 
   private padId = -1;
   private padPress = 0;
@@ -72,7 +86,7 @@ export class TouchControls {
 
     const out: TouchState = {
       axis: 0, crouch: false, jump: false, jumpHeld: false,
-      aim: null, firing: false, firePressed: false,
+      aimDir: null, firing: false, firePressed: false,
       wheelOpen: false, wheelPointer: this.pad, wheelReleased: false,
     };
 
@@ -104,10 +118,6 @@ export class TouchControls {
     }
 
     // --- hand out a role to every new finger, once, and keep it -------------
-    // The stick only claims the lower left corner, where a thumb actually
-    // rests. Everywhere else aims, so a target to the figure's left - which is
-    // most of the screen when he is backed up against the left edge - can
-    // still be hit, and he turns to face it.
     for (const p of input.pointers.values()) {
       if (p.kind !== 'touch' || p.role !== '') continue;
       const w = toWorld(p.x, p.y);
@@ -115,13 +125,14 @@ export class TouchControls {
         p.role = 'pad';
         this.padId = p.id;
         this.wheelOpen = true;
-      } else if (w.x < view.w * 0.45 && w.y > view.h * STICK_TOP && this.stick === null) {
+      } else if (w.x < view.w * 0.45 && this.stick === null) {
         p.role = 'stick';
         this.stick = { id: p.id, ox: w.x, oy: w.y, x: w.x, y: w.y };
         this.jumpLatched = false;
       } else {
         p.role = 'attack';
         this.attackId = p.id;
+        this.aimStick = { id: p.id, ox: w.x, oy: w.y, x: w.x, y: w.y };
         out.firePressed = true;
       }
     }
@@ -163,13 +174,34 @@ export class TouchControls {
       for (const p of byId.values()) if (p.role === 'attack') { attack = p; this.attackId = p.id; break; }
     }
     if (attack) {
-      this.aim = toWorld(attack.x, attack.y);
-      out.aim = this.aim;
+      // The second stick. Where on the screen the thumb landed says nothing;
+      // only which way it has since been dragged. A press that never drags
+      // leaves the aim exactly as it was, so tapping attacks straight ahead.
+      if (!this.aimStick || this.aimStick.id !== attack.id) {
+        const w0 = toWorld(attack.x, attack.y);
+        this.aimStick = { id: attack.id, ox: w0.x, oy: w0.y, x: w0.x, y: w0.y };
+      }
+      const w = toWorld(attack.x, attack.y);
+      this.aimStick.x = w.x; this.aimStick.y = w.y;
+      let dx = w.x - this.aimStick.ox, dy = w.y - this.aimStick.oy;
+      const d = Math.hypot(dx, dy);
+      // The base follows the thumb past the edge, so swinging the aim back the
+      // other way takes one travel, not one travel plus however far it went.
+      if (d > AIM_R) {
+        this.aimStick.ox = w.x - (dx / d) * AIM_R;
+        this.aimStick.oy = w.y - (dy / d) * AIM_R;
+        dx = (dx / d) * AIM_R; dy = (dy / d) * AIM_R;
+      }
+      const pull = Math.hypot(dx, dy);
+      if (pull > AIM_DEAD) this.aimDir = { x: dx / pull, y: dy / pull };
       out.firing = true;
     } else {
       this.attackId = -1;
-      out.aim = this.aim;   // keep facing the last target so he does not snap
+      this.aimStick = null;
     }
+    // Sticky between presses too: he holds the aim he was left with.
+    out.aimDir = this.aimDir;
+    this.aimFade += ((this.aimStick ? 1 : 0) - this.aimFade) * Math.min(1, dt * 14);
 
     // --- weapon pad ---------------------------------------------------------
     let padPtr = byId.get(this.padId);
@@ -191,7 +223,8 @@ export class TouchControls {
     this.attackId = -1;
     this.padId = -1;
     this.wheelOpen = false;
-    this.aim = null;
+    this.aimStick = null;
+    this.aimDir = null;
   }
 
   // -------------------------------------------------------------- drawing ---
@@ -257,16 +290,45 @@ export class TouchControls {
     c.restore();
   }
 
-  /** A ring marking where the attacking finger is aiming. */
-  drawAim(sk: Sketch, time: number): void {
-    if (!this.aim || this.attackId < 0) return;
+  /**
+   * The aiming stick under the thumb, and a mark out in front of `from` - the
+   * figure's shoulder - showing which way the aim it is steering now points.
+   */
+  drawAim(sk: Sketch, time: number, from: Vec2): void {
+    if (this.aimFade <= 0.01 || !this.aimStick) return;
     const c = sk.ctx;
+    const s = this.aimStick;
+    const a = this.aimFade;
+    let dx = s.x - s.ox, dy = s.y - s.oy;
+    const d = Math.hypot(dx, dy);
+    if (d > AIM_R) { dx = (dx / d) * AIM_R; dy = (dy / d) * AIM_R; }
+
     c.save();
     c.strokeStyle = '#000';
-    c.lineWidth = 2.4;
-    c.globalAlpha = 0.55;
-    sk.polyPath(ring(this.aim.x, this.aim.y, 20 + Math.sin(time * 8) * 2, 9), 1.4);
+    c.fillStyle = '#000';
+
+    c.globalAlpha = 0.2 * a;
+    c.lineWidth = 3;
+    sk.polyPath(ring(s.ox, s.oy, AIM_R, 14), 2);
     c.stroke();
+
+    c.globalAlpha = 0.34 * a;
+    sk.polyPath(ring(s.ox + dx, s.oy + dy, 22, 12), 1.6);
+    c.fill();
+    c.globalAlpha = 0.46 * a;
+    sk.polyPath(ring(s.ox + dx, s.oy + dy, 22, 12), 1.6);
+    c.stroke();
+
+    // Where that adds up to on him, so the aim is readable without hunting for
+    // the arm: a ring sitting out along the line he is about to swing down.
+    if (this.aimDir) {
+      c.globalAlpha = 0.5 * a;
+      c.lineWidth = 2.4;
+      const mx = from.x + this.aimDir.x * AIM_MARK;
+      const my = from.y + this.aimDir.y * AIM_MARK;
+      sk.polyPath(ring(mx, my, 18 + Math.sin(time * 8) * 2, 9), 1.4);
+      c.stroke();
+    }
     c.restore();
   }
 }

@@ -361,20 +361,28 @@ export class Game {
     };
   }
 
+  /** Shoulder height, where his aim is measured from. */
+  private get eye(): Vec2 {
+    return { x: this.sm.pos.x, y: this.sm.pos.y - 74 };
+  }
+
   /**
    * Where the figure is looking, which is also which way he faces.
    *
-   * Aiming owns this outright - the cursor, or the attacking finger - and the
-   * walking controls never touch it: he can run, jump and crouch in one
-   * direction while still looking and swinging in the other. The aiming finger
-   * points wherever it lands, left of him as happily as right, and once it
-   * lifts he holds that look rather than snapping anywhere.
+   * Aiming owns this outright - the cursor, or the aiming thumb - and the
+   * walking controls never touch it: he can run, jump and crouch one way while
+   * still looking and swinging the other. A mouse points at a spot, so it can
+   * be used as the aim outright. The thumb instead gives a *direction*, which
+   * is cast out from his shoulder rather than aimed at: far enough that the
+   * offset between his shoulder and a muzzle stops mattering, so every barrel
+   * fires the way the thumb is pointing rather than converging on a spot.
    */
   private resolveAim(t: TouchState): Vec2 {
     if (!this.isTouch) return this.pointerWorld();
-    // Before the first touch there is no aim to speak of; look straight ahead
-    // at shoulder height rather than at the top-left corner of the world.
-    return t.aim ?? { x: this.sm.pos.x + this.sm.facing * 260, y: this.sm.pos.y - 74 };
+    const dir = t.aimDir ?? { x: this.sm.facing, y: 0 };
+    const eye = this.eye;
+    const far = Math.max(this.view.w, this.view.h);
+    return { x: eye.x + dir.x * far, y: eye.y + dir.y * far };
   }
 
   // ----------------------------------------------------------------- menu ---
@@ -625,7 +633,7 @@ export class Game {
       this.drawHud();
       if (this.isTouch) {
         this.touch.drawStick(this.sk);
-        this.touch.drawAim(this.sk, this.time);
+        this.touch.drawAim(this.sk, this.time, this.eye);
         this.touch.drawPad(this.sk, this.view, (x, y, s) => this.weapon.icon(this.sk, x, y, s));
       }
     }
@@ -694,8 +702,8 @@ export class Game {
       const size = clamp(w * 0.013, 10, 14);
       if (this.isTouch) {
         const lines = [
-          'TILT THE BOTTOM LEFT TO WALK  ·  PUSH IT FURTHER TO SPRINT',
-          'UP JUMPS  ·  DOWN CROUCHES  ·  TOUCH ANYWHERE ELSE TO AIM',
+          'TILT THE LEFT SIDE TO WALK  ·  PUSH IT FURTHER TO SPRINT',
+          'UP JUMPS  ·  DOWN CROUCHES  ·  DRAG THE RIGHT SIDE TO AIM',
           'HOLD THE PAD BELOW, SLIDE, LIFT TO EQUIP',
         ];
         // Centred on the open ground, not the screen: on a narrow portrait
@@ -789,9 +797,9 @@ export class Game {
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
     const rows: Array<[string, string]> = this.isTouch
       ? [
-          ['BOTTOM LEFT', 'tilt to walk, push it out to sprint'],
+          ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
           ['UP / DOWN', 'jump and crouch, on the same thumb'],
-          ['ANYWHERE ELSE', 'aim and attack — either side of him'],
+          ['RIGHT THUMB', 'press to attack, drag to swing the aim round'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]

@@ -55,13 +55,13 @@ Nothing is shown until you touch it, so the picture stays clean.
 
 | Where | Action |
 | --- | --- |
-| Bottom left | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
-| Anywhere else | Touch to aim; tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. Aiming behind him turns him round, and once the stick is down every other finger aims, so the whole screen is fair game. |
+| Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
+| Right side | A second floating stick, for aiming. Press to attack along the aim he already has; **drag** and the aim — and he with it — swings that way, in any direction, however far from him you happen to be holding. Tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
-Aiming is the only thing that turns him: the cursor, or the aiming finger. The
-stick moves, jumps and crouches and never changes where he is looking, so he
-can run one way while still facing and swinging the other.
+Aiming is the only thing that turns him: the cursor, or the right stick. The
+left stick moves, jumps and crouches and never changes where he is looking, so
+he can run one way while still facing and swinging the other.
 
 The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
 thumb dragging up from the bottom edge cannot reach the lower half of a ring.
@@ -339,7 +339,7 @@ src/
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
-    touch.ts           floating stick, attack zone, weapon pad
+    touch.ts           the two floating sticks, weapon pad
 ```
 
 ---
