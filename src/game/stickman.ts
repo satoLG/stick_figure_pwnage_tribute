@@ -6,16 +6,29 @@ import type { Terrain } from './terrain';
 
 // --- proportions, in world units -------------------------------------------
 const THIGH = 31, SHIN = 31;
+export const LEG_LEN = THIGH + SHIN;
 const UPPER_ARM = 25, FOREARM = 25;
 /** Full arm span; weapons size their grips against this. */
 export const ARM_LEN = UPPER_ARM + FOREARM;
-const TORSO = 46;
-const NECK = 12;
-export const HEAD_R = 15;
+/**
+ * A short torso and a big head. These figures are drawn as limbs first: the
+ * body is a hinge between them, not a trunk, which is what lets a pose read
+ * entirely from how the arms and legs are folded.
+ */
+const TORSO = 40;
+const NECK = 9;
+export const HEAD_R = 16;
 const HALF_W = 11;
-const STAND_HIP = 57;
-const CROUCH_HIP = 36;
+/**
+ * Standing hip height. Deliberately well under the leg's full length - a leg
+ * locked straight is the single thing that makes a stick figure read as a
+ * cardboard cut-out, so even at rest the knees carry a bend.
+ */
+const STAND_HIP = 51;
+const CROUCH_HIP = 28;
 export const BODY_H = STAND_HIP + TORSO + NECK + HEAD_R * 2;
+
+const DEG = Math.PI / 180;
 
 // --- movement tuning --------------------------------------------------------
 /**
@@ -45,8 +58,43 @@ const WALL_SLIDE_V = 190;
 /** Ground covered per half-stride. Short and quick walking, long at a sprint. */
 const STRIDE_WALK = 33, STRIDE_RUN = 56, STRIDE_SPRINT = 74;
 
+/**
+ * A gait is written as poses, not as a formula: each key says where the thigh
+ * points, how hard the knee is folded, and how far the hips have dropped. The
+ * cycle below is a real run - heel strike, absorb, drive, then the heel snapping
+ * up under the hips and the knee swinging through high in front.
+ *
+ * Angles are degrees from straight down; positive leads in the facing direction.
+ */
+interface LegKey {
+  /** Position in the cycle, 0..1. */
+  u: number;
+  thigh: number;
+  /** How far the knee is folded. 0 is a locked leg; 120 folds the heel up. */
+  knee: number;
+  /** Hip drop at this point in the cycle; positive sinks. */
+  hip: number;
+}
+
+const RUN_CYCLE: readonly LegKey[] = [
+  { u: 0.00, thigh: 42, knee: 22, hip: 0.1 },    // contact, foot out in front
+  { u: 0.14, thigh: 20, knee: 54, hip: 1.0 },    // absorb - the hips are lowest here
+  { u: 0.34, thigh: -12, knee: 30, hip: 0.2 },   // passing over the planted foot
+  { u: 0.50, thigh: -40, knee: 14, hip: -0.9 },  // toe-off, leg straight out behind
+  { u: 0.62, thigh: -8, knee: 118, hip: -0.5 },  // heel snaps up under the hips
+  { u: 0.78, thigh: 32, knee: 104, hip: 0 },     // knee driven high in front
+  { u: 0.90, thigh: 50, knee: 52, hip: 0.1 },    // shin reaches for the ground
+  { u: 1.00, thigh: 42, knee: 22, hip: 0.1 },
+];
+
+/**
+ * Standing around. The feet are set well apart and the knees stay soft: a
+ * figure whose legs meet in one vertical stroke reads as a post, not a person.
+ */
+const IDLE_KEY: LegKey = { u: 0, thigh: 15, knee: 22, hip: 0 };
+
 export interface Pose {
-  pelvis: Vec2; chest: Vec2; neck: Vec2; head: Vec2;
+  pelvis: Vec2; mid: Vec2; chest: Vec2; neck: Vec2; head: Vec2;
   hipL: Vec2; kneeL: Vec2; footL: Vec2;
   hipR: Vec2; kneeR: Vec2; footR: Vec2;
   shL: Vec2; elbowL: Vec2; handL: Vec2;
@@ -125,6 +173,10 @@ export class Stickman {
   private bodyAngle = 0;      // used by the flip on the second jump
   private flipSpin = 0;
   private squash = 0;         // landing compression
+  /** Upper-back curl: forward over a landing, arched back out of a brace. */
+  private spine = 0;
+  /** 0..1 how deep he is folded into a landing; decays over a few frames. */
+  private landSquat = 0;
   private breathe = 0;
   private headTilt = 0;
   aim = 0;
@@ -292,6 +344,8 @@ export class Stickman {
         this.justLanded = true;
         this.landImpact = clamp(this.landVel / 900, 0, 1);
         this.squash = this.landImpact;
+        // Take the landing in the legs: knees fold, hips drop, back curls over.
+        this.landSquat = clamp(0.3 + this.landVel / 750, 0.3, 1.15);
         this.flipSpin = 0;
         this.bodyAngle = 0;
       }
@@ -537,14 +591,30 @@ export class Stickman {
     const twistGoal = -Math.sin(this.gait) * (0.5 + this.sprintT * 0.45) * clamp(this.gaitPower, 0, 1.2);
     this.twist = damp(this.twist, twistGoal * (1 - this.stanceW), 15, dt);
 
-    // Hip height: crouch, landing squash, run bob, breathing, stance.
-    const bobbing = Math.cos(this.gait * 2) * (3.2 + this.sprintT * 3.4) * clamp(this.gaitPower, 0, 1.2);
+    // A landing is absorbed, not bounced off: the fold is deep and lets go over
+    // a few frames rather than snapping back.
+    this.landSquat = damp(this.landSquat, 0, 9, dt);
+
+    // The back curls over a landing or a crouch and arches back out of a brace.
+    const curl = this.landSquat * 0.42
+      + (this.crouching ? 0.34 : 0)
+      + (this.stanceKind === 'crouch' || this.stanceKind === 'lunge' ? this.stanceW * 0.24 : 0)
+      - (this.stanceKind === 'brace' ? this.stanceW * 0.34 : 0)
+      + clamp(this.gaitPower, 0, 1) * 0.07;
+    this.spine = damp(this.spine, curl * this.facing, 12, dt);
+
+    // Hip height. The bob is not a decoration on top of the walk - it *is* the
+    // walk: the hips sink onto each planted foot and rise over the push-off,
+    // straight out of the same pose cycle the legs are reading.
+    const power = clamp(this.gaitPower, 0, 1.2);
+    const sink = (sampleLeg(this.gait / TAU).hip + sampleLeg((this.gait + Math.PI) / TAU).hip) * 0.5;
+    const bobbing = sink * (3 + power * 9);
     const airTuck = this.onGround ? 0 : clamp(-this.vel.y / 700, -0.35, 0.55) * 6;
     const stanceHip = (this.stance?.hip ?? 0) * this.stanceW;
     const target = (this.crouching ? CROUCH_HIP : STAND_HIP)
-      - this.squash * 16 + bobbing + airTuck + stanceHip
+      - this.squash * 10 - bobbing - this.landSquat * 15 + airTuck + stanceHip
       + Math.sin(this.breathe) * (this.onGround && speed < 12 ? 1.3 : 0.4);
-    this.hipH = damp(this.hipH, target, 20, dt);
+    this.hipH = damp(this.hipH, target, 22, dt);
 
     this.buildPose(dt, terrain);
     this.updateGhosts(dt);
@@ -565,9 +635,15 @@ export class Stickman {
       return { x: pelvis.x + r.x, y: pelvis.y + r.y };
     };
 
-    const leanV = rotate({ x: 0, y: -TORSO }, this.lean);
-    const chest = { x: pelvis.x + leanV.x, y: pelvis.y + leanV.y };
-    const neckV = rotate({ x: 0, y: -NECK }, this.lean * 0.7 + this.headTilt);
+    // The spine is two segments, not one: the lower back leads the lean and the
+    // upper back carries it further, so the figure can curl over a landing and
+    // arch back out of it instead of tipping like a plank.
+    const curl = this.spine;
+    const lowV = rotate({ x: 0, y: -TORSO * 0.45 }, this.lean * 0.55 + curl * 0.35);
+    const mid = { x: pelvis.x + lowV.x, y: pelvis.y + lowV.y };
+    const upV = rotate({ x: 0, y: -TORSO * 0.55 }, this.lean * 1.35 + curl);
+    const chest = { x: mid.x + upV.x, y: mid.y + upV.y };
+    const neckV = rotate({ x: 0, y: -NECK }, this.lean * 0.7 + this.headTilt + curl * 0.5);
     const neck = { x: chest.x + neckV.x, y: chest.y + neckV.y };
 
     // Head looks where the weapon points; while bracing it tips up and back,
@@ -591,8 +667,8 @@ export class Stickman {
     const hipTwist = -this.twist * 4.5 * f;
     const hipL = { x: pelvis.x - hipSpread * 0.5 - hipTwist, y: pelvis.y + 1 };
     const hipR = { x: pelvis.x + hipSpread * 0.5 + hipTwist, y: pelvis.y + 1 };
-    const footL = this.footTarget(0, terrain, power);
-    const footR = this.footTarget(1, terrain, power);
+    const legL = this.legPose(0, hipL, terrain, power);
+    const legR = this.legPose(1, hipR, terrain, power);
 
     // --- arms --------------------------------------------------------------
     const shoulderY = chest.y + 2;
@@ -601,24 +677,8 @@ export class Stickman {
     const shL = { x: chest.x - shSpread * 0.5 * f - shTwist, y: shoulderY };
     const shR = { x: chest.x + shSpread * 0.5 * f + shTwist, y: shoulderY };
 
-    const swing = -Math.cos(this.gait) * (0.95 + this.sprintT * 0.5) * power;
-    const airArm = this.onGround ? 0 : clamp(-this.vel.y / 600, -1, 1) * (1 - this.hoverT);
-    // Arms hang nearly straight at a stroll - a bent-up elbow reads as a zigzag
-    // scribble at this line weight - but a sprint needs folded arms pumping, or
-    // the figure reads as gliding rather than running.
-    const fold = this.sprintT * 0.3;
-    const freeHand = (sh: Vec2, phase: number, bias: number): Vec2 => {
-      const reach = ARM_LEN * (0.93 - fold);
-      const a = Math.PI / 2 + this.lean * 0.8 + phase + bias * f - airArm * 1.2
-        + this.hoverT * 0.5 * f
-        + Math.sin(this.breathe * 0.9) * 0.04;
-      return { x: sh.x + Math.cos(a) * reach, y: sh.y + Math.sin(a) * reach };
-    };
-
-    // The near arm sits slightly forward and the far arm slightly back, so at
-    // rest they read as two limbs instead of one thick stroke.
-    const gaitHandR = freeHand(shR, swing, -0.2 - this.sprintT * 0.25);
-    const gaitHandL = freeHand(shL, -swing, 0.24 + this.sprintT * 0.25);
+    const armL = this.armPose(0, shL, power);
+    const armR = this.armPose(1, shR, power);
 
     const recoilPush = {
       x: -Math.cos(this.recoilAngle) * this.recoil * 15,
@@ -626,74 +686,161 @@ export class Stickman {
     };
     const b = this.weaponBlend;
     const handR = this.handMainSet
-      ? { x: lerp(gaitHandR.x, this.handMain.x + recoilPush.x, b), y: lerp(gaitHandR.y, this.handMain.y + recoilPush.y, b) }
-      : gaitHandR;
+      ? { x: lerp(armR.hand.x, this.handMain.x + recoilPush.x, b), y: lerp(armR.hand.y, this.handMain.y + recoilPush.y, b) }
+      : armR.hand;
     const handL = this.handOffSet
-      ? { x: lerp(gaitHandL.x, this.handOff.x + recoilPush.x * 0.8, b), y: lerp(gaitHandL.y, this.handOff.y + recoilPush.y * 0.8, b) }
-      : gaitHandL;
+      ? { x: lerp(armL.hand.x, this.handOff.x + recoilPush.x * 0.8, b), y: lerp(armL.hand.y, this.handOff.y + recoilPush.y * 0.8, b) }
+      : armL.hand;
 
-    // Solve every chain, then spin the finished figure if a flip is running.
+    // Everything is already solved; the spin just carries the finished figure.
     p.pelvis = spin(pelvis);
+    p.mid = spin(mid);
     p.chest = spin(chest);
     p.neck = spin(neck);
     p.head = spin(head);
     p.hipL = spin(hipL); p.hipR = spin(hipR);
-    p.footL = spin(footL); p.footR = spin(footR);
+    p.footL = spin(legL.foot); p.footR = spin(legR.foot);
+    p.kneeL = spin(legL.knee); p.kneeR = spin(legR.knee);
     p.shL = spin(shL); p.shR = spin(shR);
     p.handL = spin(handL); p.handR = spin(handR);
 
-    // Knees bend forward relative to facing, elbows backward: never inside out.
-    p.kneeL = solveIK(p.hipL, p.footL, THIGH, SHIN, -f);
-    p.kneeR = solveIK(p.hipR, p.footR, THIGH, SHIN, -f);
-    p.elbowL = solveIK(p.shL, p.handL, UPPER_ARM, FOREARM, f);
-    p.elbowR = solveIK(p.shR, p.handR, UPPER_ARM, FOREARM, f);
+    // A weapon places the hand, so that arm has to be solved backwards from it;
+    // a free arm already knows where its elbow is.
+    p.elbowL = this.handOffSet
+      ? spin(solveIK(shL, handL, UPPER_ARM, FOREARM, f))
+      : spin(armL.elbow);
+    p.elbowR = this.handMainSet
+      ? spin(solveIK(shR, handR, UPPER_ARM, FOREARM, f))
+      : spin(armR.elbow);
     p.facing = f;
     p.aim = this.aimVisual;
     p.bodyAngle = ang;
   }
 
+  /** A point `len` away at `deg` from straight down; positive leads the facing. */
+  private off(deg: number, len: number): Vec2 {
+    const a = deg * DEG;
+    return { x: Math.sin(a) * this.facing * len, y: Math.cos(a) * len };
+  }
+
   /**
-   * Foot placement. On the ground the feet ride a walk cycle and then get
-   * dropped onto whatever the terrain actually is at that x, so the figure
-   * clambers naturally over craters and rubble. A stance blends in on top.
+   * One leg, solved forwards from the pose cycle - thigh angle, then knee fold -
+   * instead of from a foot target. That is the whole difference between a leg
+   * that swings and a leg that slides: the knee angle is *authored*, so it can
+   * fold right up under the hips on the recovery and drive straight out behind
+   * on the push, which an IK chain reaching for a point on the floor never does.
+   *
+   * The ground still gets the last word: a foot that ends up inside the terrain
+   * is planted on the surface and the knee re-solved, so he clambers over rubble.
    */
-  private footTarget(leg: number, terrain: Terrain, power: number): Vec2 {
-    const pelvisX = this.pos.x;
-    const pelvisY = this.pos.y - this.hipH;
-    const moveDir = this.vel.x === 0 ? this.facing : Math.sign(this.vel.x);
+  private legPose(leg: number, hip: Vec2, terrain: Terrain, power: number): { knee: Vec2; foot: Vec2 } {
     const f = this.facing;
-    /** Whether this leg is the one drawn in front of the body. */
     const front = (leg === 1) === (f > 0);
+    const key = this.legKey(leg, front, power);
 
-    let base: Vec2;
-    if (!this.onGround) {
-      // Airborne: legs tuck and scissor, front leg reaching, back leg folded.
-      const rise = clamp(-this.vel.y / 620, -1, 1);
-      const split = (leg === 0 ? -1 : 1) * (0.45 + rise * 0.5);
-      const tuck = this.state === 'wallslide' ? 0.55 : clamp(0.35 + rise * 0.45, 0.2, 0.95);
-      const len = (THIGH + SHIN) * (1 - tuck * 0.45);
-      const a = Math.PI / 2 + split * 0.85 * f - rise * 0.35 * f;
-      base = { x: pelvisX + Math.cos(a) * len, y: pelvisY + Math.sin(a) * len };
-    } else {
-      const ph = this.gait + leg * Math.PI;
-      const amp = lerp(9, 30, clamp(power, 0, 1)) + this.sprintT * 12;
-      // Standing still, the feet plant apart; at speed they line up under the body.
-      const stance = 12 - clamp(power, 0, 1) * 9;
-      const fx = pelvisX - Math.cos(ph) * amp * moveDir + (leg === 0 ? -stance : stance);
-      const lift = Math.sin(ph);
-      const liftH = (9 + power * 24 + this.sprintT * 16) * Math.max(0, lift);
+    // A landing folds both knees hard and drops the hips into the floor.
+    const bend = key.knee + this.landSquat * 46 + (this.crouching ? 34 : 0);
+    const thigh = key.thigh - this.landSquat * 6;
 
-      // Conform to the ground under this foot instead of a flat baseline.
-      const probeY = this.pos.y - 26;
-      const drop = terrain.groundBelow(fx, probeY, 70);
-      const surface = clamp(probeY + drop, this.pos.y - 26, this.pos.y + 26);
-      const idle = power < 0.02 ? Math.sin(this.breathe + leg * 1.4) * 0.6 : 0;
-      base = { x: fx, y: surface - liftH + idle };
+    const kv = this.off(thigh, THIGH);
+    let knee = { x: hip.x + kv.x, y: hip.y + kv.y };
+    const sv = this.off(thigh - bend, SHIN);
+    let foot = { x: knee.x + sv.x, y: knee.y + sv.y };
+
+    // Blend into a weapon's stance, which asks for a foot position outright.
+    if (this.stanceW > 0.02) {
+      const s = this.stanceTarget(front, this.pos.x, hip.y, terrain);
+      foot = { x: lerp(foot.x, s.x, this.stanceW), y: lerp(foot.y, s.y, this.stanceW) };
+      knee = solveIK(hip, foot, THIGH, SHIN, -f);
     }
 
-    if (this.stanceW <= 0.02) return base;
-    const s = this.stanceTarget(front, pelvisX, pelvisY, terrain);
-    return { x: lerp(base.x, s.x, this.stanceW), y: lerp(base.y, s.y, this.stanceW) };
+    if (this.onGround) {
+      const probeY = this.pos.y - 34;
+      const surface = probeY + terrain.groundBelow(foot.x, probeY, 90);
+      if (foot.y > surface) {
+        foot = { x: foot.x, y: surface };
+        knee = solveIK(hip, foot, THIGH, SHIN, -f);
+      }
+    }
+    return { knee, foot };
+  }
+
+  /** The pose this leg is in right now, from whichever cycle applies. */
+  private legKey(leg: number, front: boolean, power: number): LegKey {
+    if (!this.onGround) {
+      const rise = clamp(-this.vel.y / 620, -1, 1);
+      // Mid-somersault he pulls into a ball. Nobody flips with straight legs,
+      // and the tuck is what makes the rotation read as a rotation.
+      const spin = clamp(Math.abs(this.flipSpin) / 3, 0, 1);
+      if (spin > 0.15) {
+        return {
+          u: 0,
+          thigh: lerp(40, 78, spin) * (front ? 1 : 0.75),
+          knee: lerp(80, 128, spin),
+          hip: 0,
+        };
+      }
+      if (this.state === 'wallslide') {
+        return front
+          ? { u: 0, thigh: 30, knee: 100, hip: 0 }
+          : { u: 0, thigh: -16, knee: 58, hip: 0 };
+      }
+      // Rising, both knees fold up under him; falling, the front leg reaches
+      // for the floor and the back one trails behind, still folded.
+      const tuck = clamp(0.5 + rise * 0.5, 0, 1);
+      return front
+        ? { u: 0, thigh: lerp(38, 64, tuck), knee: lerp(44, 116, tuck), hip: 0 }
+        : { u: 0, thigh: lerp(-34, -4, tuck), knee: lerp(70, 108, tuck), hip: 0 };
+    }
+    // On the ground: the run cycle, faded in over the idle stance by how hard
+    // the legs are actually working.
+    const k = clamp(power, 0, 1);
+    const run = sampleLeg((this.gait + leg * Math.PI) / TAU);
+    const travel = this.vel.x === 0 ? 1 : Math.sign(this.vel.x) * this.facing;
+    const idleThigh = (front ? 1 : -1) * IDLE_KEY.thigh;
+    return {
+      u: run.u,
+      thigh: lerp(idleThigh, run.thigh * travel, k),
+      knee: lerp(IDLE_KEY.knee, run.knee, k),
+      hip: run.hip * k,
+    };
+  }
+
+  /**
+   * One arm. Elbows are never locked: even standing still the arm carries a
+   * fold, and a run pumps it. The swing is taken from the *opposite* leg, which
+   * is what stops a run reading as a cardboard cut-out sliding along the floor.
+   */
+  private armPose(side: number, sh: Vec2, power: number): { elbow: Vec2; hand: Vec2 } {
+    const k = clamp(power, 0, 1);
+    const front = side === 1;
+    let upper: number;
+    let bend: number;
+
+    if (!this.onGround) {
+      const rise = clamp(-this.vel.y / 600, -1, 1) * (1 - this.hoverT);
+      const spin = clamp(Math.abs(this.flipSpin) / 3, 0, 1);
+      // Arms throw up on the way up and out for balance on the way down - and
+      // clamp in tight around the knees through a somersault.
+      upper = lerp((front ? 1 : -1) * (26 + rise * 34) - rise * 26 + this.hoverT * 30, 52, spin);
+      bend = lerp(52 + Math.abs(rise) * 26, 132, spin);
+    } else {
+      const opp = sampleLeg((this.gait + (side === 1 ? Math.PI : 0)) / TAU);
+      const travel = this.vel.x === 0 ? 1 : Math.sign(this.vel.x) * this.facing;
+      // At rest the elbow sits back and the forearm comes forward, so the arm
+      // reads as a bent limb beside the body instead of vanishing into it.
+      const idle = (front ? -16 : 9);
+      upper = lerp(idle, opp.thigh * 0.5 * travel, k);
+      // Bent hard at a run, softly at rest, and a touch more as the arm comes
+      // through in front.
+      bend = lerp(48, 104, k) + Math.max(0, opp.thigh) * 0.22 * k;
+    }
+    upper += this.lean * 26 + Math.sin(this.breathe * 0.9) * 1.6;
+
+    const uv = this.off(upper, UPPER_ARM);
+    const elbow = { x: sh.x + uv.x, y: sh.y + uv.y };
+    const fv = this.off(upper + bend, FOREARM);
+    return { elbow, hand: { x: elbow.x + fv.x, y: elbow.y + fv.y } };
   }
 
   /** Where a foot goes in the current stance. */
@@ -737,10 +884,10 @@ export class Stickman {
     const wants = this.ghostBurst > 0 || this.sprintT > 0.55 || Math.abs(this.flipSpin) > 1.2;
     this.ghostTimer -= dt;
     if (!wants || this.ghostTimer > 0) return;
-    this.ghostTimer = 0.032;
+    this.ghostTimer = 0.055;
     const life = this.ghostBurst > 0 ? 0.2 : 0.13;
     this.ghosts.push({ pose: clonePose(this.pose), life, max: life });
-    if (this.ghosts.length > 9) this.ghosts.shift();
+    if (this.ghosts.length > 3) this.ghosts.shift();
   }
 
   // -------------------------------------------------------------- drawing ---
@@ -812,8 +959,9 @@ export class Stickman {
     this.limb(sk, bl.hip, bl.knee, bl.foot, LIMB * 0.92);
     this.limb(sk, p.shL, p.elbowL, p.handL, LIMB * 0.9);
 
-    // Torso and neck.
-    sk.line(p.pelvis, p.chest, BODY, 2, 0.9);
+    // Torso, drawn as two segments so the curl in the back actually shows.
+    sk.line(p.pelvis, p.mid, BODY, 1, 0.7);
+    sk.line(p.mid, p.chest, BODY, 1, 0.7);
     sk.line(p.chest, p.neck, BODY * 0.85, 1, 0.7);
 
     this.limb(sk, fl.hip, fl.knee, fl.foot, LIMB);
@@ -844,10 +992,31 @@ export class Stickman {
   jitterSeed(i: number): number { return hashNoise(i, Math.floor(this.breathe * 8)); }
 }
 
+/** Wraps a cycle position into 0..1. */
+function mod1(v: number): number {
+  const m = v % 1;
+  return m < 0 ? m + 1 : m;
+}
+
+/** The interpolated leg pose at a point in the cycle, in cycles (not radians). */
+function sampleLeg(cycles: number): LegKey {
+  const u = mod1(cycles);
+  let i = 0;
+  while (i < RUN_CYCLE.length - 2 && RUN_CYCLE[i + 1].u <= u) i++;
+  const a = RUN_CYCLE[i], b = RUN_CYCLE[i + 1];
+  const t = smoothstep((u - a.u) / Math.max(1e-6, b.u - a.u));
+  return {
+    u,
+    thigh: lerp(a.thigh, b.thigh, t),
+    knee: lerp(a.knee, b.knee, t),
+    hip: lerp(a.hip, b.hip, t),
+  };
+}
+
 function blankPose(): Pose {
   const z = () => vec(0, 0);
   return {
-    pelvis: z(), chest: z(), neck: z(), head: z(),
+    pelvis: z(), mid: z(), chest: z(), neck: z(), head: z(),
     hipL: z(), kneeL: z(), footL: z(),
     hipR: z(), kneeR: z(), footR: z(),
     shL: z(), elbowL: z(), handL: z(),
@@ -859,7 +1028,7 @@ function blankPose(): Pose {
 function clonePose(p: Pose): Pose {
   const v = (a: Vec2): Vec2 => ({ x: a.x, y: a.y });
   return {
-    pelvis: v(p.pelvis), chest: v(p.chest), neck: v(p.neck), head: v(p.head),
+    pelvis: v(p.pelvis), mid: v(p.mid), chest: v(p.chest), neck: v(p.neck), head: v(p.head),
     hipL: v(p.hipL), kneeL: v(p.kneeL), footL: v(p.footL),
     hipR: v(p.hipR), kneeR: v(p.kneeR), footR: v(p.footR),
     shL: v(p.shL), elbowL: v(p.elbowL), handL: v(p.handL),

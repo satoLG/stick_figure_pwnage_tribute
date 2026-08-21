@@ -7,6 +7,7 @@ import {
   drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
 } from '../ui/ui';
+import { ImpactFx } from './impact';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
 import { RUN_PUSH, Stickman, type Controls } from './stickman';
@@ -48,6 +49,13 @@ export class Game {
   private terrain: Terrain;
   private sm = new Stickman();
   private particles = new Particles();
+  private impacts = new ImpactFx();
+  /**
+   * Frames of held time left after a hit. Freezing the whole world for two or
+   * three drawn frames is what turns a swing into a blow: it gives the eye a
+   * still frame to read the impact pose in, which no amount of extra ink does.
+   */
+  private freezeFrames = 0;
   private projectiles: Projectile[] = [];
   private weapons: Weapon[] = createArsenal();
   private equipped = 0;
@@ -209,6 +217,8 @@ export class Game {
   private resetWorld(): void {
     this.terrain = new Terrain(this.view.w, this.view.h);
     this.particles.clear();
+    this.impacts.clear();
+    this.freezeFrames = 0;
     this.projectiles.length = 0;
     this.weapons = createArsenal();
     this.equipped = 0;
@@ -247,6 +257,8 @@ export class Game {
       shake: (a) => this.shake(a),
       flash: (a) => { this.flashAmt = Math.min(1, this.flashAmt + a); },
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
+      hit: (x, y, dir, power) => this.impacts.add(x, y, dir, power),
+      freeze: (frames) => { this.freezeFrames = Math.max(this.freezeFrames, frames); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
   }
@@ -257,10 +269,45 @@ export class Game {
 
   // ----------------------------------------------------------------- loop ---
 
+  /**
+   * The whole game is drawn on twos.
+   *
+   * The reference animation runs at about fifteen drawings a second, and that
+   * is not a limitation of the medium - it is the medium. Sixty smoothly
+   * interpolated frames a second read as floating; fifteen stepped ones read as
+   * drawn. So the world is simulated and painted on a fixed 15 Hz step and
+   * simply held in between, and the ink wobble advances once per step with it.
+   */
+  private frameAcc = 0;
+  private animFps = 15;
+
   private step(rawDt: number): void {
+    const stepLen = 1 / this.animFps;
+    this.frameAcc += rawDt;
+    if (this.frameAcc < stepLen) return;      // hold the frame already on screen
+    // Catch up after a stall, but never in one huge leap.
+    const dt = Math.min(stepLen * 3, this.frameAcc);
+    this.frameAcc = 0;
+    this.tickFrame(dt);
+  }
+
+  private tickFrame(rawDt: number): void {
     this.time += rawDt;
     this.phaseTime += rawDt;
-    this.sk.update(this.time);
+    this.sk.update();
+    // A/B the cadence against plain 60 fps while we tune the feel.
+    if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 15 ? 60 : 15;
+
+    // Held time: the world stops, the picture stays up, the screen keeps
+    // shaking. Input still reaches the buffer, it just cannot move anything yet.
+    if (this.freezeFrames > 0) {
+      this.freezeFrames--;
+      this.decayEffects(rawDt);
+      this.render(rawDt);
+      this.input.endFrame(rawDt);
+      return;
+    }
+    this.impacts.step();
 
     switch (this.phase) {
       case 'menu': this.updateMenu(rawDt); break;
@@ -515,6 +562,8 @@ export class Game {
 
     this.terrain.draw(c);
     this.particles.draw(this.sk);
+    // The impact fan sits under the figure: a hit must never hide who threw it.
+    this.impacts.draw(this.sk, w);
 
     const wctx = this.makeCtx(dt, this.pointerWorld());
     if (this.phase === 'playing') this.weapon.drawBehind(this.sk, wctx);

@@ -17,6 +17,10 @@ export interface WeaponCtx {
   shake(a: number): void;
   flash(a: number): void;
   invert(seconds: number): void;
+  /** The converging fan of lines that punctuates a landed blow. */
+  hit(x: number, y: number, dir: number, power?: number): void;
+  /** Stop the world for a couple of frames, so the impact pose can be read. */
+  freeze(frames: number): void;
   sfx(name: SfxName, pitch?: number): void;
 }
 
@@ -38,7 +42,9 @@ export function gripAt(ctx: WeaponCtx, ang: number, fwd: number, side = 0): Vec2
   const { chest } = ctx.sm.pose;
   const c = Math.cos(ang), s = Math.sin(ang);
   const d = clamp(fwd, -30, ARM_LEN * 0.94);
-  return { x: chest.x + c * d - s * side, y: chest.y + s * d + c * side + 2 };
+  // The torso got shorter, so the grip is lifted to keep the swing arc on the
+  // wall instead of sweeping through the indestructible floor.
+  return { x: chest.x + c * d - s * side, y: chest.y + s * d + c * side - 5 };
 }
 
 /** Mirrors a world-space angle when the figure turns around. */

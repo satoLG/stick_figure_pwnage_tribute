@@ -319,7 +319,6 @@ export class Shortswords extends MeleeWeapon {
     this.animLen = 0.14;
     this.cooldown = 0.13;
     this.gripFwd = 33;
-    this.trailLen = 10;
   }
 
   protected restAngle(ctx: WeaponCtx): number { return ctx.sm.pose.aim; }
@@ -478,7 +477,6 @@ export class Greatsword extends MeleeWeapon {
     this.cooldown = 0.95;
     this.gripFwd = 38;
     this.gripLead = 0.34;
-    this.trailLen = 14;
   }
 
   override onEquip(): void { super.onEquip(); this.dragT = 0; }
@@ -629,7 +627,6 @@ export class Warhammer extends MeleeWeapon {
     this.cooldown = 1.15;
     this.gripFwd = 36;
     this.gripLead = 0.3;
-    this.trailLen = 12;
   }
 
   /**

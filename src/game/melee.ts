@@ -5,7 +5,7 @@ import {
 import type { Sketch } from '../core/sketch';
 import { applyBlast, type Blast } from './projectiles';
 import { RUN_ATTACK_SPEED, type HandTargets, type Stance, type StanceKind } from './stickman';
-import { gripAt, impact, SlashFx, toward, Weapon, type WeaponCtx } from './weapon-base';
+import { gripAt, SlashFx, toward, Weapon, type WeaponCtx } from './weapon-base';
 
 /**
  * Which sequence of strikes the figure is in the middle of. Every melee weapon
@@ -92,7 +92,6 @@ export abstract class MeleeWeapon extends Weapon {
   protected abstract readonly sets: Record<MeleeMode, readonly MeleeMove[]>;
 
   protected fx = new SlashFx();
-  protected tipTrail: Vec2[] = [];
   protected move: MeleeMove = FALLBACK;
   protected mode: MeleeMode = 'ground';
   /** How many strikes have landed back to back without losing the rhythm. */
@@ -100,8 +99,6 @@ export abstract class MeleeWeapon extends Weapon {
   /** How far the hands travel out along the weapon when it is swinging. */
   protected gripFwd = 36;
   protected gripLead = 0.3;
-  /** How many samples of the tip the motion ribbon keeps. */
-  protected trailLen = 16;
 
   private chain = 0;
   private idle = 0;
@@ -120,7 +117,6 @@ export abstract class MeleeWeapon extends Weapon {
   override onUnequip(ctx: WeaponCtx): void {
     super.onUnequip(ctx);
     this.fx.clear();
-    this.tipTrail.length = 0;
     this.combo = 0;
     this.chain = 0;
   }
@@ -155,7 +151,6 @@ export abstract class MeleeWeapon extends Weapon {
     this.move = mv;
     this.struck = false;
     this.idle = 0;
-    this.tipTrail.length = 0;
 
     // The base class started a default-length animation a moment ago; a combo
     // step owns its own timing, so both clocks get re-pointed here - including
@@ -169,7 +164,9 @@ export abstract class MeleeWeapon extends Weapon {
     if (mv.dash || mv.lift) sm.dash(f * (mv.dash ?? 0), -(mv.lift ?? 0));
     if (mv.slide) sm.slide(mv.slide);
     if (mv.spin) sm.spinFlourish(f * Math.sign(mv.spin), Math.abs(mv.spin), mv.hop ?? 0);
-    sm.addGhostBurst(mv.ghost ?? (mv.heavy ? 0.4 : 0.12));
+    // Afterimages only for a spin, where they read as rotation. On an ordinary
+    // swing they are nine extra skeletons of ink for no information at all.
+    if (mv.spin || mv.ghost) sm.addGhostBurst(mv.ghost ?? 0.22);
 
     ctx.sfx(mv.swingSfx ?? (mv.heavy ? 'heavyswing' : 'swing'),
       (mv.swingPitch ?? 1) * rand(0.94, 1.08));
@@ -195,17 +192,7 @@ export abstract class MeleeWeapon extends Weapon {
       return;
     }
 
-    // Sample the tip every frame of the swing: that ribbon is the whole look.
-    const h = ctx.sm.pose.handR;
-    const ba = this.bladeAngle(ctx);
-    this.tipTrail.push({ x: h.x + Math.cos(ba) * this.len, y: h.y + Math.sin(ba) * this.len });
-    if (this.tipTrail.length > this.trailLen) this.tipTrail.shift();
-
     const mv = this.move;
-    // A slow wind-up drags dust off the floor: heavy swings are telegraphed.
-    if (mv.heavy && ctx.sm.onGround && this.t < mv.wind && Math.random() < 0.3) {
-      ctx.particles.updraft(ctx.sm.pos.x, ctx.sm.pos.y - 4, 1, 26, 90);
-    }
     if (!this.struck && this.t > mv.wind + mv.strike * 0.4) {
       this.struck = true;
       this.land(ctx, mv);
@@ -244,11 +231,11 @@ export abstract class MeleeWeapon extends Weapon {
       removed = ctx.terrain.carveArc(h.x, h.y, reach, from, to, thick).removed;
       // The visible crescent goes up whether or not it found anything: a cut
       // through empty air still has to look like a cut.
-      this.fx.add(h.x, h.y, reach, from, to, thick * 1.12, heavy ? 0.32 : 0.22, heavy ? 30 : 20);
+      this.fx.add(h.x, h.y, reach, from, to, thick * 1.12, heavy ? 0.2 : 0.14, heavy ? 34 : 22);
       if (mv.cross) {
         const from2 = a - mv.from * f, to2 = a - mv.to * f;
         removed += ctx.terrain.carveArc(h.x, h.y, reach, from2, to2, thick).removed;
-        this.fx.add(h.x, h.y, reach, from2, to2, thick * 1.12, 0.24, 26);
+        this.fx.add(h.x, h.y, reach, from2, to2, thick * 1.12, 0.14, 26);
       }
     }
 
@@ -271,26 +258,30 @@ export abstract class MeleeWeapon extends Weapon {
     }
 
     // --- what the strike does to the world and the screen --------------------
+    //
+    // Everything here is the reference film's grammar for a landed blow, and
+    // nothing else is allowed in: one fan of lines converging on the point of
+    // contact, two frames of inverted screen, and a couple of held frames. No
+    // debris cloud, no sparks, no smoke - they are what turned every hit into
+    // an unreadable scribble.
     const bit = removed > 0;
     const shake = mv.shake ?? (heavy ? 17 : 6);
     ctx.shake(bit ? shake : shake * 0.4);
-    if (mv.flash) ctx.flash(mv.flash);
-    if (mv.invert) ctx.invert(mv.invert);
+    ctx.hit(at.x, at.y, a, heavy ? 1.6 : 0.85);
+    // Two drawn frames inverted, then back to paper.
+    ctx.invert(heavy ? 0.2 : 0.14);
+    // One drawn frame of held time on a light hit, two on a heavy one. At
+    // fifteen frames a second that is already 66 and 133ms of dead stop.
+    ctx.freeze(heavy ? 2 : 1);
     if (mv.quake) this.quake(ctx, at, mv.quake);
 
     const defaultHit: SfxName = mv.kind === 'thrust' ? 'punch' : 'slash';
     ctx.sfx(mv.hitSfx ?? defaultHit, (mv.hitPitch ?? 1) * (bit ? rand(0.92, 1.1) : rand(1.18, 1.36)));
 
     if (bit) {
-      impact(ctx, at.x, at.y, a, heavy ? 1.4 : 0.7);
+      // A few big chunks off a heavy hit, and only off a heavy hit.
+      if (heavy) ctx.particles.debris(at.x, at.y, 6, 260, a + Math.PI, 1.8);
       sm.applyRecoil(heavy ? 0.6 : 0.3, a, heavy ? 55 : 22);
-    }
-    // Sweeping the floor throws grit even when the wall is nowhere near.
-    const floor = ctx.terrain.groundBelow(at.x, at.y - 8, 46);
-    if (floor < 46) {
-      const gy = at.y - 8 + floor;
-      ctx.particles.dust(at.x, gy, heavy ? 5 : 2, f > 0 ? 0 : Math.PI, heavy ? 1.2 : 0.6);
-      ctx.particles.sparks(at.x, gy, heavy ? 8 : 3, 220, -Math.PI / 2, 1.6);
     }
     if (mv.recover) sm.dash(-f * mv.recover);
   }
@@ -393,43 +384,9 @@ export abstract class MeleeWeapon extends Weapon {
   protected abstract drawWeapon(sk: Sketch, ctx: WeaponCtx, angle: number): void;
 
   draw(sk: Sketch, ctx: WeaponCtx): void {
-    const c = sk.ctx;
-    const h = ctx.sm.pose.handR;
-    const ba = this.bladeAngle(ctx);
-
-    if (this.anim > 0) {
-      const mv = this.move;
-      const f = ctx.sm.facing;
-      // A fan of afterimages behind the edge, thickest through the strike.
-      if (this.t > mv.wind && this.t < mv.wind + mv.strike * 2.4) {
-        c.save();
-        c.globalAlpha = 0.32;
-        c.lineWidth = 2;
-        const back = Math.sign(mv.to - mv.from) * f;
-        for (let i = 1; i <= 5; i++) {
-          const a2 = ba - back * i * 0.17 * f;
-          c.beginPath();
-          c.moveTo(h.x + Math.cos(a2) * 18, h.y + Math.sin(a2) * 18);
-          c.lineTo(h.x + Math.cos(a2) * this.len, h.y + Math.sin(a2) * this.len);
-          c.stroke();
-        }
-        c.restore();
-      }
-      // The ribbon the tip actually carved through the air.
-      if (this.tipTrail.length > 2) {
-        c.save();
-        c.globalAlpha = 0.5;
-        c.lineWidth = 2.4;
-        c.beginPath();
-        for (let i = 0; i < this.tipTrail.length; i++) {
-          const p = this.tipTrail[i];
-          if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
-        }
-        c.stroke();
-        c.restore();
-      }
-    }
-
-    this.drawWeapon(sk, ctx, ba);
+    // No fan of ghost blades, no ribbon off the tip. A fast weapon is one
+    // shape moving between two drawings, not a stack of translucent copies -
+    // the copies are exactly what made a swing unreadable.
+    this.drawWeapon(sk, ctx, this.bladeAngle(ctx));
   }
 }
