@@ -66,6 +66,33 @@ he can run one way while still facing and swinging the other.
 The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
 thumb dragging up from the bottom edge cannot reach the lower half of a ring.
 
+### Aim modes
+
+A stick is not a crosshair. Reading its angle straight off is fine for a bat,
+where anywhere in the right half of the world is a hit, and hopeless for a
+rifle: near the vertical a couple of degrees of thumb wobble crosses the axis
+and spins the whole figure round. There is no one answer to that, so the usual
+ones are all here, swappable mid-fight from the **AIM** chip in the top right
+(`src/ui/aim.ts`). The choice is remembered between sessions.
+
+| Mode | What the thumb does |
+| --- | --- |
+| **Eased** | Free aim, but the aim *swings* towards the thumb at a capped speed rather than snapping to it. Speed rises with the square of the push, so the first few degrees of travel are for placing a shot and the outer edge is for spinning round. The default. |
+| **Crosshair** | A trackpad. The thumb shoves a mark around the world and the mark stays where it is put — it cannot spring back, and a wobble moves it by exactly that wobble. The steadiest at range. |
+| **Elevation** | Two controls on one thumb: sideways picks the side he faces, up and down set how steeply. Pushing down cannot cross the axis because down does not touch the side at all. |
+| **Direct** | The raw stick angle, instantly. Fastest and twitchiest; what melee wants. |
+| **Touch point** | Aim straight at the spot under the thumb, wherever that is. |
+| **Eight way** | Locked to the eight compass directions, with enough hysteresis that a thumb on a boundary does not rattle between two. |
+
+Two settings sit under them. **Speed** scales the modes that have a rate to
+scale. **Turn guard** stops a near-vertical aim from turning him round at all:
+he keeps facing where he was until the aim leans more than about 20° off the
+vertical, so reaching for a steep shot no longer spins him.
+
+The modes read an abstract stick — deflection, plus how far the thumb moved
+this frame — so the same six work for a gamepad's right stick if one is ever
+wired up.
+
 ## The arsenal
 
 | # | Key | Weapon | Behaviour |
@@ -340,6 +367,7 @@ src/
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
     touch.ts           the two floating sticks, weapon pad
+    aim.ts             the aim modes, their settings and the panel that picks
 ```
 
 ---

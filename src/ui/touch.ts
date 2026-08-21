@@ -1,6 +1,7 @@
 import { TAU, type Vec2 } from '../core/math';
 import type { Input, Ptr } from '../core/input';
 import type { Sketch } from '../core/sketch';
+import { AimSolver } from './aim';
 import type { WheelLayout } from './ui';
 import { inkText } from './ui';
 
@@ -57,7 +58,8 @@ export class TouchControls {
   private aimStick: Stick | null = null;
   private aimFade = 0;
   /** Sticky: a tap that never drags keeps whatever the last drag chose. */
-  private aimDir: Vec2 | null = null;
+  private aim = new AimSolver();
+  private aimPrev: Vec2 | null = null;
 
   private padId = -1;
   private padPress = 0;
@@ -79,7 +81,7 @@ export class TouchControls {
 
   update(
     input: Input, dt: number, view: { w: number; h: number },
-    toWorld: (x: number, y: number) => Vec2,
+    toWorld: (x: number, y: number) => Vec2, eye: Vec2,
   ): TouchState {
     this.pad = this.padCentre(view);
     this.padR = Math.min(46, view.w * 0.06 + 26);
@@ -173,34 +175,43 @@ export class TouchControls {
       // Fall back to any other attack finger still down.
       for (const p of byId.values()) if (p.role === 'attack') { attack = p; this.attackId = p.id; break; }
     }
+    // The second stick. Where on the screen the thumb landed says nothing; only
+    // what it does next, and how that is read is the selected aim mode's
+    // business - see ui/aim.ts. A press that never moves leaves the aim exactly
+    // as it was under every mode, so tapping attacks along the current aim.
+    let fresh = false;
+    let dx = 0, dy = 0;
+    let here: Vec2 = eye;
     if (attack) {
-      // The second stick. Where on the screen the thumb landed says nothing;
-      // only which way it has since been dragged. A press that never drags
-      // leaves the aim exactly as it was, so tapping attacks straight ahead.
+      here = toWorld(attack.x, attack.y);
       if (!this.aimStick || this.aimStick.id !== attack.id) {
-        const w0 = toWorld(attack.x, attack.y);
-        this.aimStick = { id: attack.id, ox: w0.x, oy: w0.y, x: w0.x, y: w0.y };
+        this.aimStick = { id: attack.id, ox: here.x, oy: here.y, x: here.x, y: here.y };
+        this.aimPrev = null;
+        fresh = true;
       }
-      const w = toWorld(attack.x, attack.y);
-      this.aimStick.x = w.x; this.aimStick.y = w.y;
-      let dx = w.x - this.aimStick.ox, dy = w.y - this.aimStick.oy;
+      this.aimStick.x = here.x; this.aimStick.y = here.y;
+      dx = here.x - this.aimStick.ox; dy = here.y - this.aimStick.oy;
       const d = Math.hypot(dx, dy);
       // The base follows the thumb past the edge, so swinging the aim back the
       // other way takes one travel, not one travel plus however far it went.
       if (d > AIM_R) {
-        this.aimStick.ox = w.x - (dx / d) * AIM_R;
-        this.aimStick.oy = w.y - (dy / d) * AIM_R;
+        this.aimStick.ox = here.x - (dx / d) * AIM_R;
+        this.aimStick.oy = here.y - (dy / d) * AIM_R;
         dx = (dx / d) * AIM_R; dy = (dy / d) * AIM_R;
       }
-      const pull = Math.hypot(dx, dy);
-      if (pull > AIM_DEAD) this.aimDir = { x: dx / pull, y: dy / pull };
       out.firing = true;
     } else {
       this.attackId = -1;
       this.aimStick = null;
+      this.aimPrev = null;
     }
-    // Sticky between presses too: he holds the aim he was left with.
-    out.aimDir = this.aimDir;
+    const moved: Vec2 = this.aimPrev ? { x: here.x - this.aimPrev.x, y: here.y - this.aimPrev.y } : { x: 0, y: 0 };
+    this.aimPrev = attack ? { x: here.x, y: here.y } : null;
+    out.aimDir = this.aim.update(dt, {
+      active: !!attack, fresh,
+      nx: dx / AIM_R, ny: dy / AIM_R, dead: AIM_DEAD / AIM_R,
+      world: here, delta: moved, eye, view,
+    });
     this.aimFade += ((this.aimStick ? 1 : 0) - this.aimFade) * Math.min(1, dt * 14);
 
     // --- weapon pad ---------------------------------------------------------
@@ -224,7 +235,8 @@ export class TouchControls {
     this.padId = -1;
     this.wheelOpen = false;
     this.aimStick = null;
-    this.aimDir = null;
+    this.aimPrev = null;
+    this.aim.reset();
   }
 
   // -------------------------------------------------------------- drawing ---
@@ -320,14 +332,23 @@ export class TouchControls {
     c.stroke();
 
     // Where that adds up to on him, so the aim is readable without hunting for
-    // the arm: a ring sitting out along the line he is about to swing down.
-    if (this.aimDir) {
+    // the arm. CROSSHAIR mode parks a mark at a real spot in the world, so that
+    // is what gets drawn; every other mode only has a direction, and shows it
+    // as a ring out along the line he is about to swing down.
+    const dir = this.aim.dir;
+    const mark = this.aim.cross ?? (dir && { x: from.x + dir.x * AIM_MARK, y: from.y + dir.y * AIM_MARK });
+    if (mark) {
+      const r = 18 + Math.sin(time * 8) * 2;
       c.globalAlpha = 0.5 * a;
       c.lineWidth = 2.4;
-      const mx = from.x + this.aimDir.x * AIM_MARK;
-      const my = from.y + this.aimDir.y * AIM_MARK;
-      sk.polyPath(ring(mx, my, 18 + Math.sin(time * 8) * 2, 9), 1.4);
+      sk.polyPath(ring(mark.x, mark.y, r, 9), 1.4);
       c.stroke();
+      if (this.aim.cross) {
+        // A parked mark is a place, not a heading: cross it so it reads as one.
+        c.globalAlpha = 0.4 * a;
+        sk.line({ x: mark.x - r * 1.5, y: mark.y }, { x: mark.x + r * 1.5, y: mark.y }, 1.8, 1, 0.4);
+        sk.line({ x: mark.x, y: mark.y - r * 1.5 }, { x: mark.x, y: mark.y + r * 1.5 }, 1.8, 1, 0.4);
+      }
     }
     c.restore();
   }

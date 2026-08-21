@@ -2,6 +2,7 @@ import { audio, type SfxName } from '../core/audio';
 import { Input } from '../core/input';
 import { clamp, damp, easeOutBack, hashNoise, rand, TAU, vec, type Vec2 } from '../core/math';
 import { Sketch } from '../core/sketch';
+import { aimSettings, AimPanel, FACE_GUARD } from '../ui/aim';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
   drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
@@ -43,6 +44,7 @@ export class Game {
   private sk: Sketch;
   private input: Input;
   private touch = new TouchControls();
+  private aimPanel = new AimPanel();
 
   /** Playfield size in world units; follows the viewport aspect exactly. */
   private view = { w: 1280, h: 720 };
@@ -160,6 +162,7 @@ export class Game {
     this.scaleX = this.canvas.width / this.view.w;
     this.scaleY = this.canvas.height / this.view.h;
     this.readSafeArea();
+    this.aimPanel.layout(this.view, this.safe);
   }
 
   /** Reads env(safe-area-inset-*) off the probe and converts it to world units. */
@@ -331,7 +334,19 @@ export class Game {
   /** Merges keyboard/mouse and on-screen controls into one set of wishes. */
   private readIntent(rawDt: number): Intent {
     const inp = this.input;
-    const t = this.touch.update(inp, rawDt, this.view, this.toWorld);
+    // The panel gets first refusal on a press, and marks whatever it takes so
+    // the controls underneath never see it as a swing.
+    if (this.isTouch) {
+      for (const p of inp.pointers.values()) {
+        if (p.kind !== 'touch' || p.role !== '' || !p.justDown) continue;
+        if (this.aimPanel.press(this.toWorld(p.x, p.y))) p.role = 'ui';
+      }
+      if (inp.mousePressed && this.aimPanel.press(this.pointerWorld())) inp.mousePressed = false;
+    }
+    // Near-vertical aim leaves him facing where he was, so a thumb reaching for
+    // a steep shot cannot spin the whole figure round on a few degrees of slop.
+    this.sm.faceGuard = this.isTouch && aimSettings.guard ? FACE_GUARD : 0;
+    const t = this.touch.update(inp, rawDt, this.view, this.toWorld, this.eye);
 
     let numberKey: number | null = null;
     for (let i = 0; i < NUMBER_KEYS.length; i++) {
@@ -635,6 +650,7 @@ export class Game {
         this.touch.drawStick(this.sk);
         this.touch.drawAim(this.sk, this.time, this.eye);
         this.touch.drawPad(this.sk, this.view, (x, y, s) => this.weapon.icon(this.sk, x, y, s));
+        this.aimPanel.draw(this.sk, this.view);
       }
     }
     this.wheel.draw(
