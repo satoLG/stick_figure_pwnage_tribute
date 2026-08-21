@@ -5,7 +5,7 @@ import {
 import type { Sketch } from '../core/sketch';
 import { applyBlast, type Blast } from './projectiles';
 import { RUN_ATTACK_SPEED, type HandTargets, type Stance, type StanceKind } from './stickman';
-import { gripAt, SlashFx, toward, Weapon, type WeaponCtx } from './weapon-base';
+import { gripAt, toward, Weapon, type WeaponCtx } from './weapon-base';
 
 /**
  * Which sequence of strikes the figure is in the middle of. Every melee weapon
@@ -91,7 +91,6 @@ export abstract class MeleeWeapon extends Weapon {
   /** The four chains. Each is cycled from the top while the player keeps going. */
   protected abstract readonly sets: Record<MeleeMode, readonly MeleeMove[]>;
 
-  protected fx = new SlashFx();
   protected move: MeleeMove = FALLBACK;
   protected mode: MeleeMode = 'ground';
   /** How many strikes have landed back to back without losing the rhythm. */
@@ -116,7 +115,6 @@ export abstract class MeleeWeapon extends Weapon {
 
   override onUnequip(ctx: WeaponCtx): void {
     super.onUnequip(ctx);
-    this.fx.clear();
     this.combo = 0;
     this.chain = 0;
   }
@@ -179,7 +177,6 @@ export abstract class MeleeWeapon extends Weapon {
   protected idleTick(_ctx: WeaponCtx): void {}
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
-    this.fx.update(ctx.dt);
     this.heldFor = held ? this.heldFor + ctx.dt : 0;
 
     if (this.anim <= 0) {
@@ -229,13 +226,9 @@ export abstract class MeleeWeapon extends Weapon {
       const from = a + mv.from * f;
       const to = a + mv.to * f;
       removed = ctx.terrain.carveArc(h.x, h.y, reach, from, to, thick).removed;
-      // The visible crescent goes up whether or not it found anything: a cut
-      // through empty air still has to look like a cut.
-      this.fx.add(h.x, h.y, reach, from, to, thick * 1.12, heavy ? 0.2 : 0.14, heavy ? 34 : 22);
       if (mv.cross) {
         const from2 = a - mv.from * f, to2 = a - mv.to * f;
         removed += ctx.terrain.carveArc(h.x, h.y, reach, from2, to2, thick).removed;
-        this.fx.add(h.x, h.y, reach, from2, to2, thick * 1.12, 0.14, 26);
       }
     }
 
@@ -268,8 +261,9 @@ export abstract class MeleeWeapon extends Weapon {
     const shake = mv.shake ?? (heavy ? 17 : 6);
     ctx.shake(bit ? shake : shake * 0.4);
     ctx.hit(at.x, at.y, a, heavy ? 1.6 : 0.85);
-    // Two drawn frames inverted, then back to paper.
-    ctx.invert(heavy ? 0.2 : 0.14);
+    // Inverting the whole screen is the loudest thing this game can do, so it
+    // is spent only on a charged special - the held chain's heavy finishers.
+    if (heavy && this.mode === 'hold') ctx.invert(0.16);
     // One drawn frame of held time on a light hit, two on a heavy one. At
     // fifteen frames a second that is already 66 and 133ms of dead stop.
     ctx.freeze(heavy ? 2 : 1);
@@ -376,9 +370,6 @@ export abstract class MeleeWeapon extends Weapon {
   }
 
   // ---------------------------------------------------------------- drawing ---
-
-  /** The cuts hang behind the figure, so a big slash never hides him. */
-  override drawBehind(sk: Sketch): void { this.fx.draw(sk); }
 
   /** Draws the weapon itself around `angle`, anchored at the main hand. */
   protected abstract drawWeapon(sk: Sketch, ctx: WeaponCtx, angle: number): void;

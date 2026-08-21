@@ -51,11 +51,11 @@ export class Game {
   private particles = new Particles();
   private impacts = new ImpactFx();
   /**
-   * Frames of held time left after a hit. Freezing the whole world for two or
-   * three drawn frames is what turns a swing into a blow: it gives the eye a
-   * still frame to read the impact pose in, which no amount of extra ink does.
+   * Held time left after a hit, in seconds. Stopping the world for a couple of
+   * drawings is what turns a swing into a blow: it gives the eye a still frame
+   * to read the impact pose in, which no amount of extra ink does.
    */
-  private freezeFrames = 0;
+  private freezeT = 0;
   private projectiles: Projectile[] = [];
   private weapons: Weapon[] = createArsenal();
   private equipped = 0;
@@ -218,7 +218,7 @@ export class Game {
     this.terrain = new Terrain(this.view.w, this.view.h);
     this.particles.clear();
     this.impacts.clear();
-    this.freezeFrames = 0;
+    this.freezeT = 0;
     this.projectiles.length = 0;
     this.weapons = createArsenal();
     this.equipped = 0;
@@ -258,7 +258,7 @@ export class Game {
       flash: (a) => { this.flashAmt = Math.min(1, this.flashAmt + a); },
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => this.impacts.add(x, y, dir, power),
-      freeze: (frames) => { this.freezeFrames = Math.max(this.freezeFrames, frames); },
+      freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
   }
@@ -279,7 +279,12 @@ export class Game {
    * simply held in between, and the ink wobble advances once per step with it.
    */
   private frameAcc = 0;
-  private animFps = 15;
+  /**
+   * Frames drawn per second. 60 is smooth and responsive; 15 is the reference
+   * film's own cadence, and costs the input latency that comes with it. V
+   * toggles, because the two really are different games to play.
+   */
+  private animFps = 60;
 
   private step(rawDt: number): void {
     const stepLen = 1 / this.animFps;
@@ -294,20 +299,20 @@ export class Game {
   private tickFrame(rawDt: number): void {
     this.time += rawDt;
     this.phaseTime += rawDt;
-    this.sk.update();
+    this.sk.update(this.time);
     // A/B the cadence against plain 60 fps while we tune the feel.
-    if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 15 ? 60 : 15;
+    if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 60 ? 15 : 60;
 
     // Held time: the world stops, the picture stays up, the screen keeps
     // shaking. Input still reaches the buffer, it just cannot move anything yet.
-    if (this.freezeFrames > 0) {
-      this.freezeFrames--;
+    if (this.freezeT > 0) {
+      this.freezeT = Math.max(0, this.freezeT - rawDt);
       this.decayEffects(rawDt);
       this.render(rawDt);
       this.input.endFrame(rawDt);
       return;
     }
-    this.impacts.step();
+    this.impacts.step(rawDt);
 
     switch (this.phase) {
       case 'menu': this.updateMenu(rawDt); break;
@@ -563,7 +568,7 @@ export class Game {
     this.terrain.draw(c);
     this.particles.draw(this.sk);
     // The impact fan sits under the figure: a hit must never hide who threw it.
-    this.impacts.draw(this.sk, w);
+    this.impacts.draw(this.sk, w, this.invertT > 0);
 
     const wctx = this.makeCtx(dt, this.pointerWorld());
     if (this.phase === 'playing') this.weapon.drawBehind(this.sk, wctx);

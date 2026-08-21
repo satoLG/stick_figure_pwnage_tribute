@@ -76,7 +76,7 @@ const SIXTEENTH = BEAT / 4;
  * Headroom for the band. The whole mix has to leave room for a shotgun and two
  * explosions on top of it without the limiter clamping down on the music.
  */
-const MUSIC_TRIM = 0.6;
+const MUSIC_TRIM = 0.85;
 
 export class AudioEngine {
   ctx: AudioContext | null = null;
@@ -86,8 +86,22 @@ export class AudioEngine {
   /** Everything that wants a room around it sends here. */
   private verb!: GainNode;
   private noiseBuffer!: AudioBuffer;
-  private distortion!: WaveShaperNode;
-  private softDrive!: WaveShaperNode;
+  /**
+   * Complete, permanent instrument chains. Every note connects *into* one of
+   * these and nothing is ever wired out of a shared node into a per-note one:
+   * doing that fans the shared node out to every chain ever built, so the mix
+   * piles up and the audio thread slowly strangles. That, plus a per-note delay
+   * feedback loop - a cycle the browser can never collect - is why the music
+   * used to stutter and then die a minute in.
+   */
+  private guitarOpen!: GainNode;
+  private guitarMute!: GainNode;
+  private bassIn!: GainNode;
+  private leadIn!: GainNode;
+  /** Shared slap-delay send, built once. */
+  private slap!: GainNode;
+  private hardCurve!: Float32Array<ArrayBuffer>;
+  private softCurve!: Float32Array<ArrayBuffer>;
   /** Plucked string bodies, built once per note and reused. */
   private strings = new Map<string, AudioBuffer>();
 
@@ -133,13 +147,9 @@ export class AudioEngine {
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     this.noiseBuffer = buf;
 
-    this.distortion = ctx.createWaveShaper();
-    this.distortion.curve = makeDistortionCurve(58);
-    this.distortion.oversample = '4x';
+    this.hardCurve = makeDistortionCurve(58);
     // A gentler curve: enough to thicken a bass string without fuzzing it out.
-    this.softDrive = ctx.createWaveShaper();
-    this.softDrive.curve = makeDistortionCurve(6);
-    this.softDrive.oversample = '2x';
+    this.softCurve = makeDistortionCurve(6);
 
     // The room. A short exponentially decaying noise burst is a perfectly
     // convincing impulse response for a rehearsal space.
@@ -151,7 +161,62 @@ export class AudioEngine {
     wet.gain.value = 0.5;
     this.verb.connect(conv).connect(wet).connect(this.master);
 
+    this.buildInstruments();
     await ctx.resume();
+  }
+
+  /**
+   * One amp and cabinet per instrument, wired up once and left alone. A note is
+   * two nodes - the plucked string and its envelope - connected into the front
+   * of the chain, so nothing accumulates however long the song runs.
+   */
+  private buildInstruments(): void {
+    const ctx = this.ctx!;
+    const amp = (drive: Float32Array<ArrayBuffer>, over: OverSampleType, cab: number,
+      presence: number, level: number, verb: number): GainNode => {
+      const input = ctx.createGain();
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = drive;
+      shaper.oversample = over;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = cab; lp.Q.value = 0.9;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 95;
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking'; peak.frequency.value = presence; peak.gain.value = 5; peak.Q.value = 1.1;
+      const out = ctx.createGain();
+      out.gain.value = level;
+      input.connect(shaper).connect(lp).connect(hp).connect(peak).connect(out).connect(this.musicBus);
+      if (verb > 0) this.room(out, verb);
+      return input;
+    };
+
+    this.guitarMute = amp(this.hardCurve, '4x', 2100, 2300, 1.4, 0);
+    this.guitarOpen = amp(this.hardCurve, '4x', 3400, 2300, 1.1, 0.12);
+    this.leadIn = amp(this.hardCurve, '2x', 3600, 2600, 1, 0.2);
+
+    // Bass: dark, slightly driven, in its own quiet lane.
+    this.bassIn = ctx.createGain();
+    const bLp = ctx.createBiquadFilter();
+    bLp.type = 'lowpass'; bLp.frequency.value = 900; bLp.Q.value = 1.2;
+    const bDrive = ctx.createWaveShaper();
+    bDrive.curve = this.softCurve;
+    bDrive.oversample = '2x';
+    const bOut = ctx.createGain();
+    bOut.gain.value = 1;
+    this.bassIn.connect(bLp).connect(bDrive).connect(bOut).connect(this.musicBus);
+
+    // The lead's slap delay, built once.
+    const dly = ctx.createDelay(0.6);
+    dly.delayTime.value = BEAT * 0.75;
+    const fb = ctx.createGain();
+    fb.gain.value = 0.24;
+    dly.connect(fb).connect(dly);
+    const wet = ctx.createGain();
+    wet.gain.value = 0.3;
+    dly.connect(wet).connect(this.musicBus);
+    this.slap = ctx.createGain();
+    this.slap.connect(dly);
   }
 
   private get t(): number { return this.ctx ? this.ctx.currentTime : 0; }
@@ -274,7 +339,7 @@ export class AudioEngine {
     o.frequency.setValueAtTime(165, when);
     o.frequency.exponentialRampToValueAtTime(41, when + 0.1);
     const drive = ctx.createWaveShaper();
-    drive.curve = this.softDrive.curve;
+    drive.curve = this.softCurve;
     o.connect(drive);
     this.env(drive, when, 0.9 * gain, 0.002, 0.26).connect(this.musicBus);
     o.start(when); o.stop(when + 0.34);
@@ -442,33 +507,13 @@ export class AudioEngine {
 
   /** Root, fifth and octave, strummed a hair apart, through amp and cabinet. */
   private powerChord(root: number, when: number, dur: number, gain: number, muted: boolean): void {
-    const ctx = this.ctx!;
-    const amp = ctx.createGain();
-    amp.gain.value = muted ? 1.4 : 1.1;
-    const cab = ctx.createBiquadFilter();
-    cab.type = 'lowpass';
-    cab.frequency.value = muted ? 2100 : 3400;
-    cab.Q.value = 0.9;
-    const body = ctx.createBiquadFilter();
-    body.type = 'highpass';
-    body.frequency.value = 95;
-    const presence = ctx.createBiquadFilter();
-    presence.type = 'peaking';
-    presence.frequency.value = 2300;
-    presence.gain.value = 5;
-    presence.Q.value = 1.1;
-    amp.connect(this.distortion).connect(cab).connect(body).connect(presence);
-    const out = ctx.createGain();
-    out.gain.value = gain;
-    presence.connect(out).connect(this.musicBus);
-    if (!muted) this.room(out, 0.12);
-
+    const chain = muted ? this.guitarMute : this.guitarOpen;
     const decay = muted ? 0.3 : 1.4;
     const bright = muted ? 0.35 : 0.52;
     [1, 1.4983, 2].forEach((ratio, i) => {
       // A downstroke: the strings do not all speak at the same instant.
-      this.pluck(root * ratio, when + i * 0.006, dur, 0.5, {
-        decay, bright, through: amp, detune: (i - 1) * 4,
+      this.pluck(root * ratio, when + i * 0.006, dur, gain * 1.7, {
+        decay, bright, through: chain, detune: (i - 1) * 4,
       });
     });
   }
@@ -476,16 +521,7 @@ export class AudioEngine {
   /** The bass: a long, dark string plus a sine sub so phones feel it too. */
   private bass(freq: number, when: number, dur: number, gain: number): void {
     const ctx = this.ctx!;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(2200, when);
-    lp.frequency.exponentialRampToValueAtTime(520, when + dur);
-    lp.Q.value = 2;
-    const out = ctx.createGain();
-    out.gain.value = gain;
-    lp.connect(this.softDrive).connect(out).connect(this.musicBus);
-    this.pluck(freq, when, dur, 0.9, { decay: 0.9, bright: 0.62, through: lp });
-
+    this.pluck(freq, when, dur, gain * 2.2, { decay: 0.9, bright: 0.62, through: this.bassIn });
     const sub = ctx.createOscillator();
     sub.type = 'sine';
     sub.frequency.value = freq;
@@ -493,28 +529,10 @@ export class AudioEngine {
     sub.start(when); sub.stop(when + dur + 0.1);
   }
 
-  /** The hook: a brighter string with a touch of vibrato and a slap delay. */
+  /** The hook: a brighter string through the lead amp and the shared slap. */
   private lead(freq: number, when: number, dur: number, gain = 0.09): void {
-    const ctx = this.ctx!;
-    const amp = ctx.createGain();
-    amp.gain.value = 1;
-    const cab = ctx.createBiquadFilter();
-    cab.type = 'lowpass'; cab.frequency.value = 3600;
-    const out = ctx.createGain();
-    out.gain.value = gain;
-    amp.connect(this.distortion).connect(cab).connect(out).connect(this.musicBus);
-    this.room(out, 0.2);
-
-    this.pluck(freq, when, dur, 0.55, { decay: 1.1, bright: 0.6, through: amp });
-    // Slap delay, so the hook sits in a room instead of the void.
-    const dly = ctx.createDelay(0.5);
-    dly.delayTime.value = BEAT * 0.75;
-    const fb = ctx.createGain();
-    fb.gain.value = 0.24;
-    const wet = ctx.createGain();
-    wet.gain.value = 0.28;
-    out.connect(dly).connect(fb).connect(dly);
-    dly.connect(wet).connect(this.musicBus);
+    this.pluck(freq, when, dur, gain * 6, { decay: 1.1, bright: 0.6, through: this.leadIn });
+    this.pluck(freq, when, dur, gain * 1.6, { decay: 1.1, bright: 0.6, through: this.slap });
   }
 
   // ------------------------------------------------------------------ sfx ---

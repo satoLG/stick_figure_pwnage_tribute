@@ -28,6 +28,8 @@ interface Hit {
 
 /** How many lines are left on each frame of a hit's life. */
 const FAN = [13, 8, 5, 2];
+/** Seconds each stage of the fan is held: one drawing at fifteen a second. */
+const STAGE = 1 / 15;
 
 export class ImpactFx {
   private list: Hit[] = [];
@@ -39,61 +41,75 @@ export class ImpactFx {
     this.list.push({ x, y, dir, power: clamp(power, 0.3, 2), age: 0, seed: (x * 7 + y * 13) | 0 });
   }
 
-  clear(): void { this.list.length = 0; }
+  clear(): void { this.list.length = 0; this.acc = 0; }
 
-  /** One tick per drawn frame - the effect is authored in frames, not seconds. */
-  step(): void {
-    for (let i = this.list.length - 1; i >= 0; i--) {
-      if (++this.list[i].age >= FAN.length) this.list.splice(i, 1);
+  /**
+   * The effect is authored in drawings, not seconds, so it ages on the
+   * animation's own 15 Hz clock however fast the game happens to be painting.
+   */
+  private acc = 0;
+  step(dt: number): void {
+    this.acc += dt;
+    while (this.acc >= STAGE) {
+      this.acc -= STAGE;
+      for (let i = this.list.length - 1; i >= 0; i--) {
+        if (++this.list[i].age >= FAN.length) this.list.splice(i, 1);
+      }
     }
   }
 
   get busy(): boolean { return this.list.length > 0; }
 
-  draw(sk: Sketch, worldW: number): void {
+  /**
+   * The whole hit is *one* drawing.
+   *
+   * Every blade of the fan starts at exactly the same point - where the blow
+   * landed - and sweeps back past the figure, so the effect reads as a single
+   * connected form rather than an arc here and some loose strokes there. It is
+   * built as one path: filled white once, then outlined in one pass, which is
+   * what gives the reference's look of nested strokes with paper showing
+   * through them.
+   *
+   * `inverted` flips it solid, because on an inverted frame a white-filled
+   * shape with a black outline would vanish into the black ground.
+   */
+  draw(sk: Sketch, worldW: number, inverted = false): void {
     const c = sk.ctx;
     c.save();
-    c.fillStyle = '#000';
-    c.strokeStyle = '#000';
-    c.lineCap = 'butt';
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
     for (const h of this.list) {
       const n = FAN[h.age];
       // The fan opens back against the blow, wide enough to frame the figure.
       const back = h.dir + Math.PI;
-      const spread = 2.1 + h.power * 0.3;
-      const reach = worldW * (0.22 + h.power * 0.17);
+      const spread = 2.3 + h.power * 0.35;
+      const reach = worldW * (0.26 + h.power * 0.2);
+      const fade = 1 - h.age * 0.14;
 
+      c.beginPath();
       for (let i = 0; i < n; i++) {
         const t = n === 1 ? 0.5 : i / (n - 1);
-        const a = back + (t - 0.5) * spread + hashNoise(h.seed + i, h.age) * 0.08;
-        const len = reach * (0.45 + Math.abs(hashNoise(h.seed + i * 3, 1)) * 0.85);
-        const r0 = 4 + Math.abs(hashNoise(h.seed + i * 5, 2)) * 16;
-        const w = (3.4 + h.power * 4.2) * (1 - h.age * 0.16);
-        // A long sharp spike: wide at the point of contact, a point at the far
-        // end. Drawn as a triangle, not a stroke, so the taper is real.
-        const ca = Math.cos(a), sa = Math.sin(a);
-        const nx = -sa, ny = ca;
-        c.beginPath();
-        c.moveTo(h.x + ca * r0 + nx * w * 0.5, h.y + sa * r0 + ny * w * 0.5);
-        c.lineTo(h.x + ca * r0 - nx * w * 0.5, h.y + sa * r0 - ny * w * 0.5);
-        c.lineTo(h.x + ca * (r0 + len), h.y + sa * (r0 + len));
-        c.closePath();
-        c.fill();
-      }
-
-      // The first two frames also carry one solid shape. The screen is inverted
-      // over them, so this black wedge is what reads as the white flash.
-      if (h.age < 2) {
-        const a = back;
-        const r = 26 + h.power * 30;
+        const a = back + (t - 0.5) * spread + hashNoise(h.seed + i, h.age) * 0.07;
+        const len = reach * (0.42 + Math.abs(hashNoise(h.seed + i * 3, 1)) * 0.9) * fade;
+        const w = (4 + h.power * 8) * fade * (0.6 + Math.abs(hashNoise(h.seed + i * 7, 4)) * 0.8);
+        // Each blade bows a little, the way a drawn stroke does.
+        const bow = hashNoise(h.seed + i * 11, 5) * len * 0.1;
         const ca = Math.cos(a), sa = Math.sin(a);
         const nx = -sa, ny = ca;
         const p = (d: number, o: number): Vec2 => ({ x: h.x + ca * d + nx * o, y: h.y + sa * d + ny * o });
-        sk.poly([
-          p(r * 0.1, 0), p(r * 0.75, r * 0.62), p(r * 1.5, r * 0.34),
-          p(r * 0.95, 0), p(r * 1.5, -r * 0.34), p(r * 0.75, -r * 0.62),
-        ], 2, true, 1.4);
+        const tip = p(len, bow);
+        // Apex, out along one edge to the point, and back along the other.
+        c.moveTo(h.x, h.y);
+        const e1 = p(len * 0.34, w * 0.5 + bow * 0.35);
+        const e2 = p(len * 0.34, -w * 0.5 + bow * 0.35);
+        c.quadraticCurveTo(e1.x, e1.y, tip.x, tip.y);
+        c.quadraticCurveTo(e2.x, e2.y, h.x, h.y);
       }
+      c.fillStyle = inverted ? '#000' : '#fff';
+      c.fill();
+      c.strokeStyle = '#000';
+      c.lineWidth = inverted ? 5 : 2.8;
+      c.stroke();
     }
     c.restore();
   }

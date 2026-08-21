@@ -18,16 +18,13 @@ export class Sketch {
     this.ctx = ctx;
   }
 
-  private frame = 0;
-
   /**
-   * Called once per *drawn* frame. The wobble advances one step per frame, so
-   * the whole picture is re-inked exactly when the animation steps - which is
-   * what the boil is imitating in the first place.
+   * Called once per drawn frame; `t` is elapsed seconds. The wobble advances on
+   * its own clock, about twelve times a second, so the ink looks re-drawn at a
+   * hand-drawn rate whether the game is painting 15 frames a second or 60.
    */
-  update(): void {
-    this.frame++;
-    this.boil = this.frame;
+  update(t: number): void {
+    this.boil = Math.floor(t * 12);
     this.strokeId = 0;
   }
 
