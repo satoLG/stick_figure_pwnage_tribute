@@ -345,14 +345,13 @@ export class Game {
       * (inp.anyDown('ShiftLeft', 'ShiftRight') ? 1 : RUN_PUSH);
     const tabOpen = inp.down('Tab');
     const wheelOpen = tabOpen || t.wheelOpen;
-    const axis = keyAxis !== 0 ? keyAxis : t.axis;
 
     return {
-      axis,
+      axis: keyAxis !== 0 ? keyAxis : t.axis,
       down: inp.anyDown('KeyS', 'ArrowDown') || t.crouch,
       jump: inp.justPressed('Space') || t.jump,
       jumpHeld: inp.down('Space') || t.jumpHeld,
-      aim: this.resolveAim(t, axis),
+      aim: this.resolveAim(t),
       firing: (!wheelOpen && inp.mouseDown) || t.firing,
       firePressed: (!wheelOpen && inp.mousePressed) || t.firePressed,
       wheelOpen,
@@ -365,19 +364,17 @@ export class Game {
   /**
    * Where the figure is looking, which is also which way he faces.
    *
-   * A mouse is always somewhere, so it can own the aim outright. A thumb only
-   * says where it is while it is down: the attacking finger points wherever it
-   * touches - left of him as happily as right - and the moment it lifts the
-   * stick takes the turning over, so walking back the other way turns him round
-   * instead of leaving him moon-walking away from his last target.
+   * Aiming owns this outright - the cursor, or the attacking finger - and the
+   * walking controls never touch it: he can run, jump and crouch in one
+   * direction while still looking and swinging in the other. The aiming finger
+   * points wherever it lands, left of him as happily as right, and once it
+   * lifts he holds that look rather than snapping anywhere.
    */
-  private resolveAim(t: TouchState, axis: number): Vec2 {
+  private resolveAim(t: TouchState): Vec2 {
     if (!this.isTouch) return this.pointerWorld();
-    if (t.firing && t.aim) return t.aim;
-    // Shoulder height, so a resting aim is level rather than tilted upwards.
-    const eye = this.sm.pos.y - 74;
-    if (Math.abs(axis) > 0.01) return { x: this.sm.pos.x + Math.sign(axis) * 260, y: eye };
-    return t.aim ?? { x: this.sm.pos.x + this.sm.facing * 260, y: eye };
+    // Before the first touch there is no aim to speak of; look straight ahead
+    // at shoulder height rather than at the top-left corner of the world.
+    return t.aim ?? { x: this.sm.pos.x + this.sm.facing * 260, y: this.sm.pos.y - 74 };
   }
 
   // ----------------------------------------------------------------- menu ---

@@ -59,9 +59,9 @@ Nothing is shown until you touch it, so the picture stays clean.
 | Anywhere else | Touch to aim; tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. Aiming behind him turns him round, and once the stick is down every other finger aims, so the whole screen is fair game. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
-He faces whatever the attacking finger is pointing at. With no finger aiming,
-the stick does the turning instead, so walking back the other way turns him
-round rather than leaving him moon-walking away from his last target.
+Aiming is the only thing that turns him: the cursor, or the aiming finger. The
+stick moves, jumps and crouches and never changes where he is looking, so he
+can run one way while still facing and swinging the other.
 
 The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
 thumb dragging up from the bottom edge cannot reach the lower half of a ring.
