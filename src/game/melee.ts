@@ -84,6 +84,7 @@ const FALLBACK: MeleeMove = {
  * where it rests, and how to draw it.
  */
 export abstract class MeleeWeapon extends Weapon {
+  override readonly ranged = false;
   override auto = true;
 
   /** Length of the weapon in world units. Reach is measured against this. */

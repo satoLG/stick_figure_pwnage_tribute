@@ -47,7 +47,8 @@ npx vercel --prod
 | Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
 | `1`–`0`, `-`, `=` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
-| `R` / `Esc` | Restart / main menu, on the win screen |
+| `Esc` | Settings — and on the win screen, back to the main menu |
+| `R` | Restart, on the win screen |
 
 ## Controls — touch
 
@@ -56,42 +57,60 @@ Nothing is shown until you touch it, so the picture stays clean.
 | Where | Action |
 | --- | --- |
 | Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
-| Right side | A second floating stick, for aiming. Press to attack along the aim he already has; **drag** and the aim — and he with it — swings that way, in any direction, however far from him you happen to be holding. Tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. |
+| Right side | Aim and attack. **With a gun** the aim goes exactly where you touch, and follows your thumb as it slides. **With a blade or your fists** it is a floating stick instead: press to swing along the aim you already have, drag to swing the aim itself round. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
-Aiming is the only thing that turns him: the cursor, or the right stick. The
-left stick moves, jumps and crouches and never changes where he is looking, so
-he can run one way while still facing and swinging the other.
+## Controls — gamepad
 
-The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
-thumb dragging up from the bottom edge cannot reach the lower half of a ring.
+Any standard-mapping pad, no setup: pick it up and the game switches to it,
+touch the glass or the mouse and it switches back.
 
-### Aim modes
-
-A stick is not a crosshair. Reading its angle straight off is fine for a bat,
-where anywhere in the right half of the world is a hit, and hopeless for a
-rifle: near the vertical a couple of degrees of thumb wobble crosses the axis
-and spins the whole figure round. There is no one answer to that, so the usual
-ones are all here, swappable mid-fight from the **AIM** chip in the top right
-(`src/ui/aim.ts`). The choice is remembered between sessions.
-
-| Mode | What the thumb does |
+| Input | Action |
 | --- | --- |
-| **Eased** | Free aim, but the aim *swings* towards the thumb at a capped speed rather than snapping to it. Speed rises with the square of the push, so the first few degrees of travel are for placing a shot and the outer edge is for spinning round. The default. |
-| **Crosshair** | A trackpad. The thumb shoves a mark around the world and the mark stays where it is put — it cannot spring back, and a wobble moves it by exactly that wobble. The steadiest at range. |
-| **Elevation** | Two controls on one thumb: sideways picks the side he faces, up and down set how steeply. Pushing down cannot cross the axis because down does not touch the side at all. |
-| **Direct** | The raw stick angle, instantly. Fastest and twitchiest; what melee wants. |
-| **Touch point** | Aim straight at the spot under the thumb, wherever that is. |
-| **Eight way** | Locked to the eight compass directions, with enough hysteresis that a thumb on a boundary does not rattle between two. |
+| Left stick | Move — push up to jump, down to crouch |
+| Right stick | Aim, eased (below) |
+| `R1` / `R2` / `X` | Attack, held for combos and charges |
+| `A` | Jump · `B` Crouch |
+| Hold `L1` / `L2` | Weapon fan — point the right stick at one and let go |
+| D-pad ←→, `Y` | Step through the arsenal |
+| `Start` | Settings |
 
-Two settings sit under them. **Speed** scales the modes that have a rate to
-scale. **Turn guard** stops a near-vertical aim from turning him round at all:
-he keeps facing where he was until the aim leans more than about 20° off the
-vertical, so reaching for a steep shot no longer spins him.
+## Aiming
 
-The modes read an abstract stick — deflection, plus how far the thumb moved
-this frame — so the same six work for a gamepad's right stick if one is ever
-wired up.
+Aiming is the only thing that turns him: the cursor, the aiming thumb, or the
+right stick. The movement stick moves, jumps and crouches and never changes
+where he is looking, so he can run one way while still facing and swinging the
+other.
+
+A stick is not a crosshair, though, and one reading does not suit all three
+devices. Reading a stick's angle straight off is right for a bat, where
+anywhere in the right half of the world is a hit; for a rifle it is hopeless,
+because near the vertical a couple of degrees of wobble crosses the axis and
+spins the whole figure round, and the smallest useful push is worth ninety
+degrees of aim. So each pairing gets what suits it (`src/ui/aim.ts`):
+
+| Device and weapon | Reading |
+| --- | --- |
+| Touch, ranged | **Point** — the aim goes to the spot under the thumb. There is no stick to wobble, so a shot lands where you put your finger. |
+| Touch, melee | **Direct** — the raw angle of the floating stick, instantly. Fastest and most forgiving, which is what a swing wants. |
+| Gamepad | **Eased** — the aim *swings* towards the stick at a capped speed instead of snapping to it, rising with the square of the push, so the first degrees of travel place a shot and the rim spins him round. A real stick springs back, and needs it. |
+| Mouse | The cursor is the aim. |
+
+**Aim speed** in the settings scales the eased sweep; it is on FAST by default.
+
+## Settings
+
+The cog in the top right, or `Esc`, or `Start` on a pad. The world holds still
+while it is open, everything takes effect the moment it is touched, and the
+choices are remembered between sessions.
+
+- **Audio** — music and effects levels, applied live.
+- **Input** — what this machine can be played with, and which of them is in
+  hand, plus the aim speed.
+
+The weapon wheel is a full ring with a mouse or a pad and a **fan above the
+pad** on touch — a thumb dragging up from the bottom edge cannot reach the
+lower half of a ring.
 
 ## The arsenal
 
@@ -354,6 +373,8 @@ src/
     input.ts           keyboard + multi-pointer, with per-frame edges; also
                        cancels the browser's own zoom / select / drag gestures
                        and retires fingers whose pointerup never arrived
+    gamepad.ts         two sticks and a handful of edges, polled
+    settings.ts        audio levels and aim speed, remembered
     audio.ts           procedural soundtrack and SFX
   game/
     game.ts            state machine, loop, screen effects, HUD
@@ -367,7 +388,8 @@ src/
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
     touch.ts           the two floating sticks, weapon pad
-    aim.ts             the aim modes, their settings and the panel that picks
+    aim.ts             stick movement to an aim direction, per device
+    settings-menu.ts   the cog, and the card it opens
 ```
 
 ---

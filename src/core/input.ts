@@ -33,6 +33,13 @@ export class Input {
   pointers = new Map<number, Ptr>();
   /** Flips to true the first time a finger touches, and back if a mouse is used. */
   touchMode = false;
+  /**
+   * Did a finger, or a mouse or key, actually do something this frame? A device
+   * only takes the screen over by being used, so a gamepad player who lets go
+   * of both sticks keeps the gamepad HUD instead of flicking back to the mouse.
+   */
+  touchActivity = false;
+  deskActivity = false;
 
   /** Latest mouse/pen position in canvas CSS pixels. */
   pointer = { x: 0, y: 0 };
@@ -102,7 +109,8 @@ export class Input {
 
   private onDown(e: PointerEvent): void {
     const kind = (e.pointerType || 'mouse') as PointerKind;
-    if (kind === 'touch') this.touchMode = true;
+    if (kind === 'touch') { this.touchMode = true; this.touchActivity = true; }
+    else this.deskActivity = true;
     // A fresh press is a good moment to notice fingers that are no longer
     // there: pointer ids get recycled, so a ghost left behind by a dropped
     // `pointerup` would otherwise be mistaken for this new one.
@@ -131,7 +139,10 @@ export class Input {
     if (tracked) { tracked.x = p.x; tracked.y = p.y; }
     if ((e.pointerType || 'mouse') !== 'touch') {
       this.touchMode = false;
+      this.deskActivity = true;
       this.pointer = p;
+    } else {
+      this.touchActivity = true;
     }
   }
 
@@ -198,6 +209,7 @@ export class Input {
     // from stealing them for focus traversal / page scrolling.
     if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
     if (e.repeat) return;
+    if (down) this.deskActivity = true;
     if (down) {
       if (!this.held.has(e.code)) this.pressed.add(e.code);
       this.held.add(e.code);
@@ -222,7 +234,11 @@ export class Input {
    */
   pressPoint(): { x: number; y: number } | null {
     if (this.mousePressed) return { x: this.pointer.x, y: this.pointer.y };
-    for (const p of this.pointers.values()) if (p.justDown) return { x: p.x, y: p.y };
+    // A pointer the UI has already claimed is not a press on the world behind
+    // it: tapping a menu must never also hit the button it is covering.
+    for (const p of this.pointers.values()) {
+      if (p.justDown && p.role !== 'ui') return { x: p.x, y: p.y };
+    }
     return null;
   }
 
@@ -240,6 +256,8 @@ export class Input {
     this.mousePressed = false;
     this.mouseReleased = false;
     this.wheelDelta = 0;
+    this.touchActivity = false;
+    this.deskActivity = false;
     for (const [id, p] of this.pointers) {
       if (p.justUp) { this.pointers.delete(id); continue; }
       p.justDown = false;

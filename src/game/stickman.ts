@@ -158,13 +158,6 @@ export class Stickman {
   onGround = false;
   onWall = 0;              // -1 wall on the left, +1 on the right, 0 none
   facing = 1;
-  /**
-   * How far off vertical an aim has to lean before it turns him round, as a
-   * fraction of its length. Zero means any lean at all does, which is right for
-   * a mouse; a thumb on a stick needs a band around the vertical it can wobble
-   * in while aiming steeply without spinning the figure.
-   */
-  faceGuard = 0;
   crouching = false;
 
   private coyote = 0;
@@ -374,10 +367,7 @@ export class Stickman {
     // --- facing follows the aim, not the movement: he can run and shoot back
     const aimDx = aimTarget.x - (this.pos.x);
     const aimDy = aimTarget.y - (this.pos.y - STAND_HIP - TORSO * 0.55);
-    const reach = Math.hypot(aimDx, aimDy);
-    if (Math.abs(aimDx) > 6 && (reach < 1 || Math.abs(aimDx) / reach > this.faceGuard)) {
-      this.facing = aimDx >= 0 ? 1 : -1;
-    }
+    if (Math.abs(aimDx) > 6) this.facing = aimDx >= 0 ? 1 : -1;
     this.aim = Math.atan2(aimDy, aimDx);
 
     this.animate(dt, terrain);

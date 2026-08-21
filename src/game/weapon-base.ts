@@ -138,6 +138,13 @@ export abstract class Weapon {
   abstract readonly name: string;
   abstract readonly tagline: string;
 
+  /**
+   * Whether this fires down a line rather than swinging through an arc. It
+   * decides how a thumb's aim is read: a swing forgives a few degrees, a shot
+   * does not.
+   */
+  readonly ranged: boolean = true;
+
   /** Held-trigger weapons keep firing; the rest need a fresh click. */
   auto = false;
   cooldown = 0.3;

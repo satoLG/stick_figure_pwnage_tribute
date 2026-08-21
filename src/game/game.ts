@@ -2,7 +2,9 @@ import { audio, type SfxName } from '../core/audio';
 import { Input } from '../core/input';
 import { clamp, damp, easeOutBack, hashNoise, rand, TAU, vec, type Vec2 } from '../core/math';
 import { Sketch } from '../core/sketch';
-import { aimSettings, AimPanel, FACE_GUARD } from '../ui/aim';
+import { Gamepads, type PadState } from '../core/gamepad';
+import { AimSolver, type AimMode } from '../ui/aim';
+import { SettingsMenu, type InputReport } from '../ui/settings-menu';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
   drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
@@ -44,7 +46,12 @@ export class Game {
   private sk: Sketch;
   private input: Input;
   private touch = new TouchControls();
-  private aimPanel = new AimPanel();
+  private pads = new Gamepads();
+  private padAim = new AimSolver();
+  private menu = new SettingsMenu();
+  /** Whichever device spoke last; it decides the controls, HUD and aim mode. */
+  private device: 'touch' | 'desk' | 'pad' = 'desk';
+  private pad: PadState = this.pads.read();
 
   /** Playfield size in world units; follows the viewport aspect exactly. */
   private view = { w: 1280, h: 720 };
@@ -95,8 +102,6 @@ export class Game {
   get currentPhase(): string { return this.phase; }
   get viewSize(): { w: number; h: number } { return this.view; }
   get equippedIndex(): number { return this.equipped; }
-  get touchActive(): boolean { return this.isTouch; }
-
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const c = canvas.getContext('2d', { alpha: false });
@@ -104,6 +109,9 @@ export class Game {
     this.ctx = c;
     this.sk = new Sketch(c);
     this.input = new Input(canvas);
+    // A first guess from the media query, so the title card offers the right
+    // instructions before anything has been touched, clicked or pressed.
+    this.device = this.input.touchMode ? 'touch' : 'desk';
     this.view = computeWorldSize(window.innerWidth, window.innerHeight);
     this.terrain = new Terrain(this.view.w, this.view.h);
     this.resetWorld();
@@ -162,7 +170,7 @@ export class Game {
     this.scaleX = this.canvas.width / this.view.w;
     this.scaleY = this.canvas.height / this.view.h;
     this.readSafeArea();
-    this.aimPanel.layout(this.view, this.safe);
+    this.menu.layout(this.view, this.safe);
   }
 
   /** Reads env(safe-area-inset-*) off the probe and converts it to world units. */
@@ -240,7 +248,21 @@ export class Game {
   }
 
   private get weapon(): Weapon { return this.weapons[this.equipped]; }
-  private get isTouch(): boolean { return this.input.touchMode; }
+  private get isTouch(): boolean { return this.device === 'touch'; }
+
+  /**
+   * How the aim is read, which depends on both the device in hand and what is
+   * in his: a shot down a line cannot afford the slop a swing shrugs off.
+   *
+   * A thumb has no stick under it, so for anything ranged it aims at the spot
+   * it is touching - the one reading with no wobble in it at all - and for
+   * melee at the raw angle, which is instant and forgiving. A real stick does
+   * spring back and does need easing.
+   */
+  private get aimMode(): AimMode {
+    if (this.device === 'pad') return 'eased';
+    return this.weapon.ranged ? 'point' : 'direct';
+  }
 
   private wheelLayout(): WheelLayout {
     if (this.isTouch) return this.touch.layout(this.view);
@@ -248,6 +270,16 @@ export class Game {
       kind: 'ring',
       anchor: { x: this.view.w / 2, y: this.view.h / 2 },
       radius: clamp(Math.min(this.view.w, this.view.h) * 0.3, 150, 240),
+    };
+  }
+
+  /** What this machine can be played with, and what is in hand right now. */
+  private inputReport(): InputReport {
+    return {
+      touch: (navigator.maxTouchPoints ?? 0) > 0 || 'ontouchstart' in window,
+      desk: window.matchMedia?.('(pointer: fine)')?.matches ?? true,
+      pad: this.pads.name,
+      active: this.device,
     };
   }
 
@@ -310,6 +342,18 @@ export class Game {
     // A/B the cadence against plain 60 fps while we tune the feel.
     if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 60 ? 15 : 60;
 
+    this.pad = this.pads.read();
+    this.pickDevice();
+    this.routeMenu();
+
+    // The settings menu holds the world still. Anything else would have the
+    // player fighting the game with one hand while changing it with the other.
+    if (this.menu.open) {
+      this.render(rawDt);
+      this.input.endFrame(rawDt);
+      return;
+    }
+
     // Held time: the world stops, the picture stays up, the screen keeps
     // shaking. Input still reaches the buffer, it just cannot move anything yet.
     if (this.freezeT > 0) {
@@ -331,22 +375,40 @@ export class Game {
     this.input.endFrame(rawDt);
   }
 
-  /** Merges keyboard/mouse and on-screen controls into one set of wishes. */
+  /**
+   * Whichever device spoke last owns the screen. A pad only takes over once it
+   * actually does something, so plugging one in mid-run changes nothing until
+   * it is picked up, and touching the glass hands it straight back.
+   */
+  private pickDevice(): void {
+    if (this.pad.any) this.device = 'pad';
+    else if (this.input.touchActivity) this.device = 'touch';
+    else if (this.input.deskActivity) this.device = 'desk';
+    // Nothing said anything: whoever had it, keeps it. Letting go of both
+    // sticks is not the same as reaching for the mouse.
+  }
+
+  /**
+   * The settings menu gets first refusal on every press, and marks whatever it
+   * takes so the controls underneath never see it as a swing.
+   */
+  private routeMenu(): void {
+    const inp = this.input;
+    if (this.phase === 'won') { this.menu.open = false; return; }
+    if (inp.justPressed('Escape') || this.pad.menu) this.menu.toggle();
+    for (const p of inp.pointers.values()) {
+      if (p.kind !== 'touch' || p.role !== '' || !p.justDown) continue;
+      if (this.menu.press(this.toWorld(p.x, p.y))) p.role = 'ui';
+    }
+    if (inp.mousePressed && this.menu.press(this.pointerWorld())) inp.mousePressed = false;
+  }
+
+  /** Merges keyboard, mouse, thumbs and gamepad into one set of wishes. */
   private readIntent(rawDt: number): Intent {
     const inp = this.input;
-    // The panel gets first refusal on a press, and marks whatever it takes so
-    // the controls underneath never see it as a swing.
-    if (this.isTouch) {
-      for (const p of inp.pointers.values()) {
-        if (p.kind !== 'touch' || p.role !== '' || !p.justDown) continue;
-        if (this.aimPanel.press(this.toWorld(p.x, p.y))) p.role = 'ui';
-      }
-      if (inp.mousePressed && this.aimPanel.press(this.pointerWorld())) inp.mousePressed = false;
-    }
-    // Near-vertical aim leaves him facing where he was, so a thumb reaching for
-    // a steep shot cannot spin the whole figure round on a few degrees of slop.
-    this.sm.faceGuard = this.isTouch && aimSettings.guard ? FACE_GUARD : 0;
-    const t = this.touch.update(inp, rawDt, this.view, this.toWorld, this.eye);
+    const pad = this.pad;
+    const mode = this.aimMode;
+    const t = this.touch.update(inp, rawDt, this.view, this.toWorld, this.eye, mode);
 
     let numberKey: number | null = null;
     for (let i = 0; i < NUMBER_KEYS.length; i++) {
@@ -355,25 +417,44 @@ export class Game {
 
     // A key has no in-between, so it reports exactly the deflection that means
     // "run", and SHIFT pushes it the rest of the way into a sprint. A thumb on
-    // the analog stick gets the whole range for free.
+    // the analog stick gets the whole range for free, and so does a pad's.
     const keyAxis = ((inp.anyDown('KeyD', 'ArrowRight') ? 1 : 0) - (inp.anyDown('KeyA', 'ArrowLeft') ? 1 : 0))
       * (inp.anyDown('ShiftLeft', 'ShiftRight') ? 1 : RUN_PUSH);
-    const tabOpen = inp.down('Tab');
-    const wheelOpen = tabOpen || t.wheelOpen;
+    const wheelOpen = inp.down('Tab') || t.wheelOpen || pad.wheel;
+
+    // The pad's right stick is a stick like the touch one, only a real one, so
+    // it goes through the same solver - eased, because it springs back.
+    const padAim = this.padAim.update(rawDt, mode, {
+      active: this.device === 'pad', fresh: false,
+      nx: pad.aim.x, ny: pad.aim.y, dead: 0.001,
+      world: this.eye, eye: this.eye,
+    });
 
     return {
-      axis: keyAxis !== 0 ? keyAxis : t.axis,
-      down: inp.anyDown('KeyS', 'ArrowDown') || t.crouch,
-      jump: inp.justPressed('Space') || t.jump,
-      jumpHeld: inp.down('Space') || t.jumpHeld,
-      aim: this.resolveAim(t),
-      firing: (!wheelOpen && inp.mouseDown) || t.firing,
-      firePressed: (!wheelOpen && inp.mousePressed) || t.firePressed,
+      axis: keyAxis !== 0 ? keyAxis : (pad.move.x !== 0 ? pad.move.x : t.axis),
+      down: inp.anyDown('KeyS', 'ArrowDown') || t.crouch || pad.crouch,
+      jump: inp.justPressed('Space') || t.jump || pad.jumpPressed,
+      jumpHeld: inp.down('Space') || t.jumpHeld || pad.jump,
+      aim: this.resolveAim(t, padAim),
+      firing: (!wheelOpen && (inp.mouseDown || pad.fire)) || t.firing,
+      firePressed: (!wheelOpen && (inp.mousePressed || pad.firePressed)) || t.firePressed,
       wheelOpen,
-      wheelPointer: t.wheelOpen ? t.wheelPointer : this.pointerWorld(),
-      wheelReleased: inp.justReleased('Tab') || t.wheelReleased,
+      wheelPointer: this.wheelPointer(t, pad),
+      wheelReleased: inp.justReleased('Tab') || t.wheelReleased || pad.wheelReleased,
       numberKey,
     };
+  }
+
+  /** Where the wheel thinks the pointer is, in whichever way it is being driven. */
+  private wheelPointer(t: TouchState, pad: PadState): Vec2 {
+    if (t.wheelOpen) return t.wheelPointer;
+    if (this.device === 'pad') {
+      // A stick has no position, so it points *out* of the ring's middle and
+      // the wheel picks the slot nearest whatever it lands on.
+      const l = this.wheelLayout();
+      return { x: l.anchor.x + pad.aim.x * l.radius, y: l.anchor.y + pad.aim.y * l.radius };
+    }
+    return this.pointerWorld();
   }
 
   /** Shoulder height, where his aim is measured from. */
@@ -384,17 +465,17 @@ export class Game {
   /**
    * Where the figure is looking, which is also which way he faces.
    *
-   * Aiming owns this outright - the cursor, or the aiming thumb - and the
-   * walking controls never touch it: he can run, jump and crouch one way while
-   * still looking and swinging the other. A mouse points at a spot, so it can
-   * be used as the aim outright. The thumb instead gives a *direction*, which
-   * is cast out from his shoulder rather than aimed at: far enough that the
-   * offset between his shoulder and a muzzle stops mattering, so every barrel
-   * fires the way the thumb is pointing rather than converging on a spot.
+   * Aiming owns this outright - the cursor, the aiming thumb or the right stick
+   * - and the walking controls never touch it: he can run, jump and crouch one
+   * way while still looking and swinging the other. A mouse points at a spot,
+   * so it is the aim. A stick gives a *direction*, which is cast out from his
+   * shoulder rather than aimed at: far enough that the offset between his
+   * shoulder and a muzzle stops mattering, so every barrel fires the way the
+   * stick points instead of converging on a spot in front of him.
    */
-  private resolveAim(t: TouchState): Vec2 {
-    if (!this.isTouch) return this.pointerWorld();
-    const dir = t.aimDir ?? { x: this.sm.facing, y: 0 };
+  private resolveAim(t: TouchState, padAim: Vec2 | null): Vec2 {
+    if (this.device === 'desk') return this.pointerWorld();
+    const dir = (this.device === 'pad' ? padAim : t.aimDir) ?? { x: this.sm.facing, y: 0 };
     const eye = this.eye;
     const far = Math.max(this.view.w, this.view.h);
     return { x: eye.x + dir.x * far, y: eye.y + dir.y * far };
@@ -412,6 +493,7 @@ export class Game {
     const press = this.input.pressPoint();
     if (press && hitRect(this.startBtn, this.toWorld(press.x, press.y))) void this.beginRun();
     if (this.input.justPressed('Enter') || this.input.justPressed('Space')) void this.beginRun();
+    if (this.pad.firePressed || this.pad.jumpPressed) void this.beginRun();
   }
 
   private async beginRun(): Promise<void> {
@@ -588,8 +670,8 @@ export class Game {
         if (hitRect(this.restartBtn, p)) this.restart();
         else if (hitRect(this.menuBtn, p)) this.toMenu();
       }
-      if (this.input.justPressed('KeyR')) this.restart();
-      if (this.input.justPressed('Escape')) this.toMenu();
+      if (this.input.justPressed('KeyR') || this.pad.firePressed) this.restart();
+      if (this.input.justPressed('Escape') || this.pad.menu) this.toMenu();
     }
   }
 
@@ -648,18 +730,20 @@ export class Game {
       this.drawHud();
       if (this.isTouch) {
         this.touch.drawStick(this.sk);
-        this.touch.drawAim(this.sk, this.time, this.eye);
+        this.touch.drawAim(this.sk, this.time, this.eye, this.aimMode);
         this.touch.drawPad(this.sk, this.view, (x, y, s) => this.weapon.icon(this.sk, x, y, s));
-        this.aimPanel.draw(this.sk, this.view);
       }
     }
     this.wheel.draw(
       this.sk, this.wheelLayout(), this.weapons, this.equipped, this.view,
-      this.isTouch ? 'LIFT YOUR FINGER TO EQUIP' : 'RELEASE TAB TO EQUIP',
+      this.device === 'touch' ? 'LIFT YOUR FINGER TO EQUIP'
+        : this.device === 'pad' ? 'LET GO OF L1 TO EQUIP' : 'RELEASE TAB TO EQUIP',
     );
     if (this.phase === 'menu') this.drawMenu();
     if (this.phase === 'won') this.drawWin();
-    if (!this.isTouch) this.drawCursor();
+    if (this.device === 'desk') this.drawCursor();
+    // Last, so it sits over everything including the wheel and the title card.
+    if (this.phase !== 'won') this.menu.draw(this.sk, this.view, this.inputReport());
   }
 
   private drawHud(): void {
@@ -716,12 +800,18 @@ export class Game {
       c.save();
       c.globalAlpha = this.hintFade;
       const size = clamp(w * 0.013, 10, 14);
-      if (this.isTouch) {
-        const lines = [
-          'TILT THE LEFT SIDE TO WALK  ·  PUSH IT FURTHER TO SPRINT',
-          'UP JUMPS  ·  DOWN CROUCHES  ·  DRAG THE RIGHT SIDE TO AIM',
-          'HOLD THE PAD BELOW, SLIDE, LIFT TO EQUIP',
-        ];
+      if (this.isTouch || this.device === 'pad') {
+        const lines = this.device === 'pad'
+          ? [
+              'LEFT STICK  MOVE  ·  UP JUMPS  ·  DOWN CROUCHES',
+              'RIGHT STICK  AIM  ·  R1 / R2 / X  ATTACK',
+              'HOLD L1 AND POINT TO PICK A WEAPON  ·  START  SETTINGS',
+            ]
+          : [
+              'TILT THE LEFT SIDE TO WALK  ·  PUSH IT FURTHER TO SPRINT',
+              'UP JUMPS  ·  DOWN CROUCHES  ·  DRAG THE RIGHT SIDE TO AIM',
+              'HOLD THE PAD BELOW, SLIDE, LIFT TO EQUIP',
+            ];
         // Centred on the open ground, not the screen: on a narrow portrait
         // screen the middle is already black wall and the text vanishes into it.
         const cx = clamp(this.terrain.wallX / 2, w * 0.26, w / 2);
@@ -811,11 +901,20 @@ export class Game {
     c.restore();
 
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
-    const rows: Array<[string, string]> = this.isTouch
+    const rows: Array<[string, string]> = this.device === 'pad'
+      ? [
+          ['LEFT STICK', 'move — up jumps, down crouches'],
+          ['RIGHT STICK', 'aim, and he turns to follow it'],
+          ['R1 / R2 / X', 'attack, held for combos and charges'],
+          ['HOLD L1', 'weapon fan — point at one and let go'],
+          ['START', 'settings'],
+          ['GOAL', 'wipe the black wall off the screen'],
+        ]
+      : this.isTouch
       ? [
           ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
           ['UP / DOWN', 'jump and crouch, on the same thumb'],
-          ['RIGHT THUMB', 'press to attack, drag to swing the aim round'],
+          ['RIGHT THUMB', 'press to attack — guns aim where you touch'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
