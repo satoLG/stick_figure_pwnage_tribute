@@ -6,6 +6,8 @@ import { inkText } from './ui';
 
 /** How far the stick knob travels before it reads as fully deflected. */
 const STICK_R = 74;
+/** The stick only owns the screen below this fraction of the height. */
+const STICK_TOP = 0.4;
 const DEAD = 0.2;
 const JUMP_ON = 0.44;
 const JUMP_OFF = 0.3;
@@ -74,7 +76,38 @@ export class TouchControls {
       wheelOpen: false, wheelPointer: this.pad, wheelReleased: false,
     };
 
+    const byId = new Map<number, Ptr>();
+    for (const p of input.pointers.values()) if (!p.justUp) byId.set(p.id, p);
+
+    // --- let go of anything whose finger has gone, before handing out roles --
+    // Order matters: a stick still held by a vanished pointer would otherwise
+    // turn the very next touch into an attack, which is what made a jammed
+    // stick feel unrecoverable. Pointer ids are recycled too, so the id alone
+    // is no proof of ownership - the role has to match as well.
+    if (this.stick) {
+      const held = byId.get(this.stick.id);
+      if (!held || held.role !== 'stick') {
+        this.stick = null;
+        this.jumpLatched = false;
+      }
+    }
+    // A world reset drops the stick while the thumb may still be down. Adopt
+    // that finger back rather than leaving it inert until it happens to lift.
+    if (!this.stick) {
+      for (const p of byId.values()) {
+        if (p.role !== 'stick') continue;
+        const w = toWorld(p.x, p.y);
+        this.stick = { id: p.id, ox: w.x, oy: w.y, x: w.x, y: w.y };
+        this.jumpLatched = false;
+        break;
+      }
+    }
+
     // --- hand out a role to every new finger, once, and keep it -------------
+    // The stick only claims the lower left corner, where a thumb actually
+    // rests. Everywhere else aims, so a target to the figure's left - which is
+    // most of the screen when he is backed up against the left edge - can
+    // still be hit, and he turns to face it.
     for (const p of input.pointers.values()) {
       if (p.kind !== 'touch' || p.role !== '') continue;
       const w = toWorld(p.x, p.y);
@@ -82,7 +115,7 @@ export class TouchControls {
         p.role = 'pad';
         this.padId = p.id;
         this.wheelOpen = true;
-      } else if (w.x < view.w * 0.45 && this.stick === null) {
+      } else if (w.x < view.w * 0.45 && w.y > view.h * STICK_TOP && this.stick === null) {
         p.role = 'stick';
         this.stick = { id: p.id, ox: w.x, oy: w.y, x: w.x, y: w.y };
         this.jumpLatched = false;
@@ -92,9 +125,6 @@ export class TouchControls {
         out.firePressed = true;
       }
     }
-
-    const byId = new Map<number, Ptr>();
-    for (const p of input.pointers.values()) if (!p.justUp) byId.set(p.id, p);
 
     // --- stick --------------------------------------------------------------
     if (this.stick) {
@@ -142,7 +172,8 @@ export class TouchControls {
     }
 
     // --- weapon pad ---------------------------------------------------------
-    const padPtr = byId.get(this.padId);
+    let padPtr = byId.get(this.padId);
+    if (padPtr && padPtr.role !== 'pad') padPtr = undefined;
     if (this.wheelOpen && !padPtr) {
       this.wheelOpen = false;
       out.wheelReleased = true;

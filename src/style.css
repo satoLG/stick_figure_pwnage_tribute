@@ -1,4 +1,11 @@
-*, *::before, *::after { box-sizing: border-box; }
+*, *::before, *::after {
+  box-sizing: border-box;
+  /* Every press on this page is a game input, never a selection or a drag. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
 
 html, body {
   margin: 0;
@@ -29,6 +36,7 @@ html, body {
   background: #fff;
   cursor: none;
   touch-action: none;
+  outline: none;
 }
 
 /* Carries the safe-area insets so the HUD can be kept clear of notches. */

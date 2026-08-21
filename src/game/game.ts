@@ -2,7 +2,7 @@ import { audio, type SfxName } from '../core/audio';
 import { Input } from '../core/input';
 import { clamp, damp, easeOutBack, hashNoise, rand, TAU, vec, type Vec2 } from '../core/math';
 import { Sketch } from '../core/sketch';
-import { TouchControls } from '../ui/touch';
+import { TouchControls, type TouchState } from '../ui/touch';
 import {
   drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
@@ -345,13 +345,14 @@ export class Game {
       * (inp.anyDown('ShiftLeft', 'ShiftRight') ? 1 : RUN_PUSH);
     const tabOpen = inp.down('Tab');
     const wheelOpen = tabOpen || t.wheelOpen;
+    const axis = keyAxis !== 0 ? keyAxis : t.axis;
 
     return {
-      axis: keyAxis !== 0 ? keyAxis : t.axis,
+      axis,
       down: inp.anyDown('KeyS', 'ArrowDown') || t.crouch,
       jump: inp.justPressed('Space') || t.jump,
       jumpHeld: inp.down('Space') || t.jumpHeld,
-      aim: t.aim && this.isTouch ? t.aim : this.pointerWorld(),
+      aim: this.resolveAim(t, axis),
       firing: (!wheelOpen && inp.mouseDown) || t.firing,
       firePressed: (!wheelOpen && inp.mousePressed) || t.firePressed,
       wheelOpen,
@@ -359,6 +360,24 @@ export class Game {
       wheelReleased: inp.justReleased('Tab') || t.wheelReleased,
       numberKey,
     };
+  }
+
+  /**
+   * Where the figure is looking, which is also which way he faces.
+   *
+   * A mouse is always somewhere, so it can own the aim outright. A thumb only
+   * says where it is while it is down: the attacking finger points wherever it
+   * touches - left of him as happily as right - and the moment it lifts the
+   * stick takes the turning over, so walking back the other way turns him round
+   * instead of leaving him moon-walking away from his last target.
+   */
+  private resolveAim(t: TouchState, axis: number): Vec2 {
+    if (!this.isTouch) return this.pointerWorld();
+    if (t.firing && t.aim) return t.aim;
+    // Shoulder height, so a resting aim is level rather than tilted upwards.
+    const eye = this.sm.pos.y - 74;
+    if (Math.abs(axis) > 0.01) return { x: this.sm.pos.x + Math.sign(axis) * 260, y: eye };
+    return t.aim ?? { x: this.sm.pos.x + this.sm.facing * 260, y: eye };
   }
 
   // ----------------------------------------------------------------- menu ---
@@ -678,8 +697,8 @@ export class Game {
       const size = clamp(w * 0.013, 10, 14);
       if (this.isTouch) {
         const lines = [
-          'TILT THE LEFT SIDE TO WALK  ·  PUSH IT FURTHER TO SPRINT',
-          'UP JUMPS  ·  DOWN CROUCHES  ·  RIGHT SIDE AIMS AND ATTACKS',
+          'TILT THE BOTTOM LEFT TO WALK  ·  PUSH IT FURTHER TO SPRINT',
+          'UP JUMPS  ·  DOWN CROUCHES  ·  TOUCH ANYWHERE ELSE TO AIM',
           'HOLD THE PAD BELOW, SLIDE, LIFT TO EQUIP',
         ];
         // Centred on the open ground, not the screen: on a narrow portrait
@@ -773,9 +792,9 @@ export class Game {
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
     const rows: Array<[string, string]> = this.isTouch
       ? [
-          ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
+          ['BOTTOM LEFT', 'tilt to walk, push it out to sprint'],
           ['UP / DOWN', 'jump and crouch, on the same thumb'],
-          ['RIGHT SIDE', 'aim and attack — hold it for heavy combos'],
+          ['ANYWHERE ELSE', 'aim and attack — either side of him'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]

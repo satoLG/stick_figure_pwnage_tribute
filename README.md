@@ -55,9 +55,13 @@ Nothing is shown until you touch it, so the picture stays clean.
 
 | Where | Action |
 | --- | --- |
-| Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
-| Right side | Touch to aim; tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. |
+| Bottom left | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
+| Anywhere else | Touch to aim; tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. Aiming behind him turns him round, and once the stick is down every other finger aims, so the whole screen is fair game. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
+
+He faces whatever the attacking finger is pointing at. With no finger aiming,
+the stick does the turning instead, so walking back the other way turns him
+round rather than leaving him moon-walking away from his last target.
 
 The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
 thumb dragging up from the bottom edge cannot reach the lower half of a ring.
@@ -320,7 +324,9 @@ src/
   core/
     math.ts            vectors, damping, two-bone IK, hash noise
     sketch.ts          hand-drawn stroke renderer (the "boil")
-    input.ts           keyboard + multi-pointer, with per-frame edges
+    input.ts           keyboard + multi-pointer, with per-frame edges; also
+                       cancels the browser's own zoom / select / drag gestures
+                       and retires fingers whose pointerup never arrived
     audio.ts           procedural soundtrack and SFX
   game/
     game.ts            state machine, loop, screen effects, HUD
