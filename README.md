@@ -115,15 +115,16 @@ lower half of a ring.
 
 ## Staying in the scene
 
-The figure cannot leave the picture, whatever is done to him. Running, falling
-and climbing rubble step along the terrain bitmap four pixels at a time, but
-nothing else does — a blast throws him, the ground is carved out from under
-him, the level is re-laid under his feet when the window turns. So rather than
-trusting the movement, a containment pass runs after every one: he is inside
-the scene, and he is not inside anything solid, or he is put back. Lifting
-comes first, because standing on top of the rubble is what a player expects;
-only a body with no headroom is pushed out sideways. The sides, the floor and
-the HUD strip's underside are walls, not suggestions.
+The figure cannot leave the picture. The sides, the underside of the HUD strip
+and the bottom of the world are hard walls, so no amount of speed or knockback
+puts him outside the scene — and if his *legs* end up inside the ground, the
+floor carved out from under him or the level re-laid under his feet, he settles
+up out of it by about a step's worth.
+
+That is the whole of it, deliberately. Walking into masonry is already handled
+a column at a time by the movement itself, and a head clipping the underside of
+a ledge mid-jump is two drawings overlapping for a frame — worth nothing, and
+certainly not worth being shoved across the room for.
 
 ## The screen
 

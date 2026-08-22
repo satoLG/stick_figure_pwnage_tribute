@@ -13,7 +13,7 @@ import {
 import { ImpactFx } from './impact';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
-import { RUN_PUSH, Stickman, type Controls } from './stickman';
+import { BODY_H, RUN_PUSH, Stickman, type Controls } from './stickman';
 import { computeWorldSize, Terrain } from './terrain';
 import { createArsenal, type Weapon, type WeaponCtx } from './weapons';
 
@@ -217,8 +217,20 @@ export class Game {
    * play sorts it out, so there is only ever one idea of where he may be.
    */
   private settlePlayer(): void {
-    this.sm.pos.y = clamp(this.sm.pos.y, this.terrain.sceneTop, this.terrain.groundTop);
-    this.sm.contain(this.terrain);
+    const t = this.terrain;
+    const sm = this.sm;
+    sm.pos.x = clamp(sm.pos.x, 20, t.w - 20);
+    sm.pos.y = clamp(sm.pos.y, t.sceneTop + BODY_H, t.h);
+    // Out of play - a rotation, a window drag - there is no such thing as being
+    // flung, so if the new level has swallowed him he is simply lifted clear of
+    // it, and failing that set back down on the open ground.
+    let guard = 0;
+    while (guard++ < 400 && t.solidAt(sm.pos.x, sm.pos.y - 8)) sm.pos.y -= 4;
+    if (t.solidAt(sm.pos.x, sm.pos.y - 8) || sm.pos.y < t.sceneTop + BODY_H) {
+      sm.pos.x = Math.max(60, t.wallX - 90);
+      sm.pos.y = t.groundSurface(sm.pos.x);
+    }
+    sm.contain(t);
   }
 
   private toWorld = (cssX: number, cssY: number): Vec2 => ({

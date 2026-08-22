@@ -56,11 +56,12 @@ const COYOTE = 0.11;
 const JUMP_BUFFER = 0.13;
 const WALL_SLIDE_V = 190;
 /**
- * How far the containment pass will carry a buried body to get it back out,
- * up first and then sideways. Comfortably more than any one frame of movement
- * or one blast's worth of carving, and far short of teleporting.
+ * How far the containment pass will lift feet that have ended up inside the
+ * ground. About one step up: enough for a floor carved out from under him or a
+ * level re-laid beneath his feet, small enough that it reads as settling rather
+ * than as being launched.
  */
-const DIG_OUT = 90;
+const SETTLE = 26;
 /** Ground covered per half-stride. Short and quick walking, long at a sprint. */
 const STRIDE_WALK = 33, STRIDE_RUN = 56, STRIDE_SPRINT = 74;
 
@@ -466,16 +467,21 @@ export class Stickman {
       || terrain.solidAt(x + HALF_W * 0.8, y);
   }
 
-  /** True when the standing body would overlap solid pixels at (x, feetY). */
-  private buried(x: number, feetY: number, terrain: Terrain): boolean {
-    const top = feetY - (this.crouching ? CROUCH_HIP + TORSO : BODY_H - HEAD_R * 0.6);
+  /**
+   * True when his legs are inside solid ground at (x, feetY).
+   *
+   * Legs only, deliberately. A head or a shoulder clipping the underside of a
+   * ledge on the way up is a drawing overlapping a drawing for a frame or two,
+   * and nothing needs doing about it; feet inside the floor is the thing that
+   * actually goes wrong, and the only thing worth correcting.
+   */
+  private legsInSolid(x: number, feetY: number, terrain: Terrain): boolean {
     for (const dx of [-HALF_W * 0.8, 0, HALF_W * 0.8]) {
       // From just above the feet, since standing *on* a surface has the feet
-      // touching it, up to the crown.
-      for (let y = feetY - 5; y > top; y -= 8) {
+      // touching it, up to about the hip.
+      for (let y = feetY - 6; y > feetY - STAND_HIP; y -= 8) {
         if (terrain.solidAt(x + dx, y)) return true;
       }
-      if (terrain.solidAt(x + dx, top)) return true;
     }
     return false;
   }
@@ -483,14 +489,17 @@ export class Stickman {
   /**
    * The last word on where the figure may be, run after every move.
    *
-   * Stepping along the bitmap four pixels at a time handles ordinary running
-   * and falling, but nothing else does: a blast throws him, rubble is carved
-   * out from under him, the level is re-laid under his feet on a rotation. So
-   * rather than trusting the movement, this checks the result - he is inside
-   * the scene, and he is not inside anything solid - and puts him back if he
-   * is not. Lifting comes first, because standing on top of the rubble is what
-   * a player expects to happen; only a body with no headroom gets shoved out
-   * sideways.
+   * Two jobs, and no more than two. The edges of the scene are hard: the sides,
+   * the underside of the HUD strip and the bottom of the world are walls, so no
+   * amount of speed or knockback puts him outside the picture. And if his legs
+   * end up inside the ground - the floor carved out from under him, the level
+   * re-laid under his feet - he settles up out of it, by about a step's worth.
+   *
+   * What it deliberately does *not* do is shove him out of the wall. Walking
+   * into masonry is already handled a column at a time by the movement itself,
+   * and a body that has clipped a ledge mid-jump is a couple of frames of two
+   * drawings overlapping - worth nothing, and certainly not worth being thrown
+   * across the room for.
    */
   contain(terrain: Terrain): void {
     const min = HALF_W + 2;
@@ -506,33 +515,18 @@ export class Stickman {
       this.onGround = true;
     }
 
-    if (!this.buried(this.pos.x, this.pos.y, terrain)) return;
-
-    let lift = 0;
-    while (lift < DIG_OUT && this.pos.y - 2 >= roof && this.buried(this.pos.x, this.pos.y - 2, terrain)) {
+    // Never while rising: on the way up, ground in the way is a ceiling, which
+    // `moveY` has already dealt with. Lifting there is what threw him.
+    if (this.vel.y < 0 || !this.legsInSolid(this.pos.x, this.pos.y, terrain)) return;
+    for (let lift = 0; lift < SETTLE; lift += 2) {
+      if (this.pos.y - 2 < roof) break;
       this.pos.y -= 2;
-      lift += 2;
-    }
-    if (this.pos.y - 2 >= roof && !this.buried(this.pos.x, this.pos.y - 2, terrain)) {
-      this.pos.y -= 2;
-      this.vel.y = Math.min(0, this.vel.y);
-      this.onGround = true;
-      return;
-    }
-    // No headroom: back out of the face the shortest way that is actually free.
-    for (let d = 2; d <= DIG_OUT * 2; d += 2) {
-      for (const s of [-1, 1]) {
-        const x = clamp(this.pos.x + s * d, min, max);
-        if (!this.buried(x, this.pos.y, terrain)) {
-          this.pos.x = x;
-          this.vel.x = 0;
-          return;
-        }
+      if (!this.legsInSolid(this.pos.x, this.pos.y, terrain)) {
+        this.vel.y = 0;
+        this.onGround = true;
+        return;
       }
     }
-    // Sealed in on every side - only ever from a re-lay, never from play.
-    // Put him back on the open ground rather than leave him in the masonry.
-    this.reset(Math.min(terrain.wallX * 0.5, max), terrain.sceneTop + BODY_H);
   }
 
   private detectWall(terrain: Terrain): void {
