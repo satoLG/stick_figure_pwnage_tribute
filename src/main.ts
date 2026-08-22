@@ -2,6 +2,7 @@ import './style.css';
 import { audio } from './core/audio';
 import { musicVolume, settings, sfxVolume } from './core/settings';
 import { Game } from './game/game';
+import { registerWorker } from './core/pwa';
 
 const canvas = document.getElementById('game');
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -15,6 +16,9 @@ audio.setSfxVolume(sfxVolume());
 
 const game = new Game(canvas);
 game.start();
+
+// Offline play, and the install prompt that comes with a real manifest.
+registerWorker();
 
 // Handy while tuning the animation: inspect live state from the dev console.
 if (import.meta.env.DEV) {

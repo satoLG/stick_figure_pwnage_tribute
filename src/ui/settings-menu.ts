@@ -186,11 +186,10 @@ export class SettingsMenu {
     devices.forEach(([live, name, note], i) => {
       const here = kinds[i] === input.active && live;
       const size = lineH * 0.36;
-      inkText(sk, here ? '▶' : live ? '·' : '×', x + pad + size, ty + lineH / 2, size,
-        { alpha: live ? 0.9 : 0.3 });
+      mark(sk, x + pad + size * 0.6, ty + lineH / 2, size * 0.42, here, live);
       inkText(sk, name, x + pad + size * 2.4, ty + lineH / 2, size,
         { align: 'left', alpha: live ? 0.95 : 0.35 });
-      inkText(sk, (here ? 'IN USE — ' : '') + note.toUpperCase(), x + w - pad, ty + lineH / 2, size * 0.82,
+      inkText(sk, (here ? 'IN USE - ' : '') + note.toUpperCase(), x + w - pad, ty + lineH / 2, size * 0.82,
         { align: 'right', alpha: live ? 0.55 : 0.3, wobble: 0.35 });
       ty += lineH;
     });
@@ -249,6 +248,28 @@ function shortName(id: string): string {
   const paren = id.indexOf('(');
   const name = (paren > 0 ? id.slice(0, paren) : id).trim();
   return (name || id).slice(0, 28).toUpperCase();
+}
+
+/**
+ * The mark against a device in the list: a filled arrowhead for the one in
+ * hand, a dash for one that is merely there, nothing at all for one that is
+ * not. Drawn rather than typed, so it inks like the rest of the page instead
+ * of arriving as whatever glyph the platform feels like substituting.
+ */
+function mark(sk: Sketch, x: number, y: number, r: number, here: boolean, live: boolean): void {
+  const c = sk.ctx;
+  c.save();
+  c.fillStyle = '#000';
+  c.strokeStyle = '#000';
+  if (here) {
+    c.globalAlpha = 0.9;
+    sk.polyPath([{ x: x - r, y: y - r }, { x: x + r, y }, { x: x - r, y: y + r }], 1.2);
+    c.fill();
+  } else if (live) {
+    c.globalAlpha = 0.45;
+    sk.line({ x: x - r, y }, { x: x + r, y }, r * 0.5, 1, 0.5);
+  }
+  c.restore();
 }
 
 /** A rect swollen by `by` on every side, for the one under the cursor. */

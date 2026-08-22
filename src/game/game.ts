@@ -3,6 +3,7 @@ import { Input } from '../core/input';
 import { clamp, damp, easeOutBack, hashNoise, rand, TAU, vec, type Vec2 } from '../core/math';
 import { Sketch } from '../core/sketch';
 import { Gamepads, type PadState } from '../core/gamepad';
+import { installer } from '../core/pwa';
 import { AimSolver, type AimMode } from '../ui/aim';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
 import { TouchControls, type TouchState } from '../ui/touch';
@@ -110,6 +111,7 @@ export class Game {
   get currentPhase(): string { return this.phase; }
   get viewSize(): { w: number; h: number } { return this.view; }
   get equippedIndex(): number { return this.equipped; }
+  get installOffer(): string | null { return installer.offer; }
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const c = canvas.getContext('2d', { alpha: false });
@@ -175,7 +177,7 @@ export class Game {
     // The strip depends on the safe area, and the terrain is laid out under the
     // strip, so both have to be read before the level is told where to sit.
     this.readSafeArea();
-    this.menu.layout(this.view, this.safe);
+    this.menu.layout(this.view, { top: this.topInset, right: this.safe.right });
     if (resized || this.terrainGap !== this.hudBand) {
       this.terrainGap = this.hudBand;
       // Re-lays the level at the new size, keeping the damage already done.
@@ -192,7 +194,20 @@ export class Game {
    * read as one picture rather than a game with a bar bolted over it.
    */
   private get hudBand(): number {
-    return this.safe.top + clamp(this.view.h * 0.05, 44, 92) * 1.3 + 30;
+    return this.topInset + clamp(this.view.h * 0.05, 44, 92) * 1.3 + 30;
+  }
+
+  /**
+   * How far down the HUD has to start.
+   *
+   * The notch inset covers notches and home bars, and nothing else: a phone
+   * browser's own toolbar is not part of the safe area, and in landscape it
+   * sits translucently over the top of the page and was slicing the top off
+   * the meter's label. So the strip is never thinner than a toolbar's worth of
+   * CSS pixels, whatever the safe area says.
+   */
+  private get topInset(): number {
+    return Math.max(this.safe.top, (22 * this.view.h) / Math.max(1, this.cssH));
   }
   private terrainGap = -1;
 
@@ -245,6 +260,9 @@ export class Game {
   // ---------------------------------------------------------------- world ---
 
   private startBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private installBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  /** Showing the iOS "add to home screen" recipe, which is all iOS allows. */
+  private howToInstall = false;
   private restartBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private menuBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
 
@@ -253,6 +271,10 @@ export class Game {
     const bw = clamp(w * 0.42, 260, 380);
     const bh = clamp(h * 0.09, 62, 84);
     this.startBtn = { x: w / 2 - bw / 2, y: h * 0.56, w: bw, h: bh };
+    // Under it, and deliberately smaller: an offer, not a second front door.
+    const iw = bw * 0.62;
+    const ih = bh * 0.62;
+    this.installBtn = { x: w / 2 - iw / 2, y: this.startBtn.y + bh + ih * 0.4, w: iw, h: ih };
 
     const sw = clamp(w * 0.3, 170, 240);
     const sh = clamp(h * 0.075, 54, 68);
@@ -455,6 +477,8 @@ export class Game {
 
   /** Which of the two win-screen buttons a gamepad has selected. */
   private winFocus = 0;
+  /** And which of the title card's, when there is more than one to pick from. */
+  private titleFocus = 0;
 
   /** Merges keyboard, mouse, thumbs and gamepad into one set of wishes. */
   private readIntent(rawDt: number): Intent {
@@ -579,9 +603,41 @@ export class Game {
     this.decayEffects(dt);
 
     const press = this.input.pressPoint();
+    const offer = installer.offer;
+    // The recipe card is modal in the smallest possible way: while it is up the
+    // only thing a press can do is put it away again.
+    if (this.howToInstall) {
+      if (press || this.pad.confirm || this.pad.back || this.input.justPressed('Escape')) {
+        this.howToInstall = false;
+        audio.play('ui', 0.85);
+      }
+      return;
+    }
+    if (press && offer && hitRect(this.installBtn, this.toWorld(press.x, press.y))) {
+      audio.play('ui');
+      if (offer === 'ios') this.howToInstall = true;
+      else void installer.promptNow();
+      return;
+    }
     if (press && hitRect(this.startBtn, this.toWorld(press.x, press.y))) void this.beginRun();
     if (this.input.justPressed('Enter') || this.input.justPressed('Space')) void this.beginRun();
-    if (this.pad.confirm || this.pad.firePressed) void this.beginRun();
+
+    // A pad walks the card the same as any other menu, when there are two
+    // things on it to walk between.
+    if (!offer) this.titleFocus = 0;
+    else if (this.pad.navY !== 0 || this.pad.navX !== 0) {
+      this.titleFocus = this.titleFocus === 0 ? 1 : 0;
+      audio.play('wheel', 1.15);
+    }
+    if (this.pad.confirm || this.pad.firePressed) {
+      if (this.titleFocus === 1 && offer) {
+        audio.play('ui');
+        if (offer === 'ios') this.howToInstall = true;
+        else void installer.promptNow();
+      } else {
+        void this.beginRun();
+      }
+    }
   }
 
   private async beginRun(): Promise<void> {
@@ -852,7 +908,7 @@ export class Game {
     const { w, h } = this.view;
     const frac = this.terrain.destroyed;
     const barW = clamp(w * 0.42, 240, 470);
-    const topY = 34 + this.safe.top;
+    const topY = 34 + this.topInset;
     drawProgress(sk, w / 2, topY, barW, frac, `WALL DESTROYED  ${(frac * 100).toFixed(1)}%`);
 
     // Current weapon. On touch the bottom edge belongs to the thumbs, so the
@@ -947,7 +1003,10 @@ export class Game {
         c.setLineDash([9, 7]);
         c.strokeRect(b.x0 - 14, b.y0 - 14, (b.x1 - b.x0) + 28, (b.y1 - b.y0) + 28);
         c.restore();
-        inkText(sk, 'LAST PIECES', (b.x0 + b.x1) / 2, b.y0 - 28, 15, { alpha: pulse });
+        // Pinned under the HUD strip: the last pieces are often the top ones,
+        // and its caption was the thing that ended up under the browser bar.
+        inkText(sk, 'LAST PIECES', (b.x0 + b.x1) / 2,
+          Math.max(b.y0 - 28, this.topInset + 14), 15, { alpha: pulse });
       }
     }
   }
@@ -994,12 +1053,25 @@ export class Game {
       clamp(w * 0.019, 12, 17), { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.55, wobble: 0.5 });
 
     const press = this.input.pointer;
-    const hovered = !this.isTouch && hitRect(this.startBtn, this.toWorld(press.x, press.y));
+    const ptr = this.toWorld(press.x, press.y);
+    const hovered = this.device === 'desk' && hitRect(this.startBtn, ptr);
     c.save();
     c.globalAlpha = clamp((t - 0.6) / 0.4, 0, 1);
     inkButton(sk, this.startBtn, 'START PWNAGE', hovered, clamp(w * 0.032, 22, 34));
-    if (this.padPicking) focusRing(sk, this.startBtn, this.time);
+
+    // The install offer, only where it can lead anywhere.
+    const offer = installer.offer;
+    if (offer) {
+      const b = this.installBtn;
+      inkButton(sk, b, offer === 'ios' ? 'ADD TO HOME SCREEN' : 'INSTALL APP',
+        this.device === 'desk' && hitRect(b, ptr),
+        Math.min(clamp(w * 0.019, 13, 20), b.w / 11));
+    }
+    if (this.padPicking && !this.howToInstall) {
+      focusRing(sk, this.titleFocus === 1 && offer ? this.installBtn : this.startBtn, this.time);
+    }
     c.restore();
+    if (this.howToInstall) this.drawInstallCard();
 
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
     const rows: Array<[string, string]> = this.device === 'pad'
@@ -1096,6 +1168,54 @@ export class Game {
       const keys = this.padPicking ? 'D-PAD  CHOOSE        A  TAKE IT' : 'R  RESTART        ESC  MENU';
       inkText(sk, keys, w / 2, this.restartBtn.y + this.restartBtn.h + 30, 13, { alpha: 0.45 });
     }
+    c.restore();
+  }
+
+  /**
+   * What to do on iOS, where there is no install prompt to fire and never will
+   * be - only Share, then Add to Home Screen, which nobody finds by accident.
+   */
+  private drawInstallCard(): void {
+    const sk = this.sk;
+    const c = this.ctx;
+    const { w, h } = this.view;
+    const cw = Math.min(w - 40, 620);
+    const size = clamp(cw * 0.036, 14, 24);
+    const lines = [
+      'TAP THE SHARE BUTTON IN THE BROWSER BAR',
+      'SCROLL DOWN TO "ADD TO HOME SCREEN"',
+      'IT THEN OPENS FULL SCREEN, LIKE AN APP',
+    ];
+    const ch = size * 3.1 + lines.length * size * 1.7;
+    const x = (w - cw) / 2;
+    // Sat in the open space above the buttons rather than over them: the card
+    // is an aside, and covering the front door with it would read as a block.
+    const y = clamp(h * 0.42 - ch / 2, this.hudBand + 10, Math.max(this.hudBand + 10, h - ch - 20));
+
+    c.save();
+    c.globalAlpha = 0.72;
+    c.fillStyle = '#fff';
+    c.fillRect(0, 0, w, h);
+    c.globalAlpha = 1;
+    const box: Vec2[] = [
+      { x, y }, { x: x + cw, y }, { x: x + cw, y: y + ch }, { x, y: y + ch },
+    ];
+    c.fillStyle = '#fff';
+    sk.polyPath(box, 1.6);
+    c.fill();
+    c.strokeStyle = '#000';
+    c.lineWidth = 3.4;
+    sk.polyPath(box, 1.6);
+    c.stroke();
+
+    inkText(sk, 'INSTALLING ON IOS', x + cw / 2, y + size * 1.4, size * 1.15, { alpha: 0.92 });
+    lines.forEach((l, i) => {
+      const ly = y + size * 2.8 + i * size * 1.7;
+      inkText(sk, String(i + 1), x + size * 1.6, ly, size * 0.95, { alpha: 0.55 });
+      inkText(sk, l, x + size * 2.8, ly, size * 0.86, { align: 'left', alpha: 0.85, wobble: 0.4 });
+    });
+    inkText(sk, 'TAP ANYWHERE TO CLOSE', x + cw / 2, y + ch - size * 0.7, size * 0.7,
+      { alpha: 0.4, wobble: 0.35 });
     c.restore();
   }
 

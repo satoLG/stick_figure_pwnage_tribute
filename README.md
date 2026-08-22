@@ -141,6 +141,20 @@ joins them later — and the scene is laid out underneath it, so nothing solid
 ever climbs into the readouts. It is white paper either way, so the two still
 read as one picture rather than a game with a bar bolted over it.
 
+## Installing it
+
+The page is a small PWA. The title card carries an **install** button under
+START, and only where it leads anywhere: on Chrome and the rest it holds back
+`beforeinstallprompt` and fires it from that press, so the offer lives in the
+game's own card rather than a browser bar over the top of it; on iOS, which has
+no such event, it opens a card spelling out Share → Add to Home Screen. Once it
+is running from a home screen the button stops being drawn at all.
+
+A small service worker (`public/sw.js`) caches the shell so it starts offline
+after the first run — navigations go to the network first and fall back to the
+cache, so a deploy is never pinned behind a stale copy, while the fingerprinted
+assets are cached on first use.
+
 ## The arsenal
 
 | # | Key | Weapon | Behaviour |
