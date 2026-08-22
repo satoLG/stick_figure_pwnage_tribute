@@ -150,9 +150,23 @@ read as one picture rather than a game with a bar bolted over it.
 ## Starting a run
 
 The game gives exactly one instruction, and it gives it once. A run opens with
-**DESTROY THE WALL** being scribbled onto the paper a letter at a time, and an
-arrow dragged out from under it — a hair where it leaves the words, a wedge
-where it arrives — sweeping down and over into the masonry.
+**DESTROY THE WALL** being written onto the paper — stroke by stroke, with a
+scrub of pencil riding along at the nib — and a short arrow hooked out from
+under it, a hair where it leaves the words and a wedge where it arrives, bowing
+right and down into the masonry.
+
+The letters are drawn, not typeset. Everything else on this paper is a line
+somebody made and every one of them wobbles, so an alphabet of capitals written
+out as polylines (`ui/handwriting.ts`) goes through the same boil as the figure
+and the craters, and is inked along its own length so it can be watched being
+written. Text set in a font can be jittered around — which is what `inkText`
+does, and which is right for a readout — but a *caption* in Trebuchet beside a
+hand-drawn stick figure reads as a caption bolted on afterwards.
+
+The note is pinned to the wall rather than to the screen. The words sit just
+off the wall's face whatever the screen shape, so the arrow is only ever a
+short hook into the stone instead of a banner in the middle of an ultrawide
+with a yard of arrow reaching across it.
 
 The destruction meter is not there yet. Nobody needs a progress bar for
 progress they have not started making, and a run that opens with a HUD already
@@ -467,7 +481,8 @@ src/
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
-    cue.ts             the DESTROY THE WALL card and its arrow, written on
+    cue.ts             the DESTROY THE WALL note and its arrow, written on
+    handwriting.ts     capital letters as pen strokes, drawn along their length
     touch.ts           the two floating sticks, weapon pad
     aim.ts             stick movement to an aim direction, per device
     settings-menu.ts   the cog, and the card it opens

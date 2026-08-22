@@ -5,7 +5,7 @@ import { Sketch } from '../core/sketch';
 import { Gamepads, type PadState } from '../core/gamepad';
 import { installer } from '../core/pwa';
 import { AimSolver, type AimMode } from '../ui/aim';
-import { drawStartCue, fitCueSize } from '../ui/cue';
+import { cueWidth, drawStartCue, fitCueSize } from '../ui/cue';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
@@ -1068,22 +1068,22 @@ export class Game {
   private drawCue(): void {
     const t = this.terrain;
     const { w } = this.view;
-    // Everything is measured off the open ground, which is the only part of
-    // the picture the cue can be read on.
+    // Everything is measured off the wall, never off the screen. The note is
+    // written on the paper immediately beside the face it is pointing at, so
+    // the arrow only ever has to be a short hook - a banner in the middle of
+    // an ultrawide with a yard of arrow reaching across it says less, not
+    // more. The open ground is only consulted to stop the words running off
+    // the left edge of a narrow phone.
     const open = Math.max(160, t.wallX);
-    const size = fitCueSize(this.sk, open * 0.74, clamp(w * 0.042, 19, 50));
-    const x = clamp(open * 0.5, size * 2.2, Math.max(size * 2.2, open - size * 2));
-    // Down in the sky rather than tucked under the HUD strip: the strip's own
-    // corner is where the control hints go, and two lines of text fighting for
-    // the same inch of paper is how a cue stops being read.
-    const y = Math.max(this.hudBand + size * 1.7, this.hudBand + (t.groundTop - this.hudBand) * 0.18);
+    const size = fitCueSize(open * 0.62, clamp(w * 0.028, 15, 38));
+    const half = cueWidth(size) / 2;
+    const x = Math.max(half + size * 0.7, t.wallX - size * 1.4 - half);
     const band = t.groundTop - t.wallTop;
-    drawStartCue(this.sk, this.phaseTime, this.cueOut, {
-      x, y, size,
-      // The point lands on the wall's face, a little above its middle - where
-      // the figure's swings actually reach.
-      target: { x: t.wallX - size * 0.35, y: t.wallTop + band * 0.44 },
-    });
+    // The point lands on the wall's face, in its upper third - head height for
+    // a figure standing at the foot of it, and well clear of the HUD strip.
+    const target = { x: t.wallX - size * 0.62, y: t.wallTop + band * 0.34 };
+    const y = Math.max(this.hudBand + size * 1.1, target.y - size * 2.3);
+    drawStartCue(this.sk, this.phaseTime, this.cueOut, { x, y, size, target });
   }
 
   private drawMenu(): void {
