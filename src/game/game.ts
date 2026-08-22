@@ -7,7 +7,7 @@ import { AimSolver, type AimMode } from '../ui/aim';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
-  drawProgress, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
+  drawProgress, focusRing, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
 } from '../ui/ui';
 import { ImpactFx } from './impact';
@@ -211,14 +211,14 @@ export class Game {
     };
   }
 
-  /** After a re-lay, make sure the figure is not buried inside the new terrain. */
+  /**
+   * After a re-lay the figure can be anywhere relative to the new terrain -
+   * mid-air, or inside the wall. The same containment that runs every frame of
+   * play sorts it out, so there is only ever one idea of where he may be.
+   */
   private settlePlayer(): void {
-    this.sm.pos.x = clamp(this.sm.pos.x, 50, this.view.w - 50);
-    let guard = 0;
-    while (guard++ < 400 && this.terrain.solidAt(this.sm.pos.x, this.sm.pos.y - 4)) {
-      this.sm.pos.y -= 4;
-    }
-    if (this.sm.pos.y < 0) this.sm.pos.y = this.terrain.groundTop;
+    this.sm.pos.y = clamp(this.sm.pos.y, this.terrain.sceneTop, this.terrain.groundTop);
+    this.sm.contain(this.terrain);
   }
 
   private toWorld = (cssX: number, cssY: number): Vec2 => ({
@@ -418,13 +418,31 @@ export class Game {
   private routeMenu(): void {
     const inp = this.input;
     if (this.phase === 'won') { this.menu.open = false; return; }
-    if (inp.justPressed('Escape') || this.pad.menu) this.menu.toggle();
+    if (inp.justPressed('Escape') || this.pad.menu) {
+      this.menu.toggle();
+      audio.play('ui');
+    }
     for (const p of inp.pointers.values()) {
       if (p.kind !== 'touch' || p.role !== '' || !p.justDown) continue;
       if (this.menu.press(this.toWorld(p.x, p.y))) p.role = 'ui';
     }
     if (inp.mousePressed && this.menu.press(this.pointerWorld())) inp.mousePressed = false;
+
+    // A pad cannot point at anything, so it walks the card instead: a step per
+    // push of either stick or the d-pad, A to take it, B to back out.
+    if (!this.menu.open) return;
+    if (this.menu.moveFocus(this.pad.navX, this.pad.navY)) audio.play('wheel', 1.15);
+    if (this.pad.confirm && this.menu.confirm()) audio.play('ui', 1.1);
+    if (this.pad.back) { this.menu.open = false; audio.play('ui', 0.85); }
   }
+
+  /** True while a gamepad is what is driving the menus, so they say where they are. */
+  private get padPicking(): boolean {
+    return this.device === 'pad';
+  }
+
+  /** Which of the two win-screen buttons a gamepad has selected. */
+  private winFocus = 0;
 
   /** Merges keyboard, mouse, thumbs and gamepad into one set of wishes. */
   private readIntent(rawDt: number): Intent {
@@ -551,7 +569,7 @@ export class Game {
     const press = this.input.pressPoint();
     if (press && hitRect(this.startBtn, this.toWorld(press.x, press.y))) void this.beginRun();
     if (this.input.justPressed('Enter') || this.input.justPressed('Space')) void this.beginRun();
-    if (this.pad.firePressed || this.pad.jumpPressed) void this.beginRun();
+    if (this.pad.confirm || this.pad.firePressed) void this.beginRun();
   }
 
   private async beginRun(): Promise<void> {
@@ -728,8 +746,14 @@ export class Game {
         if (hitRect(this.restartBtn, p)) this.restart();
         else if (hitRect(this.menuBtn, p)) this.toMenu();
       }
-      if (this.input.justPressed('KeyR') || this.pad.firePressed) this.restart();
-      if (this.input.justPressed('Escape') || this.pad.menu) this.toMenu();
+      // A pad has no pointer, so it walks the two buttons and takes one.
+      if (this.pad.navX !== 0) {
+        this.winFocus = this.winFocus === 0 ? 1 : 0;
+        audio.play('wheel', 1.15);
+      }
+      if (this.pad.confirm) { if (this.winFocus === 0) this.restart(); else this.toMenu(); }
+      if (this.input.justPressed('KeyR')) this.restart();
+      if (this.input.justPressed('Escape') || this.pad.menu || this.pad.back) this.toMenu();
     }
   }
 
@@ -803,8 +827,9 @@ export class Game {
     // and the cursor over that, or it would be pointing at the game from
     // behind the card it is supposed to be picking things out of.
     if (this.phase !== 'won') {
+      this.menu.padFocus = this.padPicking;
       this.menu.hover(this.device === 'desk' ? this.pointerWorld() : null);
-      this.menu.draw(this.sk, this.view, this.inputReport());
+      this.menu.draw(this.sk, this.view, this.inputReport(), this.time);
     }
     if (this.device === 'desk') this.drawCursor();
   }
@@ -961,6 +986,7 @@ export class Game {
     c.save();
     c.globalAlpha = clamp((t - 0.6) / 0.4, 0, 1);
     inkButton(sk, this.startBtn, 'START PWNAGE', hovered, clamp(w * 0.032, 22, 34));
+    if (this.padPicking) focusRing(sk, this.startBtn, this.time);
     c.restore();
 
     const cf = clamp((t - 0.9) / 0.6, 0, 1);
@@ -1050,10 +1076,13 @@ export class Game {
     c.save();
     c.globalAlpha = clamp((t - 0.7) / 0.4, 0, 1);
     const btnSize = clamp(w * 0.026, 18, 28);
-    inkButton(sk, this.restartBtn, 'AGAIN', !this.isTouch && hitRect(this.restartBtn, ptr), btnSize);
-    inkButton(sk, this.menuBtn, 'MAIN MENU', !this.isTouch && hitRect(this.menuBtn, ptr), btnSize);
+    const deskHere = this.device === 'desk';
+    inkButton(sk, this.restartBtn, 'AGAIN', deskHere && hitRect(this.restartBtn, ptr), btnSize);
+    inkButton(sk, this.menuBtn, 'MAIN MENU', deskHere && hitRect(this.menuBtn, ptr), btnSize);
+    if (this.padPicking) focusRing(sk, this.winFocus === 0 ? this.restartBtn : this.menuBtn, this.time);
     if (!this.isTouch) {
-      inkText(sk, 'R  RESTART        ESC  MENU', w / 2, this.restartBtn.y + this.restartBtn.h + 30, 13, { alpha: 0.45 });
+      const keys = this.padPicking ? 'D-PAD  CHOOSE        A  TAKE IT' : 'R  RESTART        ESC  MENU';
+      inkText(sk, keys, w / 2, this.restartBtn.y + this.restartBtn.h + 30, 13, { alpha: 0.45 });
     }
     c.restore();
   }

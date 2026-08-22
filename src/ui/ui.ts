@@ -48,6 +48,45 @@ export const slotKey = (i: number): string =>
 export const hitRect = (r: Rect, p: Vec2): boolean =>
   p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 
+/**
+ * The impact border round whatever a gamepad has selected.
+ *
+ * Nothing else on screen is a rough double outline with its corners struck
+ * through, so it reads as "this one" at a glance from across a room, which is
+ * the whole job: a pad player cannot point, and has to be told.
+ */
+export function focusRing(sk: Sketch, r: Rect, time: number): void {
+  const c = sk.ctx;
+  const beat = 1 + Math.sin(time * 6) * 0.5;
+  const pad = 7 + beat;
+  const box = (g: number): Vec2[] => [
+    { x: r.x - g, y: r.y - g }, { x: r.x + r.w + g, y: r.y - g },
+    { x: r.x + r.w + g, y: r.y + r.h + g }, { x: r.x - g, y: r.y + r.h + g },
+  ];
+  c.save();
+  // Difference, so it lands white on a filled row and black on an empty one
+  // without either having to know the ring is there.
+  c.globalCompositeOperation = 'difference';
+  c.strokeStyle = '#fff';
+  c.lineWidth = 3.4;
+  sk.polyPath(box(pad), 2.2, true);
+  c.stroke();
+  c.lineWidth = 1.8;
+  sk.polyPath(box(pad + 6), 3, true);
+  c.stroke();
+  // Struck corners: four short diagonals, the way a hit is drawn here.
+  const tick = 9 + beat * 2;
+  const corners: Array<[number, number, number, number]> = [
+    [r.x - pad, r.y - pad, -1, -1], [r.x + r.w + pad, r.y - pad, 1, -1],
+    [r.x + r.w + pad, r.y + r.h + pad, 1, 1], [r.x - pad, r.y + r.h + pad, -1, 1],
+  ];
+  c.lineWidth = 3;
+  for (const [x, y, sx, sy] of corners) {
+    sk.line({ x, y }, { x: x + sx * tick, y: y + sy * tick }, 3, 1, 0.8);
+  }
+  c.restore();
+}
+
 /** A hand-drawn button: rough box, inked label, inverts on hover. */
 export function inkButton(sk: Sketch, r: Rect, label: string, hovered: boolean, size = 30): void {
   const c = sk.ctx;

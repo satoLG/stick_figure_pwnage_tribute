@@ -4,7 +4,7 @@ import {
   AIM_SPEEDS, musicVolume, saveSettings, settings, sfxVolume, VOLUMES,
 } from '../core/settings';
 import type { Sketch } from '../core/sketch';
-import { hitRect, inkText, measureText, type Rect } from './ui';
+import { focusRing, hitRect, inkText, measureText, type Rect } from './ui';
 
 /** What the machine can be played with, and which of them is in hand. */
 export interface InputReport {
@@ -14,7 +14,11 @@ export interface InputReport {
   active: 'touch' | 'desk' | 'pad';
 }
 
-interface Row { r: Rect; act: () => void }
+/**
+ * One selectable thing. `line` and `col` are its place in the grid a gamepad
+ * walks: down and up step between rows of the card, left and right along one.
+ */
+interface Row { r: Rect; act: () => void; line: number; col: number }
 
 /**
  * The settings menu: a chip in the top right and the card it opens.
@@ -30,6 +34,12 @@ export class SettingsMenu {
   private rows: Row[] = [];
   private card: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private pointer: Vec2 | null = null;
+  /** Where the gamepad's selection is. Kept as a place, not an index, so it
+   * survives the card being rebuilt every frame. */
+  private focus = { line: 0, col: 0 };
+  private line = 0;
+  /** Only shown once a pad has actually moved it: a mouse does not need it. */
+  padFocus = false;
 
   /** Where the cursor is, so the thing under it can show that it is under it. */
   hover(p: Vec2 | null): void {
@@ -52,6 +62,44 @@ export class SettingsMenu {
 
   toggle(): void {
     this.open = !this.open;
+    if (this.open) this.focus = { line: 0, col: 0 };
+  }
+
+  /** Steps the gamepad's selection. Returns true if it moved something. */
+  moveFocus(dx: number, dy: number): boolean {
+    if (!this.open || (dx === 0 && dy === 0) || !this.rows.length) return false;
+    this.padFocus = true;
+    const lines = [...new Set(this.rows.map((r) => r.line))].sort((a, b) => a - b);
+    let li = Math.max(0, lines.indexOf(this.focus.line));
+    if (dy !== 0) {
+      li = (li + (dy > 0 ? 1 : -1) + lines.length) % lines.length;
+      this.focus.line = lines[li];
+      // Landing on a shorter row keeps as much of the column as it has.
+      this.focus.col = Math.min(this.focus.col, this.count(this.focus.line) - 1);
+    } else {
+      const n = this.count(this.focus.line);
+      this.focus.col = (this.focus.col + (dx > 0 ? 1 : -1) + n) % n;
+    }
+    return true;
+  }
+
+  private count(line: number): number {
+    return Math.max(1, this.rows.filter((r) => r.line === line).length);
+  }
+
+  private selected(): Row | undefined {
+    return this.rows.find((r) => r.line === this.focus.line && r.col === this.focus.col)
+      ?? this.rows[0];
+  }
+
+  /** Fires whatever the gamepad has selected. */
+  confirm(): boolean {
+    const row = this.selected();
+    if (!this.open || !row) return false;
+    this.padFocus = true;
+    row.act();
+    saveSettings();
+    return true;
   }
 
   /**
@@ -76,7 +124,7 @@ export class SettingsMenu {
     return true;
   }
 
-  draw(sk: Sketch, view: { w: number; h: number }, input: InputReport): void {
+  draw(sk: Sketch, view: { w: number; h: number }, input: InputReport, time: number): void {
     const c = sk.ctx;
     c.save();
     const onChip = !!this.pointer && hitRect(this.chip, this.pointer);
@@ -87,6 +135,7 @@ export class SettingsMenu {
     if (!this.open) { this.rows = []; return; }
 
     this.rows = [];
+    this.line = 0;
     const rowH = clamp(view.h * 0.055, 46, 116);
     const pad = rowH * 0.24;
     const head = rowH * 0.7;
@@ -150,8 +199,15 @@ export class SettingsMenu {
       AIM_SPEEDS.map((o, i) => ({
         label: o.name, on: i === settings.aimSpeed, act: () => { settings.aimSpeed = i; },
       })));
+
+    // Last, over the plates, so the ring reads against whichever it is on.
+    if (this.ring) focusRing(sk, this.ring, time);
+    this.ring = null;
     c.restore();
   }
+
+  /** The rect the focus ring goes round this frame, filled in while drawing. */
+  private ring: Rect | null = null;
 
   private heading(sk: Sketch, x: number, y: number, w: number, h: number, label: string): number {
     const size = h * 0.42;
@@ -169,6 +225,7 @@ export class SettingsMenu {
     sk: Sketch, x: number, y: number, w: number, h: number, label: string,
     opts: Array<{ label: string; on: boolean; act: () => void }>,
   ): void {
+    const line = this.line++;
     const size = h * 0.28;
     const box = h - h * 0.24;
     inkText(sk, label, x, y + h / 2, size, { align: 'left', alpha: 0.75, wobble: 0.35 });
@@ -181,7 +238,8 @@ export class SettingsMenu {
       plate(sk, hot ? grow(r, box * 0.06) : r, o.on);
       inkText(sk, o.label, r.x + r.w / 2, r.y + r.h / 2 + 1, Math.min(size * 1.1, bw * 0.42),
         { color: o.on ? '#fff' : '#000', alpha: o.on || hot ? 1 : 0.75, wobble: hot ? 1 : 0.7 });
-      this.rows.push({ r, act: o.act });
+      this.rows.push({ r, act: o.act, line, col: i });
+      if (this.padFocus && this.focus.line === line && this.focus.col === i) this.ring = r;
     });
   }
 }

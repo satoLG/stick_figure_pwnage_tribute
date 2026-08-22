@@ -74,6 +74,7 @@ touch the glass or the mouse and it switches back.
 | Hold `L1` / `L2` | Weapon fan — point the right stick at one and let go |
 | D-pad ←→, `Y` | Step through the arsenal |
 | `Start` | Settings |
+| D-pad / left stick, `A`, `B` | Walk the menus, take a choice, back out — whatever is selected wears an impact border |
 
 ## Aiming
 
@@ -111,6 +112,18 @@ choices are remembered between sessions.
 The weapon wheel is a full ring with a mouse or a pad and a **fan above the
 pad** on touch — a thumb dragging up from the bottom edge cannot reach the
 lower half of a ring.
+
+## Staying in the scene
+
+The figure cannot leave the picture, whatever is done to him. Running, falling
+and climbing rubble step along the terrain bitmap four pixels at a time, but
+nothing else does — a blast throws him, the ground is carved out from under
+him, the level is re-laid under his feet when the window turns. So rather than
+trusting the movement, a containment pass runs after every one: he is inside
+the scene, and he is not inside anything solid, or he is put back. Lifting
+comes first, because standing on top of the rubble is what a player expects;
+only a body with no headroom is pushed out sideways. The sides, the floor and
+the HUD strip's underside are walls, not suggestions.
 
 ## The screen
 

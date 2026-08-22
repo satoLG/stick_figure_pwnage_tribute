@@ -55,6 +55,12 @@ const MAX_FALL = 1250;
 const COYOTE = 0.11;
 const JUMP_BUFFER = 0.13;
 const WALL_SLIDE_V = 190;
+/**
+ * How far the containment pass will carry a buried body to get it back out,
+ * up first and then sideways. Comfortably more than any one frame of movement
+ * or one blast's worth of carving, and far short of teleporting.
+ */
+const DIG_OUT = 90;
 /** Ground covered per half-stride. Short and quick walking, long at a sprint. */
 const STRIDE_WALK = 33, STRIDE_RUN = 56, STRIDE_SPRINT = 74;
 
@@ -335,6 +341,7 @@ export class Stickman {
     this.wasOnGround = this.onGround;
     this.moveX(this.vel.x * dt, terrain);
     this.moveY(this.vel.y * dt, terrain);
+    this.contain(terrain);
     this.detectWall(terrain);
 
     if (this.onGround) {
@@ -353,7 +360,6 @@ export class Stickman {
       this.fallTime += dt;
     }
 
-    if (this.pos.y > terrain.h + 300) this.reset(220, 300);
 
     // --- state selection ---------------------------------------------------
     const speed = Math.abs(this.vel.x);
@@ -458,6 +464,75 @@ export class Stickman {
     return terrain.solidAt(x, y)
       || terrain.solidAt(x - HALF_W * 0.8, y)
       || terrain.solidAt(x + HALF_W * 0.8, y);
+  }
+
+  /** True when the standing body would overlap solid pixels at (x, feetY). */
+  private buried(x: number, feetY: number, terrain: Terrain): boolean {
+    const top = feetY - (this.crouching ? CROUCH_HIP + TORSO : BODY_H - HEAD_R * 0.6);
+    for (const dx of [-HALF_W * 0.8, 0, HALF_W * 0.8]) {
+      // From just above the feet, since standing *on* a surface has the feet
+      // touching it, up to the crown.
+      for (let y = feetY - 5; y > top; y -= 8) {
+        if (terrain.solidAt(x + dx, y)) return true;
+      }
+      if (terrain.solidAt(x + dx, top)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The last word on where the figure may be, run after every move.
+   *
+   * Stepping along the bitmap four pixels at a time handles ordinary running
+   * and falling, but nothing else does: a blast throws him, rubble is carved
+   * out from under him, the level is re-laid under his feet on a rotation. So
+   * rather than trusting the movement, this checks the result - he is inside
+   * the scene, and he is not inside anything solid - and puts him back if he
+   * is not. Lifting comes first, because standing on top of the rubble is what
+   * a player expects to happen; only a body with no headroom gets shoved out
+   * sideways.
+   */
+  contain(terrain: Terrain): void {
+    const min = HALF_W + 2;
+    const max = terrain.w - HALF_W - 2;
+    const roof = terrain.sceneTop + BODY_H;
+
+    if (this.pos.x < min) { this.pos.x = min; this.vel.x = Math.max(0, this.vel.x); }
+    if (this.pos.x > max) { this.pos.x = max; this.vel.x = Math.min(0, this.vel.x); }
+    if (this.pos.y < roof) { this.pos.y = roof; this.vel.y = Math.max(0, this.vel.y); }
+    if (this.pos.y > terrain.h) {
+      this.pos.y = terrain.h;
+      this.vel.y = 0;
+      this.onGround = true;
+    }
+
+    if (!this.buried(this.pos.x, this.pos.y, terrain)) return;
+
+    let lift = 0;
+    while (lift < DIG_OUT && this.pos.y - 2 >= roof && this.buried(this.pos.x, this.pos.y - 2, terrain)) {
+      this.pos.y -= 2;
+      lift += 2;
+    }
+    if (this.pos.y - 2 >= roof && !this.buried(this.pos.x, this.pos.y - 2, terrain)) {
+      this.pos.y -= 2;
+      this.vel.y = Math.min(0, this.vel.y);
+      this.onGround = true;
+      return;
+    }
+    // No headroom: back out of the face the shortest way that is actually free.
+    for (let d = 2; d <= DIG_OUT * 2; d += 2) {
+      for (const s of [-1, 1]) {
+        const x = clamp(this.pos.x + s * d, min, max);
+        if (!this.buried(x, this.pos.y, terrain)) {
+          this.pos.x = x;
+          this.vel.x = 0;
+          return;
+        }
+      }
+    }
+    // Sealed in on every side - only ever from a re-lay, never from play.
+    // Put him back on the open ground rather than leave him in the masonry.
+    this.reset(Math.min(terrain.wallX * 0.5, max), terrain.sceneTop + BODY_H);
   }
 
   private detectWall(terrain: Terrain): void {

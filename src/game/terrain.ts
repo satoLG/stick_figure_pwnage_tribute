@@ -108,6 +108,9 @@ export class Terrain {
   /** Height of the strip at the top of the screen the scene must stay out of. */
   private topGap: number;
 
+  /** The ceiling of the playable space: the HUD strip's underside. */
+  get sceneTop(): number { return this.topGap; }
+
   /** Only wall pixels count towards the win condition; the floor is scenery. */
   private wallTotal = 0;
   private wallLeft = 0;
