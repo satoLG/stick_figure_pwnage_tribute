@@ -1,4 +1,4 @@
-import { clamp, TAU, type Vec2 } from '../core/math';
+import { angleDelta, clamp, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Terrain } from './terrain';
 
@@ -12,7 +12,7 @@ export interface Blast {
   bites: number;
 }
 
-export type ProjectileKind = 'rocket' | 'shell' | 'fireball' | 'pellet';
+export type ProjectileKind = 'rocket' | 'shell' | 'missile' | 'orb' | 'fireball' | 'pellet';
 
 export class Projectile {
   x: number; y: number;
@@ -29,9 +29,27 @@ export class Projectile {
   /** Set when the projectile has hit and the game still owes it an explosion. */
   hitAt: Vec2 | null = null;
 
+  /**
+   * Guidance. A round with a `target` bends its own velocity towards it at
+   * `turn` radians a second instead of flying the line it was launched on -
+   * which is what lets ten missiles leave one back and still arrive spread
+   * across the whole face of the wall.
+   */
+  target: Vec2 | null = null;
+  private turn = 0;
+  private accel = 0;
+  private topSpeed = Infinity;
+  /** Seconds of dumb flight before the guidance wakes up, so the salvo fans out. */
+  private armT = 0;
+  /** How hard the flight path snakes; a missile does not fly a ruled line. */
+  private weave = 0;
+  private weavePhase = rand(TAU);
+
   constructor(opts: {
     x: number; y: number; vx: number; vy: number;
     kind: ProjectileKind; gravity?: number; radius?: number; life?: number; blast: Blast;
+    target?: Vec2 | null; turn?: number; accel?: number; topSpeed?: number;
+    arm?: number; weave?: number;
   }) {
     this.x = opts.x; this.y = opts.y;
     this.vx = opts.vx; this.vy = opts.vy;
@@ -40,6 +58,12 @@ export class Projectile {
     this.radius = opts.radius ?? 6;
     this.life = opts.life ?? 4;
     this.blast = opts.blast;
+    this.target = opts.target ?? null;
+    this.turn = opts.turn ?? 0;
+    this.accel = opts.accel ?? 0;
+    this.topSpeed = opts.topSpeed ?? Infinity;
+    this.armT = opts.arm ?? 0;
+    this.weave = opts.weave ?? 0;
     this.angle = Math.atan2(this.vy, this.vx);
   }
 
@@ -48,6 +72,8 @@ export class Projectile {
     if (this.life <= 0) { this.dead = true; this.hitAt = { x: this.x, y: this.y }; return; }
 
     this.vy += this.gravity * dt;
+    this.armT = Math.max(0, this.armT - dt);
+    if (this.target && this.turn > 0 && this.armT <= 0) this.steer(dt);
     // A rocket steers towards its own velocity, which makes the arc readable.
     this.angle = Math.atan2(this.vy, this.vx);
 
@@ -71,6 +97,26 @@ export class Projectile {
       this.dead = true;
     }
     this.spin += dt * 14;
+  }
+
+  /**
+   * One frame of guidance: turn the velocity a little way towards the target
+   * and open the throttle. The turn rate is deliberately finite - a missile
+   * that snapped onto its aim point would fly a straight line and stop being a
+   * missile. What you should see is a curve.
+   */
+  private steer(dt: number): void {
+    const t = this.target!;
+    const speed = Math.hypot(this.vx, this.vy) || 1;
+    const here = Math.atan2(this.vy, this.vx);
+    const want = Math.atan2(t.y - this.y, t.x - this.x)
+      // The snake: a slow sideways wander laid over the intercept course.
+      + Math.sin(this.life * 9 + this.weavePhase) * this.weave;
+    const step = clamp(angleDelta(here, want), -this.turn * dt, this.turn * dt);
+    const a = here + step;
+    const s = Math.min(this.topSpeed, speed + this.accel * dt);
+    this.vx = Math.cos(a) * s;
+    this.vy = Math.sin(a) * s;
   }
 
   draw(sk: Sketch): void {
@@ -105,6 +151,35 @@ export class Projectile {
         ], 2.8, true, 0.6);
         c.lineWidth = 2.4;
         sk.burst(-r * 2.4, 0, 6, r * 0.5, r * 4, 2.4, 1.7, Math.PI, 4101);
+        break;
+      }
+      case 'missile': {
+        // A slim guided round: a dart with swept fins and a hot, ragged tail.
+        const r = this.radius;
+        sk.poly([
+          { x: r * 2.6, y: 0 }, { x: r * 0.5, y: -r * 0.62 }, { x: -r * 1.6, y: -r * 0.58 },
+          { x: -r * 1.6, y: r * 0.58 }, { x: r * 0.5, y: r * 0.62 },
+        ], 2.2, true, 0.45);
+        sk.line({ x: -r * 0.9, y: -r * 0.58 }, { x: -r * 2.1, y: -r * 1.5 }, 2, 1, 0.4);
+        sk.line({ x: -r * 0.9, y: r * 0.58 }, { x: -r * 2.1, y: r * 1.5 }, 2, 1, 0.4);
+        c.lineWidth = 2;
+        sk.burst(-r * 2.2, 0, 5, r * 0.5, r * 3.4, 2, 1.2, Math.PI, 4301);
+        break;
+      }
+      case 'orb': {
+        // A ball of gathered energy: a solid core with a white bite out of it
+        // and a ring of spikes, so it reads as light rather than as a stone.
+        const r = this.radius;
+        c.rotate(-this.angle);                 // an orb has no nose to point
+        c.fillStyle = '#000';
+        sk.polyPath(ring(r, 10, this.spin), 1.4);
+        c.fill();
+        c.fillStyle = '#fff';
+        sk.polyPath(ring(r * 0.42, 8, -this.spin * 1.6), 1);
+        c.fill();
+        c.fillStyle = '#000';
+        c.lineWidth = 2.2;
+        sk.burst(0, 0, 8, r * 1.25, r * 2.5, 2.2, TAU, 0, 4401);
         break;
       }
       case 'fireball': {
@@ -171,11 +246,14 @@ export function applyBlast(terrain: Terrain, x: number, y: number, blast: Blast)
 }
 
 export const BLASTS: Record<string, Blast> = {
-  rocket: { radius: 48, shake: 16, flash: 0.5, debris: 34, sfx: 'explosion', bites: 7 },
-  cannon: { radius: 80, shake: 30, flash: 0.9, debris: 60, sfx: 'cannon', bites: 10 },
+  /** The bazooka: one warhead, and a hole you can walk through. */
+  bazooka: { radius: 74, shake: 26, flash: 0.7, debris: 52, sfx: 'explosion', bites: 10 },
+  /** One of a swarm. Small on its own; ten of them take a wall apart. */
+  missile: { radius: 34, shake: 9, flash: 0.24, debris: 20, sfx: 'explosion', bites: 6 },
+  /** A bolt off the staff - a bite of light rather than a charge going off. */
+  orb: { radius: 31, shake: 7, flash: 0.2, debris: 16, sfx: 'explosion', bites: 5 },
   /** The warhammer does not explode, but it craters exactly like something did. */
   maul: { radius: 68, shake: 30, flash: 0.5, debris: 50, sfx: 'explosion', bites: 11 },
-  fireball: { radius: 28, shake: 6, flash: 0.18, debris: 14, sfx: 'fire', bites: 5 },
 };
 
 export const clampBlast = (b: Blast, scale: number): Blast => ({

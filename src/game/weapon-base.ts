@@ -1,5 +1,5 @@
 import type { SfxName } from '../core/audio';
-import { clamp, easeOutCubic, TAU, type Vec2 } from '../core/math';
+import { clamp, easeOutCubic, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Particles } from './particles';
 import type { Projectile } from './projectiles';
@@ -126,6 +126,23 @@ export class SlashFx {
   }
 }
 
+/**
+ * A point on whatever masonry is still standing, for weapons that pick their
+ * own targets rather than firing where the player points - the missile salvo,
+ * mostly. Falls back to the middle of what is left, and to the crosshair once
+ * there is nothing left at all.
+ */
+export function wallPoint(ctx: WeaponCtx, tries = 26): Vec2 {
+  const b = ctx.terrain.wallBounds();
+  if (!b) return { ...ctx.aimPoint };
+  for (let i = 0; i < tries; i++) {
+    const x = rand(b.x0, b.x1);
+    const y = rand(b.y0, b.y1);
+    if (ctx.terrain.solidAt(x, y)) return { x, y };
+  }
+  return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
+}
+
 /** Debris, sparks and speed lines wherever something bites into the wall. */
 export function impact(ctx: WeaponCtx, x: number, y: number, dir: number, power: number): void {
   ctx.particles.debris(x, y, Math.round(4 + power * 16), 90 + power * 320, dir + Math.PI, 2.4);
@@ -153,6 +170,14 @@ export abstract class Weapon {
 
   protected timer = 0;
   charge = 0;
+  /**
+   * Seconds the trigger has been down without a break. Weapons whose held
+   * behaviour is a different move rather than more of the same one - the melee
+   * chains, the mecha's rod array, the missile salvo - read it instead of
+   * running a clock of their own.
+   */
+  protected heldFor = 0;
+  private wasHeld = false;
   /** Attack animation clock, counting down. */
   protected anim = 0;
   protected animLen = 0.2;
@@ -181,12 +206,29 @@ export abstract class Weapon {
   /** Melee weapons report their running combo here; everything else is silent. */
   get comboLabel(): string | null { return null; }
 
-  onEquip(): void { this.charge = 0; this.anim = 0; this.timer = Math.min(this.timer, 0.12); }
-  onUnequip(_ctx: WeaponCtx): void { this.charge = 0; this.chargeSfx = false; }
+  onEquip(): void {
+    this.charge = 0;
+    this.anim = 0;
+    this.heldFor = 0;
+    this.wasHeld = false;
+    this.timer = Math.min(this.timer, 0.12);
+  }
+  onUnequip(_ctx: WeaponCtx): void {
+    this.charge = 0;
+    this.chargeSfx = false;
+    this.heldFor = 0;
+    this.wasHeld = false;
+  }
 
   update(ctx: WeaponCtx, held: boolean, pressed: boolean): void {
     this.timer -= ctx.dt;
     if (this.anim > 0) this.anim = Math.max(0, this.anim - ctx.dt);
+    // The frame the trigger comes up is handled before the hold clock is
+    // cleared, so a weapon letting go of something it was winding up can still
+    // see how long it had.
+    if (this.wasHeld && !held) this.onLetGo(ctx);
+    this.wasHeld = held;
+    this.heldFor = held ? this.heldFor + ctx.dt : 0;
     this.tick(ctx, held);
 
     if (this.chargeTime > 0) {
@@ -203,7 +245,7 @@ export abstract class Weapon {
     }
 
     const wants = this.auto ? held : pressed;
-    if (wants && this.timer <= 0) {
+    if (wants && this.timer <= 0 && !this.suppressFire(ctx)) {
       this.timer = this.cooldown;
       this.startAnim();
       this.swap = -this.swap;
@@ -213,6 +255,16 @@ export abstract class Weapon {
 
   /** Per-frame hook for weapons with continuous effects (fire, beam). */
   protected tick(_ctx: WeaponCtx, _held: boolean): void {}
+
+  /**
+   * "Not right now." A weapon whose held trigger means something other than
+   * more shots - a rod array unfolding, a salvo loading - says so here, and the
+   * ordinary attack stops coming out while it does.
+   */
+  protected suppressFire(_ctx: WeaponCtx): boolean { return false; }
+
+  /** The frame the trigger comes back up; where a held-up attack goes off. */
+  protected onLetGo(_ctx: WeaponCtx): void {}
 
   /** Fires. `power` is the charge fraction for charged weapons, else 1. */
   protected abstract release(ctx: WeaponCtx, power: number): void;

@@ -97,6 +97,17 @@ const SETTLE = 26;
 const STRIDE_WALK = 50, STRIDE_RUN = 84, STRIDE_SPRINT = 112;
 
 /**
+ * Wing-borne flight, which is a different thing from the beam's hover: the
+ * hover is a power holding him up while he does something else, and this is
+ * actually flying. Gravity all but goes away and the jump key stops being a
+ * jump - held, it climbs; crouch dives; letting go of both leaves him sinking
+ * gently, so he drifts down instead of hanging in the air like a balloon.
+ */
+const FLY_CLIMB = 330;
+const FLY_DIVE = 470;
+const FLY_SINK = 64;
+
+/**
  * A gait is written as poses, not as a formula: each key says where the thigh
  * points, how hard the knee is folded, and how far the hips have dropped. The
  * cycle below is a real run - heel strike, absorb, drive, then the heel snapping
@@ -152,11 +163,12 @@ export interface HandTargets {
  * pose. `hover` also switches gravity off, which is what lets the beam be
  * charged and fired in mid-air before the figure drops back to the floor.
  */
-export type StanceKind = 'brace' | 'hover' | 'crouch' | 'lunge';
+export type StanceKind = 'brace' | 'hover' | 'fly' | 'crouch' | 'lunge';
 
 export interface Stance {
   /**
-   * `brace` plants and coils, `hover` switches gravity off, `crouch` drops the
+   * `brace` plants and coils, `hover` switches gravity off, `fly` hands him
+   * the sky outright (wings: jump climbs, crouch dives), `crouch` drops the
    * whole figure to the floor (the ninja slash), `lunge` throws the front leg
    * out ahead and drives off the back one.
    */
@@ -252,6 +264,8 @@ export class Stickman {
   private stanceKind: StanceKind = 'brace';
   private stanceW = 0;
   private hoverT = 0;
+  /** 0..1 blend into wing-borne flight; only ever above zero off the ground. */
+  private flyT = 0;
   /** Seconds of low-friction ground travel left; what makes a slash slide. */
   private slideT = 0;
 
@@ -285,6 +299,7 @@ export class Stickman {
     this.stance = null;
     this.stanceW = 0;
     this.hoverT = 0;
+    this.flyT = 0;
     this.slideT = 0;
     this.wallKick = 0;
     this.airStallT = 0;
@@ -320,6 +335,13 @@ export class Stickman {
     if (floating && this.hoverT < 0.05 && this.vel.y > 0) this.vel.y *= 0.22;
     this.hoverT = damp(this.hoverT, floating ? 1 : 0, floating ? 15 : 5, dt);
 
+    // Wings, which are a different animal: the moment his feet leave the floor
+    // they take over, and the jump key stops being a jump.
+    const flying = !!this.stance && this.stance.kind === 'fly'
+      && this.stance.weight > 0.05 && !this.onGround;
+    this.flyT = damp(this.flyT, flying ? 1 : 0, flying ? 14 : 6, dt);
+    const airborneOnWings = this.flyT > 0.4 && !this.onGround;
+
     // --- horizontal acceleration ------------------------------------------
     const topSpeed = this.groundTopSpeed(push);
     const accel = this.onGround ? ACCEL : AIR_ACCEL;
@@ -339,7 +361,9 @@ export class Stickman {
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     this.coyote = this.onGround ? COYOTE : Math.max(0, this.coyote - dt);
 
-    if (this.jumpBuffer > 0 && this.hoverT < 0.5) {
+    // On the wing there is nothing to jump off and nothing to jump to: the same
+    // key is the throttle, handled with gravity below.
+    if (this.jumpBuffer > 0 && this.hoverT < 0.5 && !airborneOnWings) {
       if (this.coyote > 0) {
         this.vel.y = -JUMP_V;
         this.jumpBuffer = 0; this.coyote = 0;
@@ -390,6 +414,18 @@ export class Stickman {
       this.flipSpin *= Math.exp(-9 * dt);
       // The beam's float outranks the swing float; let the latter ease out.
       this.stallT = damp(this.stallT, 0, 7, dt);
+    } else if (this.flyT > 0.01) {
+      // Flying. What is left of gravity is only there so the transition into
+      // and out of the wings is not a switch being thrown; the vertical speed
+      // is asked for, not fallen into.
+      const g = GRAVITY * lerp(1, 0.05, this.flyT);
+      this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
+      const want = ctrl.jumpHeld ? -FLY_CLIMB
+        : ctrl.down ? FLY_DIVE
+          : FLY_SINK + Math.sin(this.breathe * 1.7) * 20;
+      this.vel.y = damp(this.vel.y, want, 11 * this.flyT, dt);
+      this.flipSpin *= Math.exp(-9 * dt);
+      this.stallT = damp(this.stallT, 0, 7, dt);
     } else {
       // Swinging in mid-air all but takes the floor away: gravity drops to a
       // trickle and the fall is capped at a crawl, so a combo started off a
@@ -410,7 +446,8 @@ export class Stickman {
       }
     }
 
-    if (this.onWall !== 0 && this.vel.y > 0 && Math.sign(dir) === this.onWall && push > 0.3) {
+    if (this.onWall !== 0 && this.flyT < 0.4 && this.vel.y > 0
+      && Math.sign(dir) === this.onWall && push > 0.3) {
       this.vel.y = Math.min(this.vel.y, WALL_SLIDE_V);
     }
 
@@ -441,7 +478,8 @@ export class Stickman {
     // --- state selection ---------------------------------------------------
     const speed = Math.abs(this.vel.x);
     if (!this.onGround) {
-      this.state = this.onWall !== 0 && this.vel.y > 0 ? 'wallslide' : (this.vel.y < 0 ? 'jump' : 'fall');
+      this.state = this.onWall !== 0 && this.vel.y > 0 && this.flyT < 0.4
+        ? 'wallslide' : (this.vel.y < 0 ? 'jump' : 'fall');
     } else if (this.crouching) this.state = 'crouch';
     else if (speed <= 20) this.state = 'idle';
     else if (speed > RUN_SPEED * 0.95) this.state = 'sprint';
@@ -651,6 +689,8 @@ export class Stickman {
   }
 
   get hovering(): number { return this.hoverT; }
+  /** 0..1 how much of him the wings are currently carrying. */
+  get flightBlend(): number { return this.flyT; }
   /** Which side the wall he last kicked off was on: -1 left, +1 right. */
   get wallKickSide(): number { return this.wallKickDir; }
   get stanceBlend(): number { return this.stanceW; }
@@ -821,7 +861,8 @@ export class Stickman {
     // committing to a cut.
     const braceUp = this.stanceKind === 'brace' ? this.stanceW
       : this.stanceKind === 'hover' ? this.stanceW * 0.5
-        : -this.stanceW * 0.7;
+        : this.stanceKind === 'fly' ? this.flyT * 0.4
+          : -this.stanceW * 0.7;
     const headOff = rotate({ x: 0, y: -HEAD_R * 1.02 }, this.lean * 0.5);
     const head = {
       x: neck.x + headOff.x + Math.cos(look) * 3.2,
@@ -1001,11 +1042,13 @@ export class Stickman {
     let bend: number;
 
     if (!this.onGround) {
-      const rise = clamp(-this.vel.y / 600, -1, 1) * (1 - this.hoverT);
+      const rise = clamp(-this.vel.y / 600, -1, 1) * (1 - this.hoverT) * (1 - this.flyT);
       const spin = clamp(Math.abs(this.flipSpin) / 3, 0, 1);
       // Arms throw up on the way up and out for balance on the way down - and
-      // clamp in tight around the knees through a somersault.
-      upper = lerp((front ? 1 : -1) * (26 + rise * 34) - rise * 26 + this.hoverT * 30, 52, spin);
+      // clamp in tight around the knees through a somersault. On the wing they
+      // are swept back out of the way of them.
+      upper = lerp((front ? 1 : -1) * (26 + rise * 34) - rise * 26
+        + this.hoverT * 30 - this.flyT * 26, 52, spin);
       bend = lerp(52 + Math.abs(rise) * 26, 132, spin);
       if (this.wallKick > 0) {
         // One arm reaches back at the wall he is leaving, the other is flung
@@ -1050,6 +1093,17 @@ export class Stickman {
     if (this.stanceKind === 'lunge') {
       // Everything committed forward: the step a heavy swing lands on.
       return onFloor(front ? px + f * 54 : px - f * 44);
+    }
+    if (this.stanceKind === 'fly') {
+      // Feet up and trailing, and they lead the climb: nosing up pulls them
+      // back and under, diving throws them out behind. On the floor the wings
+      // are only scenery, so he simply stands there.
+      if (this.onGround || this.flyT < 0.02) return onFloor(front ? px + f * 24 : px - f * 26);
+      const bob = Math.sin(this.breathe * 1.9 + (front ? 0 : 0.7)) * 3.2;
+      const pitch = clamp(this.vel.y / 380, -1, 1);
+      return front
+        ? { x: px + f * (18 - pitch * 12), y: py + 32 + bob }
+        : { x: px - f * (26 + pitch * 10), y: py + 50 + bob };
     }
     if (this.stanceKind === 'hover' && !this.onGround) {
       // Floating: the front leg folds up, the back leg trails, both drifting

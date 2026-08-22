@@ -44,6 +44,7 @@ npx vercel --prod
 | Left click | Attack — keep attacking to chain a combo |
 | Hold left click | The heavy chain: slower, bigger, more committed strikes |
 | Attack while running / in the air | Its own chain again — four per melee weapon |
+| `Space` / `S` with the mecha | With the wings out jump is a throttle, not a jump: hold it to climb, crouch to dive, let go of both to sink |
 | Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
 | `1`–`0`, `-`, `=` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
@@ -193,16 +194,16 @@ assets are cached on first use.
 | # | Key | Weapon | Behaviour |
 | --- | --- | --- | --- |
 | 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run, a spinning backfist if you lean on it |
-| 2 | `2` | Katana | A three-cut kata with a whirlwind on the end — and out of a run, the ninja slash: down onto one knee, one flat cut as he slides past, straight back up |
-| 3 | `3` | Twin shortswords | A blur of alternating cuts, every fourth a cross; a full propeller in mid-air |
-| 4 | `4` | Greatsword | Too heavy to carry: the tip drags along the floor throwing sparks, and a run rips it back up through everything in front |
-| 5 | `5` | Warhammer | Ploughs along behind him, then craters instead of cutting; the shock runs out along the ground |
-| 6 | `6` | Sidearm | Semi-auto, crisp holes with a short tunnel; you can watch each round go |
-| 7 | `7` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
-| 8 | `8` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
-| 9 | `9` | Rocket tube | Arcing projectile, 62px crater |
-| 10 | `0` | Siege cannon | Hold to charge; the biggest crater and a shove backwards |
-| 11 | `-` | Pyro stream | Hold to melt the wall away gradually |
+| 2 | `2` | Greatsword | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front |
+| 3 | `3` | Warhammer | Ploughs along behind him, then craters instead of cutting; the shock runs out along the ground |
+| 4 | `4` | Claws | Three parallel gouges a pass, with masonry left standing between them; hold it down for a flurry and one opening finisher |
+| 5 | `5` | Magnum | One hand, one round at a time, and a hole out of all proportion to it; the recoil throws the barrel up and shoves him back |
+| 6 | `6` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
+| 7 | `7` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
+| 8 | `8` | Bazooka | One warhead, one very large hole, and a backblast out of the open end |
+| 9 | `9` | Missile pods | Three guided rounds that climb out of his back and turn onto the crosshair — or hold it down and put ten into the wall at once |
+| 10 | `0` | Arcane staff | Tap for four bolts in a fan; hold for two rings, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
+| 11 | `-` | Mecha | Wings out: jump climbs, crouch dives. Grounded he cuts with a blade that slides out of his forearm; airborne it is quick little rounds; hold it and four rods unfold out of his back and burn one point |
 | 12 | `=` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
 
 Win by erasing the wall. The last few scattered slivers are swept
@@ -400,26 +401,31 @@ the cooldown meter.
 The base class owns everything the chains share — the coil/strike/recovery
 curve, the carve, the crescent, the tip ribbon, the stance blend, the hand
 placement and the impact. A weapon only says how long it is, what its four
-chains are, where it rests and how to draw itself, which is why the katana's
-sliding one-knee slash and the hammer's meteor are the same twelve lines of
-data with different numbers.
+chains are, where it rests and how to draw itself, which is why the claws'
+five-hit flurry and the hammer's meteor are the same twelve lines of data with
+different numbers. A move can also set `rake`, which swaps the one solid wedge
+a blade takes out for a set of thin parallel gouges — the claw marks, where the
+gaps between the scores are the whole effect.
 
 `dragAngle` solves for the angle that puts the far end of a weapon flat on the
-floor behind the figure. The greatsword and the warhammer blend into it the
-moment he starts walking: the tip finds the ground, throws sparks and grit along
-it, and the running attack rips it straight back up out of the floor.
+floor behind the figure. The greatsword never comes up off it at all — standing
+or walking, the point is down — and the warhammer ploughs along behind him the
+moment he moves. Dragging one along the ground throws sparks and grit; the
+running attack rips it straight back up out of the floor.
 
 ### Making a cut read as a cut (`src/game/weapon-base.ts`)
 
 Every edged weapon feeds a shared `SlashFx`: the crescent it just swung through
 stays hanging in the air for a fraction of a second, filled white with a heavy
 ink edge, opening and thinning as it fades. It is drawn *behind* the figure, so
-a swing that takes half the screen never hides the person who threw it.
+a swing that takes half the screen never hides the person who threw it. The
+claws feed it three at once at three different radii, which is how a rake ends
+up reading as a rake.
 
 The blades themselves hang off the swing rather than the aim. `gripAt` places
 the hands around the *blade* angle, so the arms lead the sword around and the
-whole body follows the weight; the katana blends between a guard grip at rest
-and a hilt grip mid-cut. Each combo step carries its own timing — coil, an
+whole body follows the weight; every melee weapon blends between its resting
+grip and a hilt grip mid-cut. Each combo step carries its own timing — coil, an
 almost instantaneous strike, then a long recovery — and retunes the next step's
 animation length as it fires, which is what lets three cuts of different weights
 chain out of one held button.
@@ -449,6 +455,16 @@ clean through the whole thicket.
 Charging in mid-air latches a `hover` stance: the fall stops dead, the legs fold
 up, and the beam is fired from a slow climb. When the power lets go, so does the
 float.
+
+### Flight (`'fly'`, `src/game/stickman.ts`)
+
+The mecha asks for a different stance again, and it is not a hover holding him
+up while he does something else — it is actually flying. The moment his feet
+leave the floor `flyT` blends in, gravity all but disappears and the jump key
+stops being a jump: held it climbs, crouch dives, and letting go of both leaves
+him sinking gently rather than hanging in the air. The legs trail and lead the
+climb, the arms sweep back out of the way of them, and swapping to anything
+else in mid-air hands him straight back to gravity.
 
 ### The hand-drawn look (`src/core/sketch.ts`)
 
@@ -518,8 +534,10 @@ src/
     stickman.ts        procedural skeleton, gaits, stances and afterimages
     weapon-base.ts     the Weapon contract, grips, slash crescents, hitscan
     melee.ts           the melee combo framework (four chains per weapon)
-    weapons.ts         the twelve weapons
-    projectiles.ts     rockets, shells, blasts
+    weapons.ts         eight of the twelve weapons, and the arsenal order
+    weapons-video.ts   the four lifted straight out of the source animation:
+                       claws, missile pods, arcane staff, mecha
+    projectiles.ts     rockets, shells, guided missiles, bolts, blasts
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel

@@ -44,6 +44,12 @@ export interface MeleeMove {
   stanceOut?: number;
   /** A second bite mirrored about the aim: the X cut. */
   cross?: boolean;
+  /**
+   * Claws. Instead of one solid wedge the sweep leaves this many separate
+   * parallel gouges, which is the whole reading of a raking hit: the wall is
+   * not cut through, it is scored, and you can count the marks.
+   */
+  rake?: number;
   /** Craters instead of slicing - the hammer. */
   blast?: Blast;
   /** Bigger recovery, louder hit, more screen. */
@@ -102,7 +108,6 @@ export abstract class MeleeWeapon extends Weapon {
 
   private chain = 0;
   private idle = 0;
-  private heldFor = 0;
   private struck = false;
 
   override onEquip(): void {
@@ -110,7 +115,6 @@ export abstract class MeleeWeapon extends Weapon {
     this.chain = 0;
     this.combo = 0;
     this.mode = 'ground';
-    this.heldFor = 0;
     this.move = this.sets.ground[0] ?? FALLBACK;
   }
 
@@ -177,9 +181,7 @@ export abstract class MeleeWeapon extends Weapon {
   /** Called every frame the weapon is at rest; where weapon idles live. */
   protected idleTick(_ctx: WeaponCtx): void {}
 
-  protected override tick(ctx: WeaponCtx, held: boolean): void {
-    this.heldFor = held ? this.heldFor + ctx.dt : 0;
-
+  protected override tick(ctx: WeaponCtx, _held: boolean): void {
     if (this.anim <= 0) {
       this.idle += ctx.dt;
       if (this.idle > COMBO_WINDOW && (this.chain !== 0 || this.combo !== 0)) {
@@ -236,10 +238,27 @@ export abstract class MeleeWeapon extends Weapon {
       // stone the edge gets, which is the only thing that should separate a
       // greatsword from a jab.
       const bite = thick * 0.22;
-      const cut = ctx.terrain.carveSector(h.x, h.y, 0, reach, from, to, bite);
-      removed = cut.removed;
-      // Fragments the cut stranded and knocked loose fall as real debris.
-      for (const p of cut.edges.slice(0, 5)) ctx.particles.debris(p.x, p.y, 1, 190, a + Math.PI, 2.2);
+      if (mv.rake) {
+        // Claws: a handful of thin concentric arcs at different radii, so what
+        // is left in the masonry is a set of parallel scores rather than one
+        // missing wedge. The gaps between them are the effect.
+        const n = mv.rake;
+        const band = reach * 0.5;
+        const gouge = Math.max(4, band / (n * 2.1));
+        for (let i = 0; i < n; i++) {
+          const r0 = reach - band * (i / Math.max(1, n - 1)) - gouge;
+          const cut = ctx.terrain.carveSector(h.x, h.y, r0, r0 + gouge, from, to, bite * 1.5);
+          removed += cut.removed;
+          for (const p of cut.edges.slice(0, 2)) {
+            ctx.particles.debris(p.x, p.y, 1, 220, a + Math.PI, 2.2);
+          }
+        }
+      } else {
+        const cut = ctx.terrain.carveSector(h.x, h.y, 0, reach, from, to, bite);
+        removed = cut.removed;
+        // Fragments the cut stranded and knocked loose fall as real debris.
+        for (const p of cut.edges.slice(0, 5)) ctx.particles.debris(p.x, p.y, 1, 190, a + Math.PI, 2.2);
+      }
       if (mv.cross) {
         const from2 = a - mv.from * f, to2 = a - mv.to * f;
         removed += ctx.terrain.carveSector(h.x, h.y, 0, reach, from2, to2, bite).removed;
