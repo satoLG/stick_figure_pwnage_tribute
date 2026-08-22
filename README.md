@@ -130,16 +130,35 @@ certainly not worth being shoved across the room for.
 
 The scene is a fixed-size thing placed on a variable-size screen, not a thing
 stretched to fill it. The figure, the floor and the wall are all constants in
-world units — the wall is always 470 tall and 420 thick, four and a bit figures
-high — so a phone and an ultrawide get the same wall, the same run-up and the
-same length of game. What the screen shape decides is how much room there is
-*around* it: a tall screen gets more sky and a slightly deeper floor, never a
+world units — the wall is always 564 tall and 420 thick, better than four
+figures high — so a phone and an ultrawide get the same wall, the same run-up
+and the same length of game. What the screen shape decides is how much room
+there is *around* it: a tall screen gets more sky and a deeper floor, never a
 taller wall.
+
+Where in that leftover room the wall sits is the framing, and it is aimed
+rather than left to fall out: the floor is deepened until the wall's middle
+lands on the middle of the band under the HUD strip, capped so a very tall
+phone gets a wall sitting a little low instead of a quarter-screen of solid
+black along the bottom.
 
 A strip along the top belongs to the HUD — the meter, the cog, and whatever
 joins them later — and the scene is laid out underneath it, so nothing solid
 ever climbs into the readouts. It is white paper either way, so the two still
 read as one picture rather than a game with a bar bolted over it.
+
+## Starting a run
+
+The game gives exactly one instruction, and it gives it once. A run opens with
+**DESTROY THE WALL** being scribbled onto the paper a letter at a time, and an
+arrow dragged out from under it — a hair where it leaves the words, a wedge
+where it arrives — sweeping down and over into the masonry.
+
+The destruction meter is not there yet. Nobody needs a progress bar for
+progress they have not started making, and a run that opens with a HUD already
+in place reads as a game rather than a drawing. The first blow that actually
+lands on the wall is the starting gun: the cue lifts off the paper and the
+meter drops in from above to replace it.
 
 ## Installing it
 
@@ -170,7 +189,7 @@ assets are cached on first use.
 | 9 | `9` | Rocket tube | Arcing projectile, 62px crater |
 | 10 | `0` | Siege cannon | Hold to charge; the biggest crater and a shove backwards |
 | 11 | `-` | Pyro stream | Hold to melt the wall away gradually |
-| 12 | `=` | Pwnage beam | Gather an aura, then bore a wide channel clean through — in mid-air it holds him up while he fires |
+| 12 | `=` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
@@ -197,7 +216,10 @@ readback of pixel data in the hot path.
 Everything else is built on that primitive:
 
 - `carveBlob` — a circle whose radius wobbles, for craters and bullet holes
-- `carveCapsule` — for sword thrusts, bullet tunnels and the energy beam
+- `carveCapsule` — for sword thrusts, bullet tunnels and the energy beam, which
+  does not reach through the wall in a frame: every frame it finds the face it
+  is pressed against and pushes the hole a little further in, so a discharge
+  drills a shaft and a few of them get through
 - `carveArc` — a crescent, for sword swings
 
 **Only the wall breaks.** The floor is the stage the fight happens on: it keeps
@@ -208,9 +230,15 @@ starts perfectly straight and vertical — every notch in its face is one the
 player put there.
 
 Every carve is scaled by a single `DAMAGE_SCALE` constant before it touches the
-bitmap. It is the one knob for how tough the wall is: sustained fire from the
-rifle takes well over a minute to clear it, and the heavy weapons still have to
-be swung at the wall from arm's length to pay off.
+bitmap. It is the one knob for how tough the wall is, and it is set low on
+purpose. A wall that comes apart in seconds makes every weapon feel the same,
+because none of them has to be *used* — bare hands were levelling as much
+masonry per second as a rocket. Down at a tenth of that, one blow takes a bite
+you can see and no more, and the wall comes down the way the film does it: by
+being hit, over and over, faster and faster.
+
+Radii scale by the square root of the constant, so it stays a straight
+multiplier on *area removed* whatever shape does the removing.
 
 ### Filling any screen (`computeWorldSize`)
 
@@ -278,8 +306,17 @@ There is not a single keyframe. Every joint is solved each frame:
   whatever rubble is actually there, so the figure clambers over its own mess.
 - **Springs on everything** — lean, hip height, aim, recoil and landing squash
   are all exponentially damped, so states blend instead of snapping.
-- Coyote time, a jump buffer, variable jump height, an air somersault and
-  wall-jumping.
+- Coyote time, a jump buffer, variable jump height and an air somersault.
+- **Wall jumping** — jump while pressed against masonry and he coils both legs
+  onto it and springs off, with the air jumps handed back so a kick and a
+  somersault stack. The push away from the wall is deliberately tiny: enough to
+  leave it, small enough to steer straight back into it and take another, which
+  is what turns one kick into a climb up the whole face.
+- **Attacking in mid-air nearly stops the fall** — while a swing (or a wind-up)
+  is running off the ground, gravity drops to a trickle and the descent is
+  capped at a crawl, so a combo begun off a jump gets to play out up there
+  instead of being dumped on the floor halfway through. The beam's float still
+  outranks it: that one climbs, this one only falls slowly.
 
 ### Melee combos (`src/game/melee.ts`)
 
@@ -430,6 +467,7 @@ src/
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
+    cue.ts             the DESTROY THE WALL card and its arrow, written on
     touch.ts           the two floating sticks, weapon pad
     aim.ts             stick movement to an aim direction, per device
     settings-menu.ts   the cog, and the card it opens

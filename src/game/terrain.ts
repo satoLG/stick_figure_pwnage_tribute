@@ -9,25 +9,35 @@ const FLOOR_THICKNESS = 124;
  * twice as long for it. The screen decides how much room there is around the
  * scene, never how big the scene itself is.
  */
-const WALL_H = 470;
+const WALL_H = 564;
 const WALL_W = 420;
 /**
  * What happens to height left over once the wall and the floor have had
- * theirs: a third of it deepens the floor, up to a limit, and the rest becomes
- * sky. The limit is the point of it - on a tall phone an even split would put
- * the ground line near the bottom edge under a quarter-screen of solid black,
- * where white paper with the figure standing on it reads far better.
+ * theirs. It all goes into deepening the floor, which is what pushes the wall
+ * up the picture, until the wall sits centred in the space under the HUD strip
+ * - the framing the whole scene is composed for.
+ *
+ * The cap is the limit on that: past about a quarter of the screen the floor
+ * stops reading as ground and starts reading as a black band along the bottom,
+ * so on a very tall phone the wall settles a little low rather than the picture
+ * turning into a slab. `FLOOR_EXTRA_MIN` keeps the old behaviour on the short
+ * screens where a share of the height is all there is to give.
  */
-const FLOOR_SHARE = 0.35;
-const FLOOR_EXTRA_MAX = 110;
+const FLOOR_MAX_SHARE = 0.26;
+const FLOOR_EXTRA_MIN = 110;
 
 /**
  * Every carve is scaled by this before it touches the bitmap. It is the single
  * knob for how tough the wall is: at 1 a rifle magazine opens a doorway, and
- * the whole thing is gone in well under a minute. Well below 1 the wall reads
- * as real masonry - you can see each hit land, but you have to keep working.
+ * the whole thing is gone in well under a minute.
+ *
+ * A tenth of that is the point of the game. Bare hands were levelling as much
+ * masonry per second as a rocket, which made every weapon feel the same and
+ * the wall feel like paper. Down here a single blow takes a bite you can see
+ * and no more, and the wall comes down the way the film does it - by hitting
+ * it, over and over, faster and faster.
  */
-const DAMAGE_SCALE = 1.05;
+const DAMAGE_SCALE = 0.105;
 /**
  * Radii scale by the square root of it, so the knob above stays a straight
  * multiplier on *area removed* whatever shape does the removing.
@@ -55,13 +65,13 @@ export interface WorldSize { w: number; h: number; }
 export function computeWorldSize(vw: number, vh: number): WorldSize {
   const aspect = Math.max(0.25, Math.min(4, (vw || 1) / (vh || 1)));
   let w: number, h: number;
-  if (aspect >= 1) { h = 720; w = h * aspect; }
-  else { w = 640; h = w / aspect; }
+  if (aspect >= 1) { h = 864; w = h * aspect; }
+  else { w = 768; h = w / aspect; }
   // Each clamp re-derives the other side from the aspect, so it is preserved.
-  if (w < 820) { w = 820; h = w / aspect; }
-  if (w > 2200) { w = 2200; h = w / aspect; }
-  if (h < 700) { h = 700; w = h * aspect; }
-  if (h > 1500) { h = 1500; w = h * aspect; }
+  if (w < 984) { w = 984; h = w / aspect; }
+  if (w > 2640) { w = 2640; h = w / aspect; }
+  if (h < 840) { h = 840; w = h * aspect; }
+  if (h > 1800) { h = 1800; w = h * aspect; }
   return { w: Math.round(w), h: Math.round(h) };
 }
 
@@ -139,6 +149,11 @@ export class Terrain {
    * thing stretched to fill it. The wall is always the same wall; whatever
    * height is left over after the HUD strip becomes sky above it and a deeper
    * floor below, so it sits in much the same place whatever the screen shape.
+   *
+   * Where in that leftover it sits is the framing. The wall is aimed at the
+   * middle of the space under the HUD strip - the picture is composed around
+   * it, so it belongs in the middle of the picture - by deepening the floor
+   * until it gets there, as far as the cap allows.
    */
   private layout(): void {
     const room = Math.max(200, this.h - this.topGap - FLOOR_THICKNESS);
@@ -146,7 +161,12 @@ export class Terrain {
     // HUD strip is what gives way first.
     const wallH = Math.min(WALL_H, room);
     const slack = room - wallH;
-    const floorExtra = Math.min(slack * FLOOR_SHARE, FLOOR_EXTRA_MAX);
+    // Exactly the extra floor that would put the wall's middle on the middle of
+    // the visible band. Negative on a short screen, where the wall is already
+    // as low as it can go and the floor stays a plain slab.
+    const centred = this.h - FLOOR_THICKNESS - (this.topGap + this.h) / 2 - wallH / 2;
+    const cap = Math.max(FLOOR_EXTRA_MIN, this.h * FLOOR_MAX_SHARE - FLOOR_THICKNESS);
+    const floorExtra = clamp(centred, 0, Math.min(slack, cap));
     this.wallTop = Math.round(Math.max(0, this.h - FLOOR_THICKNESS - floorExtra - wallH));
     this.groundTop = this.wallTop + wallH;
     this.wallX = Math.max(this.w * 0.34, this.w - WALL_W);

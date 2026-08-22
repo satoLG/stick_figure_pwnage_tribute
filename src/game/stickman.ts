@@ -36,25 +36,54 @@ const DEG = Math.PI / 180;
  * tilt runs, and the last quarter of the travel is a flat-out sprint - which is
  * also what SHIFT gives the keyboard, since a key has no in-between.
  */
-const WALK_SPEED = 130;
-const RUN_SPEED = 340;
-const SPRINT_SPEED = 486;
+const WALK_SPEED = 260;
+const RUN_SPEED = 680;
+const SPRINT_SPEED = 972;
 /** Deflection at which the gait reads as a full run; past it, a sprint. */
 export const RUN_PUSH = 0.72;
 /** Ground speed past which an attack comes out of a run instead of a stand. */
-export const RUN_ATTACK_SPEED = 215;
+export const RUN_ATTACK_SPEED = 430;
 
-const AIR_SPEED = 330;
-const ACCEL = 2900;
-const AIR_ACCEL = 1700;
-const FRICTION = 3400;
+const AIR_SPEED = 660;
+/**
+ * Acceleration scales with the top speeds, so twice as fast is twice as fast
+ * and not twice as long getting there: the figure should still snap to speed
+ * inside a couple of frames, which is what makes him feel light on his feet.
+ */
+const ACCEL = 5800;
+const AIR_ACCEL = 3400;
+const FRICTION = 6800;
 const GRAVITY = 1980;
-const JUMP_V = 620;
-const AIR_JUMP_V = 560;
+/**
+ * Twice the jump height, which is the square root of two on the take-off
+ * speed - not double. Doubling the speed would quadruple the height, and
+ * halving gravity instead would have him hanging in the air like a balloon;
+ * this way he leaves the floor harder and falls at exactly the same rate.
+ */
+const JUMP_V = 877;
+const AIR_JUMP_V = 792;
+/** Kicking off a wall: a shade more lift than a standing jump, since the wall gives. */
+const WALL_JUMP_V = 900;
+/**
+ * And barely anything sideways. A wall jump that flings him across the room
+ * ends the climb after one; a nudge lets him drift off, turn back into the
+ * wall and take another, and another, which is the whole point of the move.
+ */
+const WALL_JUMP_PUSH = 165;
+/** How long the coil-and-shove drawing runs for after a kick off the wall. */
+const WALL_KICK_TIME = 0.34;
 const MAX_FALL = 1250;
 const COYOTE = 0.11;
 const JUMP_BUFFER = 0.13;
 const WALL_SLIDE_V = 190;
+/**
+ * How slowly he sinks while swinging in mid-air. The beam's float actually
+ * climbs; this is a shade less than that - a long hanging drop rather than a
+ * hover, which is what turns a frantic ground combo into an airborne one.
+ */
+const AIR_ATTACK_FALL_V = 105;
+/** Gravity left over while an attack is holding him up. */
+const AIR_ATTACK_GRAVITY = 0.14;
 /**
  * How far the containment pass will lift feet that have ended up inside the
  * ground. About one step up: enough for a floor carved out from under him or a
@@ -63,7 +92,7 @@ const WALL_SLIDE_V = 190;
  */
 const SETTLE = 26;
 /** Ground covered per half-stride. Short and quick walking, long at a sprint. */
-const STRIDE_WALK = 33, STRIDE_RUN = 56, STRIDE_SPRINT = 74;
+const STRIDE_WALK = 50, STRIDE_RUN = 84, STRIDE_SPRINT = 112;
 
 /**
  * A gait is written as poses, not as a formula: each key says where the thigh
@@ -171,6 +200,14 @@ export class Stickman {
   private jumpBuffer = 0;
   private airJumps = 1;
   private maxAirJumps = 1;
+  /** Counts down through a wall kick; drives the pose that sells the push-off. */
+  private wallKick = 0;
+  /** Which side the wall he kicked off was on, so the pose knows where to shove. */
+  private wallKickDir = 0;
+  /** Seconds of attack still holding him up in the air; topped up while swinging. */
+  private airStallT = 0;
+  /** Smoothed 0..1 blend of that, so the drop eases rather than snaps. */
+  private stallT = 0;
 
   // --- animation state (all spring-damped, nothing ever snaps) --------------
   gait = 0;
@@ -226,6 +263,8 @@ export class Stickman {
   /** Set by game.ts when a landing should make noise. */
   justLanded = false;
   justJumped = false;
+  /** True on the frame he kicks off a wall, so the game can scuff it. */
+  justWallJumped = false;
 
   pose: Pose = blankPose();
 
@@ -245,6 +284,9 @@ export class Stickman {
     this.stanceW = 0;
     this.hoverT = 0;
     this.slideT = 0;
+    this.wallKick = 0;
+    this.airStallT = 0;
+    this.stallT = 0;
     this.ghosts.length = 0;
     this.ghostBurst = 0;
     this.sprintT = 0;
@@ -256,8 +298,11 @@ export class Stickman {
   update(dt: number, terrain: Terrain, ctrl: Controls, aimTarget: Vec2): void {
     this.justLanded = false;
     this.justJumped = false;
+    this.justWallJumped = false;
     this.justStepped = false;
     this.slideT = Math.max(0, this.slideT - dt);
+    this.wallKick = Math.max(0, this.wallKick - dt);
+    this.airStallT = Math.max(0, this.airStallT - dt);
 
     // `axis` is analog: a half-tilted thumb (or a keyboard without SHIFT)
     // walks, the far end of the travel sprints.
@@ -300,13 +345,25 @@ export class Stickman {
         this.justJumped = true;
         this.squash = -0.5;
       } else if (this.onWall !== 0) {
-        // Wall jump: kick away from the surface, the classic stick-fight move.
-        this.vel.y = -JUMP_V * 0.94;
-        this.vel.x = -this.onWall * RUN_SPEED * 1.05;
+        // Wall jump: he plants both feet on the masonry and springs off it,
+        // which is nearly all lift and only a nudge of push. The nudge is
+        // deliberately small - see WALL_JUMP_PUSH - so he can steer straight
+        // back into the wall and take another one, and climb the whole face.
+        this.vel.y = -WALL_JUMP_V;
+        this.vel.x = -this.onWall * WALL_JUMP_PUSH;
         this.jumpBuffer = 0;
+        // The air jumps come back with it, so a kick and a somersault stack.
         this.airJumps = this.maxAirJumps;
         this.justJumped = true;
-        this.flipSpin = -this.onWall * TAU;
+        this.justWallJumped = true;
+        this.wallKick = WALL_KICK_TIME;
+        this.wallKickDir = this.onWall;
+        this.onWall = 0;
+        // A tip away from the wall, not a somersault: the coil and the shove
+        // are the drawing here, and a spin would bury them.
+        this.flipSpin = -this.wallKickDir * TAU * 0.12;
+        this.squash = -0.55;
+        this.addGhostBurst(0.22);
       } else if (this.airJumps > 0) {
         this.airJumps--;
         this.vel.y = -AIR_JUMP_V;
@@ -329,9 +386,19 @@ export class Stickman {
       const bob = -34 + Math.sin(this.breathe * 1.7) * 22;
       this.vel.y = damp(this.vel.y, bob, 9 * this.hoverT, dt);
       this.flipSpin *= Math.exp(-9 * dt);
+      // The beam's float outranks the swing float; let the latter ease out.
+      this.stallT = damp(this.stallT, 0, 7, dt);
     } else {
-      const g = this.vel.y < 0 ? GRAVITY * 0.86 : GRAVITY;
+      // Swinging in mid-air all but takes the floor away: gravity drops to a
+      // trickle and the fall is capped at a crawl, so a combo started off a
+      // jump gets to finish in the air instead of being cut short by the floor.
+      const stalling = this.airStallT > 0 && !this.onGround;
+      this.stallT = damp(this.stallT, stalling ? 1 : 0, stalling ? 16 : 7, dt);
+      const g = (this.vel.y < 0 ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, this.stallT);
       this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
+      if (this.stallT > 0.01 && this.vel.y > 0) {
+        this.vel.y = Math.min(this.vel.y, lerp(MAX_FALL, AIR_ATTACK_FALL_V, this.stallT));
+      }
     }
 
     if (this.onWall !== 0 && this.vel.y > 0 && Math.sign(dir) === this.onWall && push > 0.3) {
@@ -566,6 +633,8 @@ export class Stickman {
   }
 
   get hovering(): number { return this.hoverT; }
+  /** Which side the wall he last kicked off was on: -1 left, +1 right. */
+  get wallKickSide(): number { return this.wallKickDir; }
   get stanceBlend(): number { return this.stanceW; }
 
   /** A short burst of motion-blur afterimages, for the big swings. */
@@ -597,6 +666,16 @@ export class Stickman {
   /** Cuts ground friction for a moment: a committed step becomes a slide. */
   slide(seconds: number): void {
     this.slideT = Math.max(this.slideT, seconds);
+  }
+
+  /**
+   * "Something is swinging up here." The game tops this up every frame an
+   * attack is running in mid-air, and the fall all but stops while it does.
+   * A short window rather than a flag, so the float carries a little past the
+   * last frame of the swing instead of dropping him the instant it ends.
+   */
+  stallFall(seconds: number): void {
+    this.airStallT = Math.max(this.airStallT, seconds);
   }
 
   // ----------------------------------------------------------- animation ---
@@ -839,6 +918,22 @@ export class Stickman {
   private legKey(leg: number, front: boolean, power: number): LegKey {
     if (!this.onGround) {
       const rise = clamp(-this.vel.y / 620, -1, 1);
+      // Kicking off a wall: both legs coiled hard against the masonry on the
+      // first frames, then driving out straight as he leaves it. That snap
+      // from folded to extended *is* the push - it is what says the wall gave
+      // him the height rather than his hanging in the air deciding to rise.
+      if (this.wallKick > 0) {
+        const k = this.wallKick / WALL_KICK_TIME;      // 1 -> 0 across the kick
+        const drive = 1 - k;                            // 0 -> 1 as he extends
+        // The wall was behind him or in front of him; the legs point at it.
+        const toWall = this.wallKickDir * this.facing;
+        return {
+          u: 0,
+          thigh: lerp(74, 18, drive) * toWall * (front ? 1 : 0.55),
+          knee: lerp(front ? 122 : 96, front ? 16 : 62, drive),
+          hip: 0,
+        };
+      }
       // Mid-somersault he pulls into a ball. Nobody flips with straight legs,
       // and the tuck is what makes the rotation read as a rotation.
       const spin = clamp(Math.abs(this.flipSpin) / 3, 0, 1);
@@ -894,6 +989,14 @@ export class Stickman {
       // clamp in tight around the knees through a somersault.
       upper = lerp((front ? 1 : -1) * (26 + rise * 34) - rise * 26 + this.hoverT * 30, 52, spin);
       bend = lerp(52 + Math.abs(rise) * 26, 132, spin);
+      if (this.wallKick > 0) {
+        // One arm reaches back at the wall he is leaving, the other is flung
+        // up ahead of him: the shape of somebody vaulting off a surface.
+        const k = this.wallKick / WALL_KICK_TIME;
+        const toWall = this.wallKickDir * this.facing;
+        upper = lerp(upper, (front ? -60 : 96) * (toWall >= 0 ? 1 : -1), k);
+        bend = lerp(bend, front ? 96 : 44, k);
+      }
     } else {
       const opp = sampleLeg((this.gait + (side === 1 ? Math.PI : 0)) / TAU);
       const travel = this.vel.x === 0 ? 1 : Math.sign(this.vel.x) * this.facing;
