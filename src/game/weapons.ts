@@ -718,7 +718,7 @@ export class Pistol extends Weapon {
     ctx.sm.applyRecoil(0.5, a, 20);
     ctx.shake(3.5);
     ctx.particles.streaks(muzzle.x, muzzle.y, 3, a, 0.3, 40);
-    this.hitscan(ctx, muzzle, a, 1400, 6.5, 26);
+    this.hitscan(ctx, muzzle, a, 1400, 6.5);
   }
 
   protected override tick(ctx: WeaponCtx): void {
@@ -778,7 +778,7 @@ export class Rifle extends Weapon {
     ctx.shake(2.6);
     // Ejected brass.
     ctx.particles.sparks(muzzle.x - Math.cos(a) * 34, muzzle.y - Math.sin(a) * 34, 1, 150, -Math.PI / 2 + rand(-0.5, 0.5), 0.6);
-    this.hitscan(ctx, muzzle, a, 1500, 5.6, 30);
+    this.hitscan(ctx, muzzle, a, 1500, 5.6);
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
@@ -843,7 +843,7 @@ export class Shotgun extends Weapon {
     ctx.sm.applyRecoil(1.1, base, 260);
     for (let i = 0; i < 11; i++) {
       const a = base + rand(-1, 1) * 0.17;
-      this.hitscan(ctx, muzzle, a, 700, 6.8, 20);
+      this.hitscan(ctx, muzzle, a, 700, 6.8);
     }
     ctx.particles.smoke(muzzle.x, muzzle.y, 5, 8);
     ctx.particles.streaks(muzzle.x, muzzle.y, 9, base, 0.5, 60);
@@ -1295,12 +1295,9 @@ export class EnergyBeam extends Weapon {
     this.beamAngle += d * Math.min(1, ctx.dt * 6);
 
     const origin = grip(ctx, 44);
-    // Wide enough that the shaft it leaves matches the column you can see. It
-    // is the one weapon whose damage is not simply the global scale applied to
-    // what it used to do: it no longer reaches the far side of the world in a
-    // frame, so it gets its length back as width, and a beam that draws a
-    // sixty-unit pillar has no business boring a scratch.
-    const radius = (58 * this.power) * (0.45 + k * 0.55);
+    // Wide enough that the shaft it leaves matches the column you can see: a
+    // beam that draws a sixty-unit pillar has no business boring a scratch.
+    const radius = (42 * this.power) * (0.45 + k * 0.55);
     const a = this.beamAngle;
     const ca = Math.cos(a), sa = Math.sin(a);
 
@@ -1309,15 +1306,21 @@ export class EnergyBeam extends Weapon {
     // further in, so a discharge drills a shaft rather than opening a doorway
     // in one flash. Hold it on one spot, or come back with a second charge,
     // and it will get all the way through; it just does not do it at once.
-    const front = ctx.terrain.raycast(origin.x, origin.y, ca, sa, BEAM_RANGE, 6);
+    const front = ctx.terrain.strikePoint(origin.x, origin.y, ca, sa, BEAM_RANGE, 6);
+    const bore = BEAM_BORE * ctx.dt * this.power;
     const reach = front
-      ? Math.hypot(front.x - origin.x, front.y - origin.y) + BEAM_BORE * ctx.dt * this.power
+      ? Math.hypot(front.x - origin.x, front.y - origin.y) + bore + radius
       : BEAM_RANGE;
     this.tip = Math.min(BEAM_RANGE, reach);
+    // The capsule is only the beam's reach; how much of it comes off is the
+    // bore rate, in world units of stone a second. Measuring it in time rather
+    // than in polygon keeps it identical at fifteen frames a second and at
+    // sixty, and keeps the beam eating forward from the face it is leaning on
+    // instead of appearing at the far end of its own column.
     ctx.terrain.carveCapsule(
       origin.x, origin.y,
       origin.x + ca * this.tip, origin.y + sa * this.tip,
-      radius, 0.16,
+      radius, 0.16, bore,
     );
     // Floating, the recoil pushes him rather than his feet, so it is halved.
     ctx.sm.applyRecoil(0.5, a, 260 * ctx.dt * this.power * (this.airborne ? 0.5 : 1));

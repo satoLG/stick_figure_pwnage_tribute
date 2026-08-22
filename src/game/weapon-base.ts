@@ -255,9 +255,9 @@ export abstract class Weapon {
    * frame the trigger goes means the damage appears ahead of its own tracer,
    * which reads as the wall breaking by itself.
    */
-  protected hitscan(ctx: WeaponCtx, from: Vec2, angle: number, range: number, holeR: number, depth: number): boolean {
+  protected hitscan(ctx: WeaponCtx, from: Vec2, angle: number, range: number, holeR: number): boolean {
     const ca = Math.cos(angle), sa = Math.sin(angle);
-    const hit = ctx.terrain.raycast(from.x, from.y, ca, sa, range, 3);
+    const hit = ctx.terrain.strikePoint(from.x, from.y, ca, sa, range, 3);
     const end = hit ?? { x: from.x + ca * range, y: from.y + sa * range };
     const speed = 3600;
     ctx.particles.tracer(from.x, from.y, end.x, end.y, speed, clamp(holeR / 10, 0.4, 1.6));
@@ -265,9 +265,11 @@ export abstract class Weapon {
     const flight = Math.hypot(end.x - from.x, end.y - from.y) / speed;
     const terrain = ctx.terrain;
     ctx.after(flight, () => {
-      terrain.carveBlob(hit.x, hit.y, holeR, 0.34, 14);
-      // The tunnel behind the entry wound is what makes repeated shots eat through.
-      terrain.carveCapsule(hit.x, hit.y, hit.x + ca * depth, hit.y + sa * depth, holeR * 0.72, 0.3);
+      // Entry wound plus the spall around it: one round bite, reaching about
+      // as far in as it is wide. A round is small enough that "shallow" comes
+      // out on its own - what it must not do is punch a needle straight
+      // through and leave the face it came in by standing.
+      terrain.carveBlob(hit.x, hit.y, holeR * 1.9, 0.34, 14, holeR * 1.2);
       impact(ctx, hit.x, hit.y, angle, holeR / 34);
     });
     return true;

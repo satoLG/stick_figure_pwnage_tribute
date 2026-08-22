@@ -153,12 +153,19 @@ function ring(r: number, n: number, rot: number): Vec2[] {
 
 /** Shared crater shape used by every explosive: a main bowl plus ragged bites. */
 export function applyBlast(terrain: Terrain, x: number, y: number, blast: Blast): number {
-  let removed = terrain.carveBlob(x, y, blast.radius, 0.26, 26).removed;
+  // An explosion is the one thing that has any business getting *into* the
+  // wall rather than scuffing it: a swing takes a fifth of its own width off
+  // the face, a charge going off against the stone takes half its radius. It
+  // still cannot reach past what is in front of it - the crater eats forward
+  // from the face like everything else - it just eats a lot further per go,
+  // which is the whole reason to carry a rocket instead of your fists.
+  const dig = blast.radius * 0.5;
+  let removed = terrain.carveBlob(x, y, blast.radius, 0.26, 26, dig).removed;
   for (let i = 0; i < blast.bites; i++) {
     const a = (i / blast.bites) * TAU + Math.random() * 0.6;
     const d = blast.radius * (0.62 + Math.random() * 0.5);
     const r = blast.radius * (0.2 + Math.random() * 0.3);
-    removed += terrain.carveBlob(x + Math.cos(a) * d, y + Math.sin(a) * d, r, 0.4, 12).removed;
+    removed += terrain.carveBlob(x + Math.cos(a) * d, y + Math.sin(a) * d, r, 0.4, 12, dig * 0.7).removed;
   }
   return removed;
 }

@@ -221,19 +221,57 @@ black bitmap held in two representations that are always kept in lockstep:
   counting how much wall is left;
 - an offscreen canvas, which is what actually gets drawn to the screen.
 
-Both are modified through a single primitive, `carvePolygon`, which fills the
-*same* polygon into each — a scanline fill into the array, and a
-`destination-out` composite into the canvas. Because one shape drives both,
-what you see is always exactly what you collide with, and there is never a
-readback of pixel data in the hot path.
+Both are modified through a single primitive, `carvePolygon`, and whatever it
+takes out of the array it paints out of the canvas in the same pass. Because
+one decision drives both, what you see is always exactly what you collide with,
+and there is never a readback of pixel data in the hot path.
+
+**The polygon is a reach, not a stamp.** What actually comes off is only the
+part of it a blow could physically have got to: the carve starts from the open
+air, eats into the material it is touching, and stops a set number of pixels
+in. It is a breadth-first flood — every open cell in the working box is a
+starting point at depth zero, the bite spreads one layer at a time into wall
+the reach covers, and floor and un-reached masonry are simply never entered, so
+they shield whatever stands behind them.
+
+Two things fall out of that, and both matter more than any amount of tuning.
+
+*Nothing can be taken out of the middle of the wall while the face in front of
+it is left standing.* A swing that reaches past a slab now bites the slab; it
+does not teleport through it and hollow out the inside. The order is always
+front first, and it holds by construction — a hole can only ever be opened onto
+air, and air is never given back, so every cavity in the wall stays connected
+to the outside for as long as the run lasts.
+
+*And a weak hit stays a shallow hit rather than becoming a narrow one.* Scaling
+radii down to make the wall tough had turned every blow into a needle: a
+hairline slot driven deep into the masonry, which reads as nothing and leaves
+the face standing while the inside goes. A weak hit is a **wide round bite that
+cannot reach far**, so radii sit near their nominal size (`BITE_WIDTH`) and the
+resistance lives entirely in the depth limit. Getting into the wall is the hard
+part; scuffing its face is not.
+
+Depth is what separates the weapons, too. A swing takes about a fifth of its
+own width off the face (`thick`), a bullet reaches about as far in as its hole
+is wide, a charge going off against the stone digs half its blast radius, and
+the beam eats forward at a rate in world units per second — measured in time,
+so it is the same at fifteen frames a second as at sixty.
+
+A barrel or a fist pressed flat against the wall ends up a few units *inside*
+the drawing, and a ray started there reports its hit deep in the stone with the
+face still standing in front of it — which, under the rule above, removed
+nothing at all. `strikePoint` backs such a line up to where it went in, so a
+point-blank shot lands on the surface the player was actually aiming at.
 
 Everything else is built on that primitive:
 
-- `carveBlob` — a circle whose radius wobbles, for craters and bullet holes
-- `carveCapsule` — for sword thrusts, bullet tunnels and the energy beam, which
-  does not reach through the wall in a frame: every frame it finds the face it
-  is pressed against and pushes the hole a little further in, so a discharge
-  drills a shaft and a few of them get through
+- `carveBlob` — a circle whose radius wobbles, for craters and bullet holes;
+  what lands is the shallow dish where it meets the surface, not a ball buried
+  in the stone
+- `carveCapsule` — for the energy beam, which does not reach through the wall
+  in a frame: every frame it finds the face it is pressed against and pushes
+  the hole a little further in, so a discharge drills a shaft and a few of them
+  get through
 - `carveArc` — a crescent, for sword swings
 
 **Only the wall breaks.** The floor is the stage the fight happens on: it keeps
@@ -243,16 +281,13 @@ the win counter cannot disagree about what is destructible. The wall itself
 starts perfectly straight and vertical — every notch in its face is one the
 player put there.
 
-Every carve is scaled by a single `DAMAGE_SCALE` constant before it touches the
-bitmap. It is the one knob for how tough the wall is, and it is set low on
-purpose. A wall that comes apart in seconds makes every weapon feel the same,
-because none of them has to be *used* — bare hands were levelling as much
-masonry per second as a rocket. Down at a tenth of that, one blow takes a bite
-you can see and no more, and the wall comes down the way the film does it: by
-being hit, over and over, faster and faster.
-
-Radii scale by the square root of the constant, so it stays a straight
-multiplier on *area removed* whatever shape does the removing.
+A wall that comes apart in seconds makes every weapon feel the same, because
+none of them has to be *used* — bare hands were levelling as much masonry per
+second as a rocket. Toughness is why `BITE_DEPTH` exists, and putting it in the
+depth rather than the width is what keeps a tough wall from turning every blow
+into a scratch: the wall comes down the way the film does it, by being hit over
+and over, faster and faster, and each blow visibly takes something off the
+face.
 
 ### Filling any screen (`computeWorldSize`)
 
@@ -331,6 +366,13 @@ There is not a single keyframe. Every joint is solved each frame:
   capped at a crawl, so a combo begun off a jump gets to play out up there
   instead of being dumped on the floor halfway through. The beam's float still
   outranks it: that one climbs, this one only falls slowly.
+
+  It is a slower fall and never a bigger jump. Both the reduced gravity and the
+  reduced air speed apply on the way *down* only: the climb is the climb he
+  always had, the apex lands in exactly the same place, and because the descent
+  is stretched to about four times its length the air speed through it drops by
+  about as much — so a jump with a swing in it clears no more ground than the
+  same jump without one.
 
 ### Melee combos (`src/game/melee.ts`)
 

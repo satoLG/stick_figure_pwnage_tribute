@@ -84,6 +84,8 @@ const WALL_SLIDE_V = 190;
 const AIR_ATTACK_FALL_V = 105;
 /** Gravity left over while an attack is holding him up. */
 const AIR_ATTACK_GRAVITY = 0.14;
+/** What is left of his air speed through the hang, so it never becomes a glide. */
+const AIR_ATTACK_DRIFT = 0.26;
 /**
  * How far the containment pass will lift feet that have ended up inside the
  * ground. About one step up: enough for a floor carved out from under him or a
@@ -329,7 +331,7 @@ export class Stickman {
       const f = FRICTION * (this.slideT > 0 ? 0.1 : 1) * dt;
       this.vel.x = Math.abs(this.vel.x) <= f ? 0 : this.vel.x - Math.sign(this.vel.x) * f;
     } else {
-      this.vel.x *= Math.exp(-(0.9 + this.hoverT * 5) * dt);
+      this.vel.x *= Math.exp(-(0.9 + this.hoverT * 5 + this.stallT * 2.2) * dt);
     }
 
     // --- jumping, with coyote time and an input buffer ---------------------
@@ -394,10 +396,17 @@ export class Stickman {
       // jump gets to finish in the air instead of being cut short by the floor.
       const stalling = this.airStallT > 0 && !this.onGround;
       this.stallT = damp(this.stallT, stalling ? 1 : 0, stalling ? 16 : 7, dt);
-      const g = (this.vel.y < 0 ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, this.stallT);
+      // On the way down only. Cutting gravity while he is still rising made an
+      // attack thrown at the start of a jump carry him up past the top of the
+      // jump itself, drifting on the slow motion - and this is a slower fall,
+      // never a bigger jump. The climb is exactly the climb he always had; the
+      // apex lands in exactly the same place; only what happens after differs.
+      const rising = this.vel.y < 0;
+      const stall = rising ? 0 : this.stallT;
+      const g = (rising ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, stall);
       this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
-      if (this.stallT > 0.01 && this.vel.y > 0) {
-        this.vel.y = Math.min(this.vel.y, lerp(MAX_FALL, AIR_ATTACK_FALL_V, this.stallT));
+      if (stall > 0.01 && this.vel.y > 0) {
+        this.vel.y = Math.min(this.vel.y, lerp(MAX_FALL, AIR_ATTACK_FALL_V, stall));
       }
     }
 
@@ -450,7 +459,16 @@ export class Stickman {
   /** Walk / run / sprint blended out of one analog magnitude. */
   private groundTopSpeed(push: number): number {
     const crouch = this.crouching ? 0.45 : 1;
-    if (!this.onGround) return AIR_SPEED * Math.max(0.4, push);
+    // On the way down, and only there. The climb is untouched - it is the same
+    // climb a jump without an attack in it gets, at the same speed - but the
+    // descent is stretched to about four times its length, so the air speed
+    // through it comes down by about as much. Otherwise the float would be a
+    // glide, and a jump with a swing in it would clear more ground than the
+    // same jump without one, which it must never do.
+    if (!this.onGround) {
+      const drift = this.vel.y < 0 ? 0 : this.stallT;
+      return AIR_SPEED * Math.max(0.4, push) * lerp(1, AIR_ATTACK_DRIFT, drift);
+    }
     const runT = smoothstep(clamp(push / RUN_PUSH, 0, 1));
     const sprintT = clamp((push - RUN_PUSH) / (1 - RUN_PUSH), 0, 1);
     const base = lerp(WALK_SPEED * 0.55, RUN_SPEED, runT) + (SPRINT_SPEED - RUN_SPEED) * sprintT;

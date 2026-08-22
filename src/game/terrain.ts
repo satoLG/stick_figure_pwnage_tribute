@@ -27,22 +27,22 @@ const FLOOR_MAX_SHARE = 0.26;
 const FLOOR_EXTRA_MIN = 110;
 
 /**
- * Every carve is scaled by this before it touches the bitmap. It is the single
- * knob for how tough the wall is: at 1 a rifle magazine opens a doorway, and
- * the whole thing is gone in well under a minute.
+ * The two knobs on how the wall comes apart, and they pull in different
+ * directions on purpose.
  *
- * A tenth of that is the point of the game. Bare hands were levelling as much
- * masonry per second as a rocket, which made every weapon feel the same and
- * the wall feel like paper. Down here a single blow takes a bite you can see
- * and no more, and the wall comes down the way the film does it - by hitting
- * it, over and over, faster and faster.
+ * A weak hit is not a *narrow* hit. Scaling every radius down to make the wall
+ * tough turned each blow into a needle: a hairline slot driven deep into the
+ * masonry, which reads as nothing at all and leaves the face standing while
+ * the inside is hollowed out. What a weak hit really is, is a *shallow* one -
+ * it takes a wide round bite out of the surface and cannot reach past it.
+ *
+ * So radii stay near their nominal size and the resistance lives entirely in
+ * how far a single bite may reach into intact material. Getting deep into the
+ * wall is the hard part; scuffing its face is not.
  */
-const DAMAGE_SCALE = 0.105;
-/**
- * Radii scale by the square root of it, so the knob above stays a straight
- * multiplier on *area removed* whatever shape does the removing.
- */
-const DAMAGE_SCALE_LEN = Math.sqrt(DAMAGE_SCALE);
+const BITE_WIDTH = 0.72;
+/** How deep one bite may reach into intact wall, as a fraction of its radius. */
+const BITE_DEPTH = 0.26;
 /**
  * Wall fragments smaller than this, once cut free of everything around them,
  * are not left hanging in the air: they fall away as debris and count as
@@ -323,6 +323,35 @@ export class Terrain {
     return null;
   }
 
+  /**
+   * Where a blow along a line actually lands, from a start that may itself be
+   * buried in the wall.
+   *
+   * A gun barrel or a fist pressed flat against the masonry ends up a few
+   * units *inside* the drawing - two drawings overlapping, not a man standing
+   * in stone - and a ray started there reports its hit deep in the material
+   * with the face still standing in front of it. Since nothing may be taken
+   * from behind an intact face, such a shot removed nothing at all. Backing up
+   * along the line to where it went in gives the surface the blow really
+   * struck, which is the one the player was aiming at.
+   */
+  strikePoint(x: number, y: number, dx: number, dy: number, maxDist: number, step = 3, back = 110): Vec2 | null {
+    let sx = x, sy = y;
+    if (this.solidAt(sx, sy)) {
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      let out = -1;
+      for (let d = 2; d <= back; d += 2) {
+        if (!this.solidAt(x - ux * d, y - uy * d)) { out = d; break; }
+      }
+      // Buried past arm's length in solid: there is no face to have hit.
+      if (out < 0) return null;
+      sx = x - ux * out; sy = y - uy * out;
+      maxDist += out;
+    }
+    return this.raycast(sx, sy, dx, dy, maxDist, step);
+  }
+
   /** Distance down to the first solid pixel, used to plant feet on rubble. */
   groundBelow(x: number, y: number, maxDist = 200): number {
     for (let d = 0; d < maxDist; d++) {
@@ -336,13 +365,29 @@ export class Terrain {
   /**
    * Removes a polygon from both the mask and the picture. This is the single
    * primitive every weapon is built on: craters are noisy circles, sword cuts
-   * are thin arcs, beams are long capsules.
+   * are wedges, beams are long capsules.
    *
-   * Only the wall is destructible. The floor is a fixed stage the fight happens
-   * on - it keeps its uneven surface, but nothing digs into it - so both the
-   * mask pass and the bitmap pass are confined to the wall's rectangle.
+   * The polygon is a *reach*, not a stamp. What actually comes off is only the
+   * part of it a blow could physically have got to: the carve starts from the
+   * open air, eats into the material it is touching, and stops `depth` pixels
+   * in. Two things fall out of that, and both of them matter more than any
+   * amount of tuning.
+   *
+   * Nothing can be taken out of the middle of the wall while the face in front
+   * of it is left standing. A swing that reaches past a slab of masonry now
+   * bites the slab; it does not teleport through it and hollow out the inside,
+   * which is what a plain polygon stamp did and what made a wall look eaten by
+   * moths. The order is always front first.
+   *
+   * And a weak hit stays a *shallow* hit rather than becoming a narrow one.
+   * `depth` is the whole of the wall's toughness: getting deep is hard, and
+   * scuffing a wide patch of the surface is not.
+   *
+   * Only the wall is destructible. The floor is a fixed stage the fight
+   * happens on, so it is never removed - and, being solid, it walls the bite
+   * off from below exactly like intact masonry does.
    */
-  carvePolygon(pts: readonly Vec2[]): CarveResult {
+  carvePolygon(pts: readonly Vec2[], depth = Infinity): CarveResult {
     const result: CarveResult = { removed: 0, edges: [] };
     if (pts.length < 3) return result;
 
@@ -358,12 +403,26 @@ export class Terrain {
     const zoneX = Math.max(0, Math.floor(this.wallX));
     const zoneY = Math.max(0, Math.floor(this.groundTop));
     if (maxX < zoneX || minX > this.w || maxY < 0 || minY > zoneY) return result;
-    const y0 = clamp(Math.floor(minY), 0, zoneY - 1);
-    const y1 = clamp(Math.ceil(maxY), 0, zoneY - 1);
 
-    // Scanline fill into the mask.
+    // The working box, with a cell of slack all round. It is allowed one
+    // column left of the wall's face on purpose: that open ground is the air
+    // the bite has to start from, and without it a pristine wall has no
+    // exposed surface anywhere inside the box to eat from.
+    const bx0 = clamp(Math.floor(minX) - 1, Math.max(0, zoneX - 1), this.w - 1);
+    const bx1 = clamp(Math.ceil(maxX) + 1, 0, this.w - 1);
+    const by0 = clamp(Math.floor(minY) - 1, 0, zoneY);
+    const by1 = clamp(Math.ceil(maxY) + 1, 0, zoneY);
+    if (bx1 <= bx0 || by1 <= by0) return result;
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+    const n = bw * bh;
+    const cells = this.scratch(n);
+    const dist = this.dists(n);
+    const queue = this.queue(n);
+    cells.fill(0, 0, n);
+
+    // --- 1. rasterise the reach ------------------------------------------
     const xs: number[] = [];
-    for (let y = y0; y <= y1; y++) {
+    for (let y = by0; y <= by1; y++) {
       const cy = y + 0.5;
       xs.length = 0;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -374,45 +433,102 @@ export class Terrain {
       }
       if (xs.length < 2) continue;
       xs.sort((p, q) => p - q);
-      const row = y * this.w;
-      for (let s = 0; s + 1 < xs.length; s += 2) {
-        const sx = clamp(Math.ceil(xs[s]), zoneX, this.w - 1);
-        const ex = clamp(Math.floor(xs[s + 1]), zoneX, this.w - 1);
-        for (let x = sx; x <= ex; x++) {
-          const idx = row + x;
-          if (this.isWall[idx] === 1) {
-            this.isWall[idx] = 0;
-            this.mask[idx] = 0;
-            this.wallLeft--;
-            result.removed++;
-            // Cheap sampling for debris spawn points.
-            if ((result.removed & 255) === 0) result.edges.push({ x, y });
-          }
-        }
+      const lrow = (y - by0) * bw;
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const sx = clamp(Math.ceil(xs[k]), bx0, bx1);
+        const ex = clamp(Math.floor(xs[k + 1]), bx0, bx1);
+        for (let x = sx; x <= ex; x++) cells[lrow + x - bx0] = 1;
       }
     }
 
-    // Same polygon punched out of the visible bitmap, clipped to the wall.
+    // --- 2. eat inwards from the air, and stop -----------------------------
+    //
+    // Every open cell in the box is a starting point at depth zero. From there
+    // the bite spreads only into wall that the reach covers, one layer at a
+    // time, and a layer past `depth` is out of reach however much of the
+    // polygon is sitting on it. Floor, and wall the polygon misses, are simply
+    // never entered - so they shield whatever is behind them.
+    const limit = depth >= 1e9 ? n : Math.max(1, Math.round(depth));
+    let head = 0, tail = 0;
+    for (let y = by0; y <= by1; y++) {
+      const wrow = y * this.w, lrow = (y - by0) * bw;
+      for (let x = bx0; x <= bx1; x++) {
+        const li = lrow + x - bx0;
+        if (this.mask[wrow + x] === 0) { dist[li] = 0; queue[tail++] = li; }
+        else dist[li] = -1;
+      }
+    }
+    while (head < tail) {
+      const i = queue[head++];
+      const d = dist[i];
+      if (d >= limit) continue;
+      const lx = i % bw, ly = (i / bw) | 0;
+      for (let k = 0; k < 4; k++) {
+        const nx = lx + (k === 0 ? 1 : k === 1 ? -1 : 0);
+        const ny = ly + (k === 2 ? 1 : k === 3 ? -1 : 0);
+        if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
+        const ni = ny * bw + nx;
+        if (dist[ni] !== -1 || cells[ni] !== 1) continue;
+        const wi = (by0 + ny) * this.w + bx0 + nx;
+        if (this.isWall[wi] !== 1) continue;
+        dist[ni] = d + 1;
+        queue[tail++] = ni;
+        // Taken. It does not become air for the rest of *this* bite: one blow
+        // reaches `depth` into the material it found, and no further.
+        cells[ni] = 2;
+        this.isWall[wi] = 0;
+        this.mask[wi] = 0;
+        this.wallLeft--;
+        result.removed++;
+        if ((result.removed & 255) === 0) result.edges.push({ x: bx0 + nx, y: by0 + ny });
+      }
+    }
+    if (result.removed === 0) return result;
+
+    // --- 3. the same cells punched out of the picture ----------------------
+    // Row by row, in runs, so what is drawn is exactly what the mask says was
+    // taken rather than the polygon the mask never fully honoured.
     const c = this.tctx;
     c.save();
-    c.beginPath();
-    c.rect(zoneX, 0, this.w - zoneX, zoneY);
-    c.clip();
     c.globalCompositeOperation = 'destination-out';
-    c.beginPath();
-    c.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) c.lineTo(pts[i].x, pts[i].y);
-    c.closePath();
-    c.fill();
+    c.fillStyle = '#000';
+    for (let ly = 0; ly < bh; ly++) {
+      const lrow = ly * bw;
+      let run = -1;
+      for (let lx = 0; lx <= bw; lx++) {
+        const on = lx < bw && cells[lrow + lx] === 2;
+        if (on && run < 0) run = lx;
+        else if (!on && run >= 0) {
+          c.fillRect(bx0 + run, by0 + ly, lx - run, 1);
+          run = -1;
+        }
+      }
+    }
     c.restore();
 
     // Anything the cut just stranded goes with it.
-    if (result.removed > 0) {
-      const swept = this.sweepSpecks(minX, minY, maxX, maxY);
-      result.removed += swept.removed;
-      for (const p of swept.pts) result.edges.push(p);
-    }
+    const swept = this.sweepSpecks(minX, minY, maxX, maxY);
+    result.removed += swept.removed;
+    for (const p of swept.pts) result.edges.push(p);
     return result;
+  }
+
+  // Scratch space for the carve above, grown on demand and reused: a bite a
+  // frame, every frame, is not the place to be handing the collector work.
+  private sCells: Uint8Array = new Uint8Array(0);
+  private sDist: Int32Array = new Int32Array(0);
+  private sQueue: Int32Array = new Int32Array(0);
+  private scratch(n: number): Uint8Array {
+    if (this.sCells.length < n) this.sCells = new Uint8Array(n);
+    return this.sCells;
+  }
+  private dists(n: number): Int32Array {
+    if (this.sDist.length < n) this.sDist = new Int32Array(n);
+    return this.sDist;
+  }
+  private queue(n: number): Int32Array {
+    if (this.sQueue.length < n) this.sQueue = new Int32Array(n);
+    return this.sQueue;
   }
 
   /**
@@ -492,28 +608,32 @@ export class Terrain {
     return { pts: fell, removed: swept };
   }
 
-  /** A crater: a circle whose radius wobbles, so nothing looks stamped. */
-  carveBlob(x: number, y: number, radius: number, roughness = 0.22, sides = 22): CarveResult {
+  /**
+   * A crater: a circle whose radius wobbles, so nothing looks stamped. What
+   * lands is the shallow dish where it meets the surface, not a ball buried in
+   * the stone - wide and round is what a blow looks like.
+   */
+  carveBlob(x: number, y: number, radius: number, roughness = 0.22, sides = 22, depth?: number): CarveResult {
     const pts: Vec2[] = [];
     const seed = (x * 13 + y * 7) | 0;
-    radius *= DAMAGE_SCALE_LEN;
+    radius *= BITE_WIDTH;
     for (let i = 0; i < sides; i++) {
       const a = (i / sides) * TAU;
       const r = radius * (1 + hashNoise(seed + i, i * 3) * roughness);
       pts.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r });
     }
-    return this.carvePolygon(pts);
+    return this.carvePolygon(pts, depth ?? radius * BITE_DEPTH);
   }
 
   /** A capsule between two points: sword cuts, bullet tunnels, energy beams. */
-  carveCapsule(ax: number, ay: number, bx: number, by: number, radius: number, roughness = 0.25): CarveResult {
+  carveCapsule(ax: number, ay: number, bx: number, by: number, radius: number, roughness = 0.25, depth?: number): CarveResult {
     const dx = bx - ax, dy = by - ay;
     const len = Math.hypot(dx, dy) || 1;
     const nx = -dy / len, ny = dx / len;
     const pts: Vec2[] = [];
     const steps = Math.max(4, Math.min(28, Math.round(len / 12)));
     const seed = (ax * 3 + ay * 11) | 0;
-    radius *= DAMAGE_SCALE_LEN;
+    radius *= BITE_WIDTH;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
       const r = radius * (1 + hashNoise(seed + i, 1) * roughness) * (0.75 + Math.sin(t * Math.PI) * 0.35);
@@ -524,7 +644,7 @@ export class Terrain {
       const r = radius * (1 + hashNoise(seed + i, 2) * roughness) * (0.75 + Math.sin(t * Math.PI) * 0.35);
       pts.push({ x: ax + dx * t - nx * r, y: ay + dy * t - ny * r });
     }
-    return this.carvePolygon(pts);
+    return this.carvePolygon(pts, depth ?? radius * BITE_DEPTH);
   }
 
   /**
@@ -536,9 +656,9 @@ export class Terrain {
    * teleported past it. Nothing can be cut at arm's length without the stuff in
    * front of it going first, so the sweep is a solid sector now.
    */
-  carveSector(cx: number, cy: number, inner: number, outer: number, from: number, to: number): CarveResult {
-    const r1 = outer * DAMAGE_SCALE_LEN;
-    const r0 = Math.max(0, inner * DAMAGE_SCALE_LEN);
+  carveSector(cx: number, cy: number, inner: number, outer: number, from: number, to: number, depth?: number): CarveResult {
+    const r1 = outer * BITE_WIDTH;
+    const r0 = Math.max(0, inner * BITE_WIDTH);
     const pts: Vec2[] = [];
     const steps = Math.max(6, Math.min(28, Math.round(Math.abs(to - from) * 9)));
     const seed = (cx * 5 + cy * 3) | 0;
@@ -556,7 +676,7 @@ export class Terrain {
         pts.push({ x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0 });
       }
     }
-    return this.carvePolygon(pts);
+    return this.carvePolygon(pts, depth ?? (r1 - r0) * BITE_DEPTH);
   }
 
   // -------------------------------------------------------------- status ---
