@@ -213,30 +213,36 @@ export abstract class MeleeWeapon extends Weapon {
     let at: Vec2 = { x: h.x + ca * reach, y: h.y + sa * reach };
 
     if (mv.kind === 'thrust') {
-      // Straight down the aim: a small mouth and a deep tunnel behind it.
-      const hit = ctx.terrain.raycast(h.x, h.y, ca, sa, reach + 24, 3);
+      // Straight down the aim, and into the face rather than through it: a
+      // punch drives a wide dent, it does not drill. The tunnel this used to
+      // bore behind the mouth was the one thing that let a jab reach past the
+      // masonry in front of it.
+      const hit = ctx.terrain.strikePoint(h.x, h.y, ca, sa, reach + 24, 3);
       if (hit) {
         at = hit;
-        removed = ctx.terrain.carveBlob(hit.x, hit.y, thick, 0.35, 18).removed;
-        removed += ctx.terrain.carveCapsule(
-          hit.x, hit.y, hit.x + ca * thick * 1.6, hit.y + sa * thick * 1.6, thick * 0.66, 0.3,
-        ).removed;
+        removed = ctx.terrain.carveBlob(hit.x, hit.y, thick * 1.5, 0.35, 18, thick * 0.4).removed;
       }
       ctx.particles.streaks(h.x + ca * 20, h.y + sa * 20, heavy ? 7 : 4, a, 0.5, 30 + thick * 2);
     } else {
       const from = a + mv.from * f;
       const to = a + mv.to * f;
-      // The blade sweeps everything between the hilt and the tip, so the cut is
-      // the whole wedge - it cannot bite past a slab of wall and leave it
-      // standing. `thick` scales how deep along the blade the cut reaches.
-      const bite = thick / 44;
-      const cut = ctx.terrain.carveSector(h.x, h.y, reach * (1 - bite), reach, from, to);
+      // A solid wedge from the hilt right out to the tip. It used to be an
+      // annulus - a crescent hanging out at the end of the blade - which is
+      // how a swing came to take a bite out of the middle of the wall and
+      // leave the slab in front of it standing. A blade sweeps everything
+      // between the hand and the point, and now so does this.
+      //
+      // `thick` no longer sets where the cut starts; it sets how far into the
+      // stone the edge gets, which is the only thing that should separate a
+      // greatsword from a jab.
+      const bite = thick * 0.22;
+      const cut = ctx.terrain.carveSector(h.x, h.y, 0, reach, from, to, bite);
       removed = cut.removed;
       // Fragments the cut stranded and knocked loose fall as real debris.
       for (const p of cut.edges.slice(0, 5)) ctx.particles.debris(p.x, p.y, 1, 190, a + Math.PI, 2.2);
       if (mv.cross) {
         const from2 = a - mv.from * f, to2 = a - mv.to * f;
-        removed += ctx.terrain.carveSector(h.x, h.y, reach * (1 - bite), reach, from2, to2).removed;
+        removed += ctx.terrain.carveSector(h.x, h.y, 0, reach, from2, to2, bite).removed;
       }
     }
 
@@ -246,9 +252,9 @@ export abstract class MeleeWeapon extends Weapon {
       // reach for the wall in front of him or the weapon does nothing at all.
       const ang = this.bladeAngle(ctx);
       const tip = { x: h.x + Math.cos(ang) * this.len, y: h.y + Math.sin(ang) * this.len };
-      const hitPoint = ctx.terrain.raycast(h.x, h.y, Math.cos(ang), Math.sin(ang), this.len + 26, 3)
-        ?? ctx.terrain.raycast(h.x, h.y, ca, sa, this.len + 70, 3)
-        ?? ctx.terrain.raycast(tip.x, tip.y, ca, sa, 90, 3);
+      const hitPoint = ctx.terrain.strikePoint(h.x, h.y, Math.cos(ang), Math.sin(ang), this.len + 26, 3)
+        ?? ctx.terrain.strikePoint(h.x, h.y, ca, sa, this.len + 70, 3)
+        ?? ctx.terrain.strikePoint(tip.x, tip.y, ca, sa, 90, 3);
       if (hitPoint) {
         at = hitPoint;
         removed += applyBlast(ctx.terrain, hitPoint.x, hitPoint.y, mv.blast);

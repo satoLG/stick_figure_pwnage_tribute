@@ -718,7 +718,7 @@ export class Pistol extends Weapon {
     ctx.sm.applyRecoil(0.5, a, 20);
     ctx.shake(3.5);
     ctx.particles.streaks(muzzle.x, muzzle.y, 3, a, 0.3, 40);
-    this.hitscan(ctx, muzzle, a, 1400, 6.5, 26);
+    this.hitscan(ctx, muzzle, a, 1400, 6.5);
   }
 
   protected override tick(ctx: WeaponCtx): void {
@@ -778,7 +778,7 @@ export class Rifle extends Weapon {
     ctx.shake(2.6);
     // Ejected brass.
     ctx.particles.sparks(muzzle.x - Math.cos(a) * 34, muzzle.y - Math.sin(a) * 34, 1, 150, -Math.PI / 2 + rand(-0.5, 0.5), 0.6);
-    this.hitscan(ctx, muzzle, a, 1500, 5.6, 30);
+    this.hitscan(ctx, muzzle, a, 1500, 5.6);
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
@@ -843,7 +843,7 @@ export class Shotgun extends Weapon {
     ctx.sm.applyRecoil(1.1, base, 260);
     for (let i = 0; i < 11; i++) {
       const a = base + rand(-1, 1) * 0.17;
-      this.hitscan(ctx, muzzle, a, 700, 6.8, 20);
+      this.hitscan(ctx, muzzle, a, 700, 6.8);
     }
     ctx.particles.smoke(muzzle.x, muzzle.y, 5, 8);
     ctx.particles.streaks(muzzle.x, muzzle.y, 9, base, 0.5, 60);
@@ -1178,6 +1178,15 @@ export class FireMagic extends Weapon {
 // ---------------------------------------------------------------------------
 // 12. ENERGY BEAM
 // ---------------------------------------------------------------------------
+/** How far down the firing line the beam is capable of reaching at all. */
+const BEAM_RANGE = 1600;
+/**
+ * World units of masonry the beam eats per second while pressed against it.
+ * The wall is a few hundred units thick, and one discharge lasts well under a
+ * second, so a single beam bores most of the way in and no further.
+ */
+const BEAM_BORE = 340;
+
 export class EnergyBeam extends Weapon {
   readonly id = 12;
   readonly name = 'PWNAGE BEAM';
@@ -1187,6 +1196,12 @@ export class EnergyBeam extends Weapon {
   private beam = 0;
   private beamMax = 0.62;
   private beamAngle = 0;
+  /**
+   * How far down the firing line the beam currently reaches. It stops where
+   * the wall does and eats forward from there, so the column you see is the
+   * column that is actually doing something.
+   */
+  private tip = BEAM_RANGE;
   private power = 1;
   private sfxTimer = 0;
   /** Latched when the charge begins: a charge started in the air stays in the air. */
@@ -1215,6 +1230,7 @@ export class EnergyBeam extends Weapon {
     this.beam = this.beamMax;
     this.power = 0.45 + power * 0.55;
     this.beamAngle = ctx.sm.pose.aim;
+    this.tip = BEAM_RANGE;
     this.thrust = 1;
     ctx.sfx('beam', 0.6);
     ctx.flash(0.55 * this.power);
@@ -1279,13 +1295,32 @@ export class EnergyBeam extends Weapon {
     this.beamAngle += d * Math.min(1, ctx.dt * 6);
 
     const origin = grip(ctx, 44);
-    const radius = (26 * this.power) * (0.45 + k * 0.55);
+    // Wide enough that the shaft it leaves matches the column you can see: a
+    // beam that draws a sixty-unit pillar has no business boring a scratch.
+    const radius = (42 * this.power) * (0.45 + k * 0.55);
     const a = this.beamAngle;
-    // Bore straight through: a capsule out to the far edge of the world.
+    const ca = Math.cos(a), sa = Math.sin(a);
+
+    // It does not go through the wall - it goes *into* it. Every frame the
+    // beam finds the face it is pressed against and pushes the hole a little
+    // further in, so a discharge drills a shaft rather than opening a doorway
+    // in one flash. Hold it on one spot, or come back with a second charge,
+    // and it will get all the way through; it just does not do it at once.
+    const front = ctx.terrain.strikePoint(origin.x, origin.y, ca, sa, BEAM_RANGE, 6);
+    const bore = BEAM_BORE * ctx.dt * this.power;
+    const reach = front
+      ? Math.hypot(front.x - origin.x, front.y - origin.y) + bore + radius
+      : BEAM_RANGE;
+    this.tip = Math.min(BEAM_RANGE, reach);
+    // The capsule is only the beam's reach; how much of it comes off is the
+    // bore rate, in world units of stone a second. Measuring it in time rather
+    // than in polygon keeps it identical at fifteen frames a second and at
+    // sixty, and keeps the beam eating forward from the face it is leaning on
+    // instead of appearing at the far end of its own column.
     ctx.terrain.carveCapsule(
       origin.x, origin.y,
-      origin.x + Math.cos(a) * 1600, origin.y + Math.sin(a) * 1600,
-      radius, 0.16,
+      origin.x + ca * this.tip, origin.y + sa * this.tip,
+      radius, 0.16, bore,
     );
     // Floating, the recoil pushes him rather than his feet, so it is halved.
     ctx.sm.applyRecoil(0.5, a, 260 * ctx.dt * this.power * (this.airborne ? 0.5 : 1));
@@ -1294,10 +1329,11 @@ export class EnergyBeam extends Weapon {
     this.sfxTimer -= ctx.dt;
     if (this.sfxTimer <= 0) { ctx.sfx('beam', rand(0.85, 1.2)); this.sfxTimer = 0.06; }
 
-    const hit = ctx.terrain.raycast(origin.x, origin.y, Math.cos(a), Math.sin(a), 1600, 6);
-    if (hit) {
-      ctx.particles.debris(hit.x, hit.y, 3, 320, a + Math.PI, 2.2);
-      ctx.particles.sparks(hit.x, hit.y, 4, 400, a + Math.PI, 2.4);
+    // Everything it is chewing through comes back out of the hole at you.
+    if (front) {
+      ctx.particles.debris(front.x, front.y, 3, 320, a + Math.PI, 2.2);
+      ctx.particles.sparks(front.x, front.y, 4, 400, a + Math.PI, 2.4);
+      ctx.particles.smoke(front.x, front.y, 1, radius * 0.7);
     }
   }
 
@@ -1457,7 +1493,11 @@ export class EnergyBeam extends Weapon {
       const r = (34 * this.power) * (0.5 + k * 0.5);
       const ca = Math.cos(a), sa = Math.sin(a);
       const nx = -sa, ny = ca;
-      const L = 1700;
+      // Drawn to where it actually reaches: the column ends against the wall
+      // with the far end packed into it, instead of a clean line out to the
+      // horizon that says nothing about what it is doing.
+      const L = Math.max(60, this.tip);
+      const blocked = this.tip < BEAM_RANGE - 1;
 
       const p = (d: number, off: number): Vec2 => ({ x: origin.x + ca * d + nx * off, y: origin.y + sa * d + ny * off });
       // Flared cone at the source widening to a straight column.
@@ -1496,6 +1536,19 @@ export class EnergyBeam extends Weapon {
       // Muzzle bloom.
       c.lineWidth = 3.4;
       sk.burst(origin.x, origin.y, 10, r * 1.1, r * 3.2, 3.4, TAU, 0, 808);
+
+      // And the same again where it is pressed into the wall: a white splash
+      // spraying back down the line, which is what "pushing" looks like.
+      if (blocked) {
+        const end = p(L, 0);
+        c.fillStyle = '#fff';
+        sk.polyPath(circlePts(end.x, end.y, r * 1.15, 11, ctx.time * 3), 2.6);
+        c.fill();
+        c.strokeStyle = '#000';
+        c.lineWidth = 3.4;
+        sk.burst(end.x, end.y, 11, r * 0.9, r * (2.4 + Math.abs(hashNoise(4, sk.boil)) * 1.4),
+          3.4, 2.5, a + Math.PI, 909);
+      }
     }
   }
 

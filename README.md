@@ -130,16 +130,49 @@ certainly not worth being shoved across the room for.
 
 The scene is a fixed-size thing placed on a variable-size screen, not a thing
 stretched to fill it. The figure, the floor and the wall are all constants in
-world units — the wall is always 470 tall and 420 thick, four and a bit figures
-high — so a phone and an ultrawide get the same wall, the same run-up and the
-same length of game. What the screen shape decides is how much room there is
-*around* it: a tall screen gets more sky and a slightly deeper floor, never a
+world units — the wall is always 564 tall and 420 thick, better than four
+figures high — so a phone and an ultrawide get the same wall, the same run-up
+and the same length of game. What the screen shape decides is how much room
+there is *around* it: a tall screen gets more sky and a deeper floor, never a
 taller wall.
+
+Where in that leftover room the wall sits is the framing, and it is aimed
+rather than left to fall out: the floor is deepened until the wall's middle
+lands on the middle of the band under the HUD strip, capped so a very tall
+phone gets a wall sitting a little low instead of a quarter-screen of solid
+black along the bottom.
 
 A strip along the top belongs to the HUD — the meter, the cog, and whatever
 joins them later — and the scene is laid out underneath it, so nothing solid
 ever climbs into the readouts. It is white paper either way, so the two still
 read as one picture rather than a game with a bar bolted over it.
+
+## Starting a run
+
+The game gives exactly one instruction, and it gives it once. A run opens with
+**DESTROY THE WALL** being written onto the paper — stroke by stroke, with a
+scrub of pencil riding along at the nib — and a short arrow hooked out from
+under it, a hair where it leaves the words and a wedge where it arrives, bowing
+right and down into the masonry.
+
+The letters are drawn, not typeset. Everything else on this paper is a line
+somebody made and every one of them wobbles, so an alphabet of capitals written
+out as polylines (`ui/handwriting.ts`) goes through the same boil as the figure
+and the craters, and is inked along its own length so it can be watched being
+written. Text set in a font can be jittered around — which is what `inkText`
+does, and which is right for a readout — but a *caption* in Trebuchet beside a
+hand-drawn stick figure reads as a caption bolted on afterwards.
+
+The note is pinned to the wall rather than to the screen. The words sit just
+off the wall's face whatever the screen shape, so the arrow is only ever a
+short hook into the stone instead of a banner in the middle of an ultrawide
+with a yard of arrow reaching across it.
+
+The destruction meter is not there yet. Nobody needs a progress bar for
+progress they have not started making, and a run that opens with a HUD already
+in place reads as a game rather than a drawing. The first blow that actually
+lands on the wall is the starting gun: the cue lifts off the paper and the
+meter drops in from above to replace it.
 
 ## Installing it
 
@@ -170,7 +203,7 @@ assets are cached on first use.
 | 9 | `9` | Rocket tube | Arcing projectile, 62px crater |
 | 10 | `0` | Siege cannon | Hold to charge; the biggest crater and a shove backwards |
 | 11 | `-` | Pyro stream | Hold to melt the wall away gradually |
-| 12 | `=` | Pwnage beam | Gather an aura, then bore a wide channel clean through — in mid-air it holds him up while he fires |
+| 12 | `=` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
@@ -188,16 +221,57 @@ black bitmap held in two representations that are always kept in lockstep:
   counting how much wall is left;
 - an offscreen canvas, which is what actually gets drawn to the screen.
 
-Both are modified through a single primitive, `carvePolygon`, which fills the
-*same* polygon into each — a scanline fill into the array, and a
-`destination-out` composite into the canvas. Because one shape drives both,
-what you see is always exactly what you collide with, and there is never a
-readback of pixel data in the hot path.
+Both are modified through a single primitive, `carvePolygon`, and whatever it
+takes out of the array it paints out of the canvas in the same pass. Because
+one decision drives both, what you see is always exactly what you collide with,
+and there is never a readback of pixel data in the hot path.
+
+**The polygon is a reach, not a stamp.** What actually comes off is only the
+part of it a blow could physically have got to: the carve starts from the open
+air, eats into the material it is touching, and stops a set number of pixels
+in. It is a breadth-first flood — every open cell in the working box is a
+starting point at depth zero, the bite spreads one layer at a time into wall
+the reach covers, and floor and un-reached masonry are simply never entered, so
+they shield whatever stands behind them.
+
+Two things fall out of that, and both matter more than any amount of tuning.
+
+*Nothing can be taken out of the middle of the wall while the face in front of
+it is left standing.* A swing that reaches past a slab now bites the slab; it
+does not teleport through it and hollow out the inside. The order is always
+front first, and it holds by construction — a hole can only ever be opened onto
+air, and air is never given back, so every cavity in the wall stays connected
+to the outside for as long as the run lasts.
+
+*And a weak hit stays a shallow hit rather than becoming a narrow one.* Scaling
+radii down to make the wall tough had turned every blow into a needle: a
+hairline slot driven deep into the masonry, which reads as nothing and leaves
+the face standing while the inside goes. A weak hit is a **wide round bite that
+cannot reach far**, so radii sit near their nominal size (`BITE_WIDTH`) and the
+resistance lives entirely in the depth limit. Getting into the wall is the hard
+part; scuffing its face is not.
+
+Depth is what separates the weapons, too. A swing takes about a fifth of its
+own width off the face (`thick`), a bullet reaches about as far in as its hole
+is wide, a charge going off against the stone digs half its blast radius, and
+the beam eats forward at a rate in world units per second — measured in time,
+so it is the same at fifteen frames a second as at sixty.
+
+A barrel or a fist pressed flat against the wall ends up a few units *inside*
+the drawing, and a ray started there reports its hit deep in the stone with the
+face still standing in front of it — which, under the rule above, removed
+nothing at all. `strikePoint` backs such a line up to where it went in, so a
+point-blank shot lands on the surface the player was actually aiming at.
 
 Everything else is built on that primitive:
 
-- `carveBlob` — a circle whose radius wobbles, for craters and bullet holes
-- `carveCapsule` — for sword thrusts, bullet tunnels and the energy beam
+- `carveBlob` — a circle whose radius wobbles, for craters and bullet holes;
+  what lands is the shallow dish where it meets the surface, not a ball buried
+  in the stone
+- `carveCapsule` — for the energy beam, which does not reach through the wall
+  in a frame: every frame it finds the face it is pressed against and pushes
+  the hole a little further in, so a discharge drills a shaft and a few of them
+  get through
 - `carveArc` — a crescent, for sword swings
 
 **Only the wall breaks.** The floor is the stage the fight happens on: it keeps
@@ -207,10 +281,13 @@ the win counter cannot disagree about what is destructible. The wall itself
 starts perfectly straight and vertical — every notch in its face is one the
 player put there.
 
-Every carve is scaled by a single `DAMAGE_SCALE` constant before it touches the
-bitmap. It is the one knob for how tough the wall is: sustained fire from the
-rifle takes well over a minute to clear it, and the heavy weapons still have to
-be swung at the wall from arm's length to pay off.
+A wall that comes apart in seconds makes every weapon feel the same, because
+none of them has to be *used* — bare hands were levelling as much masonry per
+second as a rocket. Toughness is why `BITE_DEPTH` exists, and putting it in the
+depth rather than the width is what keeps a tough wall from turning every blow
+into a scratch: the wall comes down the way the film does it, by being hit over
+and over, faster and faster, and each blow visibly takes something off the
+face.
 
 ### Filling any screen (`computeWorldSize`)
 
@@ -278,8 +355,24 @@ There is not a single keyframe. Every joint is solved each frame:
   whatever rubble is actually there, so the figure clambers over its own mess.
 - **Springs on everything** — lean, hip height, aim, recoil and landing squash
   are all exponentially damped, so states blend instead of snapping.
-- Coyote time, a jump buffer, variable jump height, an air somersault and
-  wall-jumping.
+- Coyote time, a jump buffer, variable jump height and an air somersault.
+- **Wall jumping** — jump while pressed against masonry and he coils both legs
+  onto it and springs off, with the air jumps handed back so a kick and a
+  somersault stack. The push away from the wall is deliberately tiny: enough to
+  leave it, small enough to steer straight back into it and take another, which
+  is what turns one kick into a climb up the whole face.
+- **Attacking in mid-air nearly stops the fall** — while a swing (or a wind-up)
+  is running off the ground, gravity drops to a trickle and the descent is
+  capped at a crawl, so a combo begun off a jump gets to play out up there
+  instead of being dumped on the floor halfway through. The beam's float still
+  outranks it: that one climbs, this one only falls slowly.
+
+  It is a slower fall and never a bigger jump. Both the reduced gravity and the
+  reduced air speed apply on the way *down* only: the climb is the climb he
+  always had, the apex lands in exactly the same place, and because the descent
+  is stretched to about four times its length the air speed through it drops by
+  about as much — so a jump with a swing in it clears no more ground than the
+  same jump without one.
 
 ### Melee combos (`src/game/melee.ts`)
 
@@ -430,6 +523,8 @@ src/
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
+    cue.ts             the DESTROY THE WALL note and its arrow, written on
+    handwriting.ts     capital letters as pen strokes, drawn along their length
     touch.ts           the two floating sticks, weapon pad
     aim.ts             stick movement to an aim direction, per device
     settings-menu.ts   the cog, and the card it opens

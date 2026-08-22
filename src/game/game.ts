@@ -5,6 +5,7 @@ import { Sketch } from '../core/sketch';
 import { Gamepads, type PadState } from '../core/gamepad';
 import { installer } from '../core/pwa';
 import { AimSolver, type AimMode } from '../ui/aim';
+import { cueWidth, drawStartCue, fitCueSize } from '../ui/cue';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
@@ -94,6 +95,16 @@ export class Game {
   private invertT = 0;
   private timeScale = 1;
   private hintFade = 1;
+  /**
+   * Whether the wall has been hit yet, which is the run's real starting gun.
+   * Until it happens the screen carries the cue telling the player what to do
+   * and nothing else; the moment it does, the cue goes and the meter arrives.
+   * Nobody needs a progress bar for progress they have not started making.
+   */
+  private wallHit = false;
+  /** 0..1 through the cue's exit, and 0..1 through the meter's entrance. */
+  private cueOut = 0;
+  private meterIn = 0;
 
   private scaleX = 1;
   private scaleY = 1;
@@ -295,7 +306,10 @@ export class Game {
     this.equipped = 0;
     this.wheel.hovered = 0;
     this.touch.reset();
-    this.sm.reset(Math.min(230, this.view.w * 0.22), this.terrain.groundTop - 40);
+    this.sm.reset(Math.min(276, this.view.w * 0.22), this.terrain.groundTop - 40);
+    this.wallHit = false;
+    this.cueOut = 0;
+    this.meterIn = 0;
     this.shakeAmt = 0;
     this.flashAmt = 0;
     this.invertT = 0;
@@ -688,6 +702,12 @@ export class Game {
     // --- character ---------------------------------------------------------
     this.sm.update(dt, this.terrain, intent, intent.aim);
     if (this.sm.justJumped) audio.play('jump', rand(0.9, 1.15));
+    if (this.sm.justWallJumped) {
+      // The scuff of two feet shoving off masonry, thrown back off the wall.
+      const side = this.sm.wallKickSide;
+      audio.play('step', 1.35);
+      this.particles.dust(this.sm.pos.x + side * 14, this.sm.pos.y - 46, 5, side > 0 ? Math.PI : 0, 1.1);
+    }
     if (this.sm.justLanded) audio.play('land', rand(0.9, 1.1));
     if (this.sm.justStepped) {
       // Every footfall throws a little dust back down the track, which is most
@@ -704,6 +724,13 @@ export class Game {
     const pressed = !intent.wheelOpen && intent.firePressed;
     if (pressed) this.stats.shots++;
     this.weapon.update(wctx, firing, pressed);
+    // Swinging in mid-air very nearly stops the fall, so a combo begun off a
+    // jump gets to play out up there instead of being dumped on the floor
+    // halfway through. Charging counts too - winding up is part of the swing.
+    if (!this.sm.onGround
+      && (firing || pressed || this.weapon.busy || this.weapon.charge > 0.02)) {
+      this.sm.stallFall(0.22);
+    }
     this.sm.setHands(this.weapon.hands(wctx));
     // Weapons that own the whole body - a charge-up, a heavy wind-up - say so
     // here, every frame, so dropping the stance is just saying nothing.
@@ -722,6 +749,13 @@ export class Game {
     this.particles.update(dt, this.terrain);
     this.runPending(dt);
     this.decayEffects(rawDt);
+
+    // --- the run properly begins on the first blow that lands --------------
+    if (!this.wallHit && this.terrain.destroyed > 0) this.wallHit = true;
+    if (this.wallHit) {
+      this.cueOut = Math.min(1, this.cueOut + rawDt * 2.6);
+      this.meterIn = Math.min(1, this.meterIn + rawDt * 2.2);
+    }
 
     // --- win check ---------------------------------------------------------
     if (this.terrain.destroyed >= WIN_THRESHOLD) {
@@ -909,7 +943,18 @@ export class Game {
     const frac = this.terrain.destroyed;
     const barW = clamp(w * 0.42, 240, 470);
     const topY = 34 + this.topInset;
-    drawProgress(sk, w / 2, topY, barW, frac, `WALL DESTROYED  ${(frac * 100).toFixed(1)}%`);
+    // Before the first blow the strip is empty and the cue has the screen; the
+    // meter drops in behind the first hit, which is the moment it means
+    // anything. It arrives from above so it reads as the HUD assembling.
+    if (this.meterIn > 0.001) {
+      const k = easeOutBack(this.meterIn);
+      c.save();
+      c.globalAlpha = clamp(this.meterIn * 1.6, 0, 1);
+      c.translate(0, (1 - k) * -46);
+      drawProgress(sk, w / 2, topY, barW, frac, `WALL DESTROYED  ${(frac * 100).toFixed(1)}%`);
+      c.restore();
+    }
+    if (this.cueOut < 1) this.drawCue();
 
     // Current weapon. On touch the bottom edge belongs to the thumbs, so the
     // readout moves up under the meter instead.
@@ -977,7 +1022,7 @@ export class Game {
       } else {
         const lines = [
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
-          'SPACE  JUMP  (again in mid-air to flip)',
+          'SPACE  JUMP  (again in mid-air to flip, at a wall to kick off it)',
           'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
           'HOLD TAB  WEAPON WHEEL     1-0 - =  QUICK SWAP',
         ];
@@ -1009,6 +1054,36 @@ export class Game {
           Math.max(b.y0 - 28, this.topInset + 14), 15, { alpha: pulse });
       }
     }
+  }
+
+  /**
+   * "DESTROY THE WALL", written on the paper with an arrow swept over to the
+   * masonry - the only instruction the game gives, and only until it has been
+   * followed once.
+   *
+   * It lives in the open ground to the left of the wall rather than across the
+   * middle of the screen, because the middle of the screen on a narrow phone
+   * *is* the wall, and black ink on a black slab says nothing.
+   */
+  private drawCue(): void {
+    const t = this.terrain;
+    const { w } = this.view;
+    // Everything is measured off the wall, never off the screen. The note is
+    // written on the paper immediately beside the face it is pointing at, so
+    // the arrow only ever has to be a short hook - a banner in the middle of
+    // an ultrawide with a yard of arrow reaching across it says less, not
+    // more. The open ground is only consulted to stop the words running off
+    // the left edge of a narrow phone.
+    const open = Math.max(160, t.wallX);
+    const size = fitCueSize(open * 0.62, clamp(w * 0.028, 15, 38));
+    const half = cueWidth(size) / 2;
+    const x = Math.max(half + size * 0.7, t.wallX - size * 1.4 - half);
+    const band = t.groundTop - t.wallTop;
+    // The point lands on the wall's face, in its upper third - head height for
+    // a figure standing at the foot of it, and well clear of the HUD strip.
+    const target = { x: t.wallX - size * 0.62, y: t.wallTop + band * 0.34 };
+    const y = Math.max(this.hudBand + size * 1.1, target.y - size * 2.3);
+    drawStartCue(this.sk, this.phaseTime, this.cueOut, { x, y, size, target });
   }
 
   private drawMenu(): void {
@@ -1077,6 +1152,7 @@ export class Game {
     const rows: Array<[string, string]> = this.device === 'pad'
       ? [
           ['LEFT STICK', 'move — up jumps, down crouches'],
+          ['JUMP AT A WALL', 'kick off it — chain them to climb'],
           ['RIGHT STICK', 'shove it to swing that way — let go to fire a charge'],
           ['R1 / R2 / X', 'swing where he looks; the left stick steers it too'],
           ['HOLD L1', 'weapon fan — point at one and let go'],
@@ -1087,6 +1163,7 @@ export class Game {
       ? [
           ['LEFT THUMB', 'tilt to walk, push it out to sprint'],
           ['UP / DOWN', 'jump and crouch, on the same thumb'],
+          ['JUMP AT A WALL', 'kick off it — chain them to climb'],
           ['RIGHT THUMB', 'press to attack — guns aim where you touch'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
           ['GOAL', 'wipe the black wall off the screen'],
@@ -1094,7 +1171,8 @@ export class Game {
       : [
           ['WASD / ARROWS', 'run and crouch'],
           ['SHIFT', 'sprint — attacking from a run is its own move'],
-          ['SPACE', 'jump — press again in the air to somersault'],
+          ['SPACE', 'jump — again in the air to somersault'],
+          ['SPACE AT A WALL', 'kick off it — chain them to climb'],
           ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
           ['HOLD TAB', 'weapon wheel   ·   1-0 - = to quick swap'],
           ['GOAL', 'wipe the black wall off the screen'],
