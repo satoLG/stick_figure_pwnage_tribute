@@ -4,6 +4,24 @@ import { clamp, hashNoise, TAU, type Vec2 } from '../core/math';
 const FLOOR_THICKNESS = 124;
 
 /**
+ * The wall, in world units. Fixed, because the figure is: a wall that grew with
+ * the viewport meant a phone got one twice as tall as a laptop's and a game
+ * twice as long for it. The screen decides how much room there is around the
+ * scene, never how big the scene itself is.
+ */
+const WALL_H = 470;
+const WALL_W = 420;
+/**
+ * What happens to height left over once the wall and the floor have had
+ * theirs: a third of it deepens the floor, up to a limit, and the rest becomes
+ * sky. The limit is the point of it - on a tall phone an even split would put
+ * the ground line near the bottom edge under a quarter-screen of solid black,
+ * where white paper with the figure standing on it reads far better.
+ */
+const FLOOR_SHARE = 0.35;
+const FLOOR_EXTRA_MAX = 110;
+
+/**
  * Every carve is scaled by this before it touches the bitmap. It is the single
  * knob for how tough the wall is: at 1 a rifle magazine opens a doorway, and
  * the whole thing is gone in well under a minute. Well below 1 the wall reads
@@ -28,9 +46,11 @@ export interface WorldSize { w: number; h: number; }
  * Picks playfield dimensions that exactly match the viewport's aspect ratio, so
  * the canvas fills the screen with no letterbox bars in any orientation.
  *
- * Landscape keeps a fixed height and lets the width grow (more running room);
- * portrait keeps a fixed width and lets the height grow (a taller wall). Both
- * are clamped so the fixed-size stick figure never ends up lost in the frame.
+ * This decides how much room there is around the scene, never how big the
+ * scene is: the figure, the floor and the wall are all fixed sizes laid out
+ * inside whatever comes back, so a phone gets more sky and a deeper floor
+ * rather than a taller wall. The lower clamp on the height is what guarantees
+ * the whole wall fits under the HUD strip even on a letterbox-wide screen.
  */
 export function computeWorldSize(vw: number, vh: number): WorldSize {
   const aspect = Math.max(0.25, Math.min(4, (vw || 1) / (vh || 1)));
@@ -40,7 +60,7 @@ export function computeWorldSize(vw: number, vh: number): WorldSize {
   // Each clamp re-derives the other side from the aspect, so it is preserved.
   if (w < 820) { w = 820; h = w / aspect; }
   if (w > 2200) { w = 2200; h = w / aspect; }
-  if (h < 620) { h = 620; w = h * aspect; }
+  if (h < 700) { h = 700; w = h * aspect; }
   if (h > 1500) { h = 1500; w = h * aspect; }
   return { w: Math.round(w), h: Math.round(h) };
 }
@@ -81,8 +101,15 @@ export class Terrain {
 
   /** Top surface of the floor slab. */
   groundTop = 0;
+  /** Top of the wall. Nothing solid is ever drawn above this. */
+  wallTop = 0;
   /** Left face of the wall. It starts perfectly straight and gets eaten away. */
   wallX = 0;
+  /** Height of the strip at the top of the screen the scene must stay out of. */
+  private topGap: number;
+
+  /** The ceiling of the playable space: the HUD strip's underside. */
+  get sceneTop(): number { return this.topGap; }
 
   /** Only wall pixels count towards the win condition; the floor is scenery. */
   private wallTotal = 0;
@@ -94,9 +121,10 @@ export class Terrain {
   private faceX!: Float32Array;
   private surfY!: Float32Array;
 
-  constructor(w: number, h: number) {
+  constructor(w: number, h: number, topGap = 0) {
     this.w = w;
     this.h = h;
+    this.topGap = topGap;
     this.canvas = document.createElement('canvas');
     const c = this.canvas.getContext('2d', { willReadFrequently: true });
     if (!c) throw new Error('2D context unavailable');
@@ -106,11 +134,22 @@ export class Terrain {
 
   // --------------------------------------------------------------- build ---
 
+  /**
+   * The scene is a fixed-size thing placed on a variable-size screen, not a
+   * thing stretched to fill it. The wall is always the same wall; whatever
+   * height is left over after the HUD strip becomes sky above it and a deeper
+   * floor below, so it sits in much the same place whatever the screen shape.
+   */
   private layout(): void {
-    this.groundTop = this.h - FLOOR_THICKNESS;
-    // A thinner wall on narrow screens, so portrait still leaves running room.
-    const thickness = clamp(this.w * 0.4, 300, 560);
-    this.wallX = this.w - thickness;
+    const room = Math.max(200, this.h - this.topGap - FLOOR_THICKNESS);
+    // Only a screen too short to hold the whole thing shrinks it, and then the
+    // HUD strip is what gives way first.
+    const wallH = Math.min(WALL_H, room);
+    const slack = room - wallH;
+    const floorExtra = Math.min(slack * FLOOR_SHARE, FLOOR_EXTRA_MAX);
+    this.wallTop = Math.round(Math.max(0, this.h - FLOOR_THICKNESS - floorExtra - wallH));
+    this.groundTop = this.wallTop + wallH;
+    this.wallX = Math.max(this.w * 0.34, this.w - WALL_W);
   }
 
   /** Builds pristine terrain at the current size, discarding any damage. */
@@ -131,12 +170,12 @@ export class Terrain {
     for (let y = 0; y < this.h; y++) {
       const face = this.faceX[y];
       const row = y * this.w;
-      const inWallRow = y <= wallBottom;
+      const inWallRow = y >= this.wallTop && y <= wallBottom;
       for (let x = 0; x < this.w; x++) {
         const inWall = inWallRow && x >= face;
         if (inWall || y >= this.surfY[x]) {
           this.mask[row + x] = 1;
-          if (inWall && y < this.groundTop) {
+          if (inWall && y < this.groundTop && y >= this.wallTop) {
             this.isWall[row + x] = 1;
             this.wallTotal++;
           }
@@ -158,18 +197,18 @@ export class Terrain {
    * y - so the open ground maps to open ground and the wall maps to the wall,
    * and the fraction destroyed survives even a full rotation.
    */
-  resizeTo(nw: number, nh: number): void {
-    if (nw === this.w && nh === this.h) return;
+  resizeTo(nw: number, nh: number, topGap = this.topGap): void {
+    if (nw === this.w && nh === this.h && topGap === this.topGap) return;
     const oldMask = this.mask;
     const ow = this.w, oh = this.h;
-    const oldWallX = this.wallX, oldGround = this.groundTop;
+    const oldWallX = this.wallX, oldGround = this.groundTop, oldTop = this.wallTop;
     // The old silhouette, kept so we can tell a hole the player made from a
     // spot that was simply never solid. Without this the wall's ragged face
     // reads as damage, because its wobble lands differently at the new size.
     const oldFace = this.faceX, oldSurf = this.surfY;
     const oldWallBottom = oldGround + 40;
 
-    this.w = nw; this.h = nh;
+    this.w = nw; this.h = nh; this.topGap = topGap;
     this.rebuild();
 
     // Precompute the source column for every destination column.
@@ -178,8 +217,18 @@ export class Terrain {
       srcX[x] = clamp(Math.round(remap(x, this.wallX, nw, oldWallX, ow)), 0, ow - 1);
     }
 
+    // The wall is the same wall at every size, so its rows line up one to one
+    // and damage moves across untouched; only the sky above and the floor
+    // below change depth, and neither can hold damage.
+    const band = Math.max(1, this.groundTop - this.wallTop);
+    const oldBand = Math.max(1, oldGround - oldTop);
     for (let y = 0; y < nh; y++) {
-      const oy = clamp(Math.round(remap(y, this.groundTop, nh, oldGround, oh)), 0, oh - 1);
+      const oy = y < this.wallTop
+        ? -1
+        : y <= this.groundTop
+          ? clamp(Math.round(oldTop + ((y - this.wallTop) / band) * oldBand), 0, oh - 1)
+          : clamp(Math.round(oldGround + (y - this.groundTop)), 0, oh - 1);
+      if (oy < 0) continue;
       const orow = oy * ow, nrow = y * nw;
       const face = oldFace[oy];
       const inWallRow = oy <= oldWallBottom;

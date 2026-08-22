@@ -1,8 +1,12 @@
 import { TAU, type Vec2 } from '../core/math';
 import type { Input, Ptr } from '../core/input';
 import type { Sketch } from '../core/sketch';
+import { AimSolver, type AimMode } from './aim';
 import type { WheelLayout } from './ui';
 import { inkText } from './ui';
+
+/** A floating stick: where the thumb landed, and where it is now. */
+interface Stick { id: number; ox: number; oy: number; x: number; y: number }
 
 /** How far the stick knob travels before it reads as fully deflected. */
 const STICK_R = 74;
@@ -11,13 +15,21 @@ const JUMP_ON = 0.44;
 const JUMP_OFF = 0.3;
 const CROUCH_ON = 0.46;
 
+/** The aiming stick is smaller: a flick of the thumb should swing him round. */
+const AIM_R = 56;
+/** Below this the thumb has not really been dragged, so the aim stands. */
+const AIM_DEAD = 13;
+/** How far out from the shoulder the aim mark is drawn. */
+const AIM_MARK = 150;
+
 export interface TouchState {
   /** Analog walk, -1..1. */
   axis: number;
   crouch: boolean;
   jump: boolean;
   jumpHeld: boolean;
-  aim: Vec2 | null;
+  /** Unit vector the aiming thumb has swung to; null until it is first used. */
+  aimDir: Vec2 | null;
   firing: boolean;
   firePressed: boolean;
   wheelOpen: boolean;
@@ -27,21 +39,26 @@ export interface TouchState {
 }
 
 /**
- * The on-screen controls.
+ * The on-screen controls: two floating sticks and a pad.
  *
- * The left side of the screen is a floating stick: it appears wherever the
- * thumb lands, and its direction alone drives walking, crouching and jumping -
- * there are no separate buttons for those. The right side aims and attacks.
- * A translucent pad at the bottom centre opens the weapon fan while held; the
- * weapon the thumb is over when it lifts is the one equipped.
+ * Neither stick is drawn until a thumb lands on it, and neither cares where on
+ * its side of the screen that was - only which way it is then dragged. The
+ * bottom left one walks, jumps and crouches. The other one aims: a press
+ * attacks along the aim he already has, and dragging swings the aim, and him
+ * with it, round to point that way. A translucent pad at the bottom centre
+ * opens the weapon fan while held; the weapon the thumb is over when it lifts
+ * is the one equipped.
  */
 export class TouchControls {
-  private stick: { id: number; ox: number; oy: number; x: number; y: number } | null = null;
+  private stick: Stick | null = null;
   private stickFade = 0;
   private jumpLatched = false;
 
   private attackId = -1;
-  private aim: Vec2 | null = null;
+  private aimStick: Stick | null = null;
+  private aimFade = 0;
+  /** Sticky: a tap that never drags keeps whatever the last drag chose. */
+  private aim = new AimSolver();
 
   private padId = -1;
   private padPress = 0;
@@ -63,16 +80,43 @@ export class TouchControls {
 
   update(
     input: Input, dt: number, view: { w: number; h: number },
-    toWorld: (x: number, y: number) => Vec2,
+    toWorld: (x: number, y: number) => Vec2, eye: Vec2, mode: AimMode,
   ): TouchState {
     this.pad = this.padCentre(view);
     this.padR = Math.min(46, view.w * 0.06 + 26);
 
     const out: TouchState = {
       axis: 0, crouch: false, jump: false, jumpHeld: false,
-      aim: null, firing: false, firePressed: false,
+      aimDir: null, firing: false, firePressed: false,
       wheelOpen: false, wheelPointer: this.pad, wheelReleased: false,
     };
+
+    const byId = new Map<number, Ptr>();
+    for (const p of input.pointers.values()) if (!p.justUp) byId.set(p.id, p);
+
+    // --- let go of anything whose finger has gone, before handing out roles --
+    // Order matters: a stick still held by a vanished pointer would otherwise
+    // turn the very next touch into an attack, which is what made a jammed
+    // stick feel unrecoverable. Pointer ids are recycled too, so the id alone
+    // is no proof of ownership - the role has to match as well.
+    if (this.stick) {
+      const held = byId.get(this.stick.id);
+      if (!held || held.role !== 'stick') {
+        this.stick = null;
+        this.jumpLatched = false;
+      }
+    }
+    // A world reset drops the stick while the thumb may still be down. Adopt
+    // that finger back rather than leaving it inert until it happens to lift.
+    if (!this.stick) {
+      for (const p of byId.values()) {
+        if (p.role !== 'stick') continue;
+        const w = toWorld(p.x, p.y);
+        this.stick = { id: p.id, ox: w.x, oy: w.y, x: w.x, y: w.y };
+        this.jumpLatched = false;
+        break;
+      }
+    }
 
     // --- hand out a role to every new finger, once, and keep it -------------
     for (const p of input.pointers.values()) {
@@ -89,12 +133,10 @@ export class TouchControls {
       } else {
         p.role = 'attack';
         this.attackId = p.id;
+        this.aimStick = { id: p.id, ox: w.x, oy: w.y, x: w.x, y: w.y };
         out.firePressed = true;
       }
     }
-
-    const byId = new Map<number, Ptr>();
-    for (const p of input.pointers.values()) if (!p.justUp) byId.set(p.id, p);
 
     // --- stick --------------------------------------------------------------
     if (this.stick) {
@@ -132,17 +174,43 @@ export class TouchControls {
       // Fall back to any other attack finger still down.
       for (const p of byId.values()) if (p.role === 'attack') { attack = p; this.attackId = p.id; break; }
     }
+    // The second stick, read whichever way the weapon in hand wants it - see
+    // ui/aim.ts. Either way a press that never moves leaves the aim exactly as
+    // it was, so tapping attacks along the aim already showing.
+    let fresh = false;
+    let dx = 0, dy = 0;
+    let here: Vec2 = eye;
     if (attack) {
-      this.aim = toWorld(attack.x, attack.y);
-      out.aim = this.aim;
+      here = toWorld(attack.x, attack.y);
+      if (!this.aimStick || this.aimStick.id !== attack.id) {
+        this.aimStick = { id: attack.id, ox: here.x, oy: here.y, x: here.x, y: here.y };
+        fresh = true;
+      }
+      this.aimStick.x = here.x; this.aimStick.y = here.y;
+      dx = here.x - this.aimStick.ox; dy = here.y - this.aimStick.oy;
+      const d = Math.hypot(dx, dy);
+      // The base follows the thumb past the edge, so swinging the aim back the
+      // other way takes one travel, not one travel plus however far it went.
+      if (d > AIM_R) {
+        this.aimStick.ox = here.x - (dx / d) * AIM_R;
+        this.aimStick.oy = here.y - (dy / d) * AIM_R;
+        dx = (dx / d) * AIM_R; dy = (dy / d) * AIM_R;
+      }
       out.firing = true;
     } else {
       this.attackId = -1;
-      out.aim = this.aim;   // keep facing the last target so he does not snap
+      this.aimStick = null;
     }
+    out.aimDir = this.aim.update(dt, mode, {
+      active: !!attack, fresh,
+      nx: dx / AIM_R, ny: dy / AIM_R, dead: AIM_DEAD / AIM_R,
+      world: here, eye,
+    });
+    this.aimFade += ((this.aimStick ? 1 : 0) - this.aimFade) * Math.min(1, dt * 14);
 
     // --- weapon pad ---------------------------------------------------------
-    const padPtr = byId.get(this.padId);
+    let padPtr = byId.get(this.padId);
+    if (padPtr && padPtr.role !== 'pad') padPtr = undefined;
     if (this.wheelOpen && !padPtr) {
       this.wheelOpen = false;
       out.wheelReleased = true;
@@ -160,7 +228,8 @@ export class TouchControls {
     this.attackId = -1;
     this.padId = -1;
     this.wheelOpen = false;
-    this.aim = null;
+    this.aimStick = null;
+    this.aim.reset();
   }
 
   // -------------------------------------------------------------- drawing ---
@@ -226,16 +295,62 @@ export class TouchControls {
     c.restore();
   }
 
-  /** A ring marking where the attacking finger is aiming. */
-  drawAim(sk: Sketch, time: number): void {
-    if (!this.aim || this.attackId < 0) return;
+  /**
+   * The aiming stick under the thumb, and a mark out in front of `from` - the
+   * figure's shoulder - showing which way the aim it is steering now points.
+   */
+  drawAim(sk: Sketch, time: number, from: Vec2, mode: AimMode): void {
+    if (this.aimFade <= 0.01 || !this.aimStick) return;
     const c = sk.ctx;
+    const s = this.aimStick;
+    const a = this.aimFade;
+    const r = 18 + Math.sin(time * 8) * 2;
+
     c.save();
     c.strokeStyle = '#000';
-    c.lineWidth = 2.4;
-    c.globalAlpha = 0.55;
-    sk.polyPath(ring(this.aim.x, this.aim.y, 20 + Math.sin(time * 8) * 2, 9), 1.4);
+    c.fillStyle = '#000';
+
+    if (mode === 'point') {
+      // Nothing is being deflected here: the thumb *is* the crosshair, so draw
+      // one, rather than a stick that would suggest the aim springs back.
+      c.globalAlpha = 0.55 * a;
+      c.lineWidth = 2.6;
+      sk.polyPath(ring(s.x, s.y, r * 1.5, 10), 1.4);
+      c.stroke();
+      c.globalAlpha = 0.4 * a;
+      sk.line({ x: s.x - r * 2.4, y: s.y }, { x: s.x - r * 0.7, y: s.y }, 2, 1, 0.4);
+      sk.line({ x: s.x + r * 0.7, y: s.y }, { x: s.x + r * 2.4, y: s.y }, 2, 1, 0.4);
+      sk.line({ x: s.x, y: s.y - r * 2.4 }, { x: s.x, y: s.y - r * 0.7 }, 2, 1, 0.4);
+      sk.line({ x: s.x, y: s.y + r * 0.7 }, { x: s.x, y: s.y + r * 2.4 }, 2, 1, 0.4);
+      c.restore();
+      return;
+    }
+
+    let dx = s.x - s.ox, dy = s.y - s.oy;
+    const d = Math.hypot(dx, dy);
+    if (d > AIM_R) { dx = (dx / d) * AIM_R; dy = (dy / d) * AIM_R; }
+
+    c.globalAlpha = 0.2 * a;
+    c.lineWidth = 3;
+    sk.polyPath(ring(s.ox, s.oy, AIM_R, 14), 2);
     c.stroke();
+
+    c.globalAlpha = 0.34 * a;
+    sk.polyPath(ring(s.ox + dx, s.oy + dy, 22, 12), 1.6);
+    c.fill();
+    c.globalAlpha = 0.46 * a;
+    sk.polyPath(ring(s.ox + dx, s.oy + dy, 22, 12), 1.6);
+    c.stroke();
+
+    // Where that adds up to on him, so the aim is readable without hunting for
+    // the arm: a ring out along the line he is about to swing down.
+    const dir = this.aim.dir;
+    if (dir) {
+      c.globalAlpha = 0.5 * a;
+      c.lineWidth = 2.4;
+      sk.polyPath(ring(from.x + dir.x * AIM_MARK, from.y + dir.y * AIM_MARK, r, 9), 1.4);
+      c.stroke();
+    }
     c.restore();
   }
 }

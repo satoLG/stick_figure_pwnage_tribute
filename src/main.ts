@@ -1,14 +1,24 @@
 import './style.css';
 import { audio } from './core/audio';
+import { musicVolume, settings, sfxVolume } from './core/settings';
 import { Game } from './game/game';
+import { registerWorker } from './core/pwa';
 
 const canvas = document.getElementById('game');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Missing #game canvas');
 }
 
+// The remembered levels have to be in place before the first gesture builds the
+// audio graph, or the first bar plays at whatever the defaults happen to be.
+audio.setMusicVolume(musicVolume());
+audio.setSfxVolume(sfxVolume());
+
 const game = new Game(canvas);
 game.start();
+
+// Offline play, and the install prompt that comes with a real manifest.
+registerWorker();
 
 // Handy while tuning the animation: inspect live state from the dev console.
 if (import.meta.env.DEV) {
@@ -16,6 +26,7 @@ if (import.meta.env.DEV) {
   w.pwnage = game;
   // Handy for metering the band while tuning the mix.
   w.pwnageAudio = audio;
+  w.pwnageSettings = settings;
 }
 
 // Vite hot reload would otherwise stack a second game loop on every save.

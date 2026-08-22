@@ -55,6 +55,13 @@ const MAX_FALL = 1250;
 const COYOTE = 0.11;
 const JUMP_BUFFER = 0.13;
 const WALL_SLIDE_V = 190;
+/**
+ * How far the containment pass will lift feet that have ended up inside the
+ * ground. About one step up: enough for a floor carved out from under him or a
+ * level re-laid beneath his feet, small enough that it reads as settling rather
+ * than as being launched.
+ */
+const SETTLE = 26;
 /** Ground covered per half-stride. Short and quick walking, long at a sprint. */
 const STRIDE_WALK = 33, STRIDE_RUN = 56, STRIDE_SPRINT = 74;
 
@@ -335,6 +342,7 @@ export class Stickman {
     this.wasOnGround = this.onGround;
     this.moveX(this.vel.x * dt, terrain);
     this.moveY(this.vel.y * dt, terrain);
+    this.contain(terrain);
     this.detectWall(terrain);
 
     if (this.onGround) {
@@ -353,7 +361,6 @@ export class Stickman {
       this.fallTime += dt;
     }
 
-    if (this.pos.y > terrain.h + 300) this.reset(220, 300);
 
     // --- state selection ---------------------------------------------------
     const speed = Math.abs(this.vel.x);
@@ -366,8 +373,9 @@ export class Stickman {
 
     // --- facing follows the aim, not the movement: he can run and shoot back
     const aimDx = aimTarget.x - (this.pos.x);
+    const aimDy = aimTarget.y - (this.pos.y - STAND_HIP - TORSO * 0.55);
     if (Math.abs(aimDx) > 6) this.facing = aimDx >= 0 ? 1 : -1;
-    this.aim = Math.atan2(aimTarget.y - (this.pos.y - STAND_HIP - TORSO * 0.55), aimDx);
+    this.aim = Math.atan2(aimDy, aimDx);
 
     this.animate(dt, terrain);
   }
@@ -457,6 +465,68 @@ export class Stickman {
     return terrain.solidAt(x, y)
       || terrain.solidAt(x - HALF_W * 0.8, y)
       || terrain.solidAt(x + HALF_W * 0.8, y);
+  }
+
+  /**
+   * True when his legs are inside solid ground at (x, feetY).
+   *
+   * Legs only, deliberately. A head or a shoulder clipping the underside of a
+   * ledge on the way up is a drawing overlapping a drawing for a frame or two,
+   * and nothing needs doing about it; feet inside the floor is the thing that
+   * actually goes wrong, and the only thing worth correcting.
+   */
+  private legsInSolid(x: number, feetY: number, terrain: Terrain): boolean {
+    for (const dx of [-HALF_W * 0.8, 0, HALF_W * 0.8]) {
+      // From just above the feet, since standing *on* a surface has the feet
+      // touching it, up to about the hip.
+      for (let y = feetY - 6; y > feetY - STAND_HIP; y -= 8) {
+        if (terrain.solidAt(x + dx, y)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The last word on where the figure may be, run after every move.
+   *
+   * Two jobs, and no more than two. The edges of the scene are hard: the sides,
+   * the underside of the HUD strip and the bottom of the world are walls, so no
+   * amount of speed or knockback puts him outside the picture. And if his legs
+   * end up inside the ground - the floor carved out from under him, the level
+   * re-laid under his feet - he settles up out of it, by about a step's worth.
+   *
+   * What it deliberately does *not* do is shove him out of the wall. Walking
+   * into masonry is already handled a column at a time by the movement itself,
+   * and a body that has clipped a ledge mid-jump is a couple of frames of two
+   * drawings overlapping - worth nothing, and certainly not worth being thrown
+   * across the room for.
+   */
+  contain(terrain: Terrain): void {
+    const min = HALF_W + 2;
+    const max = terrain.w - HALF_W - 2;
+    const roof = terrain.sceneTop + BODY_H;
+
+    if (this.pos.x < min) { this.pos.x = min; this.vel.x = Math.max(0, this.vel.x); }
+    if (this.pos.x > max) { this.pos.x = max; this.vel.x = Math.min(0, this.vel.x); }
+    if (this.pos.y < roof) { this.pos.y = roof; this.vel.y = Math.max(0, this.vel.y); }
+    if (this.pos.y > terrain.h) {
+      this.pos.y = terrain.h;
+      this.vel.y = 0;
+      this.onGround = true;
+    }
+
+    // Never while rising: on the way up, ground in the way is a ceiling, which
+    // `moveY` has already dealt with. Lifting there is what threw him.
+    if (this.vel.y < 0 || !this.legsInSolid(this.pos.x, this.pos.y, terrain)) return;
+    for (let lift = 0; lift < SETTLE; lift += 2) {
+      if (this.pos.y - 2 < roof) break;
+      this.pos.y -= 2;
+      if (!this.legsInSolid(this.pos.x, this.pos.y, terrain)) {
+        this.vel.y = 0;
+        this.onGround = true;
+        return;
+      }
+    }
   }
 
   private detectWall(terrain: Terrain): void {

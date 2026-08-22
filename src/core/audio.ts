@@ -78,6 +78,8 @@ const SIXTEENTH = BEAT / 4;
  */
 const MUSIC_TRIM = 0.85;
 
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
 export class AudioEngine {
   ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -247,6 +249,24 @@ export class AudioEngine {
   setMuted(m: boolean): void {
     this.muted = m;
     if (this.master) this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.t, 0.05);
+  }
+
+  /**
+   * Live volume, 0..1 each. Ramped rather than set, because a step on a gain
+   * node is a click; and remembered even before there is a context to apply it
+   * to, since the settings menu opens long before the first user gesture.
+   */
+  setMusicVolume(v: number): void {
+    this.musicVolume = clamp01(v);
+    if (!this.ctx || !this.playing) return;
+    this.musicBus.gain.cancelScheduledValues(this.t);
+    this.musicBus.gain.setTargetAtTime(this.musicVolume * MUSIC_TRIM, this.t, 0.05);
+  }
+
+  setSfxVolume(v: number): void {
+    this.sfxVolume = clamp01(v);
+    if (!this.ctx) return;
+    this.sfxBus.gain.setTargetAtTime(this.sfxVolume, this.t, 0.03);
   }
 
   /** Classic lookahead scheduler: queue every 16th note that falls in the window. */

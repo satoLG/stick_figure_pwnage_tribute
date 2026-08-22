@@ -47,7 +47,8 @@ npx vercel --prod
 | Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
 | `1`–`0`, `-`, `=` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
-| `R` / `Esc` | Restart / main menu, on the win screen |
+| `Esc` | Settings — and on the win screen, back to the main menu |
+| `R` | Restart, on the win screen |
 
 ## Controls — touch
 
@@ -56,11 +57,103 @@ Nothing is shown until you touch it, so the picture stays clean.
 | Where | Action |
 | --- | --- |
 | Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
-| Right side | Touch to aim; tap to chain the light combo, hold for the heavy one, charge, or sustain a beam. |
+| Right side | Aim and attack. **With a gun** the aim goes exactly where you touch, and follows your thumb as it slides. **With a blade or your fists** it is a floating stick instead: press to swing along the aim you already have, drag to swing the aim itself round. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
-The wheel is a full ring with a mouse and a **fan above the pad** on touch — a
-thumb dragging up from the bottom edge cannot reach the lower half of a ring.
+## Controls — gamepad
+
+Any standard-mapping pad, no setup: pick it up and the game switches to it,
+touch the glass or the mouse and it switches back.
+
+| Input | Action |
+| --- | --- |
+| Left stick | Move — push up to jump, down to crouch. While an attack button is held it steers the swing as well, so a run turns into a lunge without moving a thumb |
+| Right stick | Aim, eased (below) — and **shoving it is itself an attack**, no button. A charged weapon lets go the moment the stick comes back to centre, so a charged shot to the right is hold-right, release |
+| `R1` / `R2` / `X` | Attack along the aim he already has |
+| `A` | Jump · `B` Crouch |
+| Hold `L1` / `L2` | Weapon fan — point the right stick at one and let go |
+| D-pad ←→, `Y` | Step through the arsenal |
+| `Start` | Settings |
+| D-pad / left stick, `A`, `B` | Walk the menus, take a choice, back out — whatever is selected wears an impact border |
+
+## Aiming
+
+Aiming is the only thing that turns him: the cursor, the aiming thumb, or the
+right stick. The movement stick moves, jumps and crouches and never changes
+where he is looking, so he can run one way while still facing and swinging the
+other.
+
+A stick is not a crosshair, though, and one reading does not suit all three
+devices. Reading a stick's angle straight off is right for a bat, where
+anywhere in the right half of the world is a hit; for a rifle it is hopeless,
+because near the vertical a couple of degrees of wobble crosses the axis and
+spins the whole figure round, and the smallest useful push is worth ninety
+degrees of aim. So each pairing gets what suits it (`src/ui/aim.ts`):
+
+| Device and weapon | Reading |
+| --- | --- |
+| Touch, ranged | **Point** — the aim goes to the spot under the thumb. There is no stick to wobble, so a shot lands where you put your finger. |
+| Touch, melee | **Direct** — the raw angle of the floating stick, instantly. Fastest and most forgiving, which is what a swing wants. |
+| Gamepad | **Eased** — the aim *swings* towards the stick at a capped speed instead of snapping to it, rising with the square of the push, so the first degrees of travel place a shot and the rim spins him round. A real stick springs back, and needs it. |
+| Mouse | The cursor is the aim. It is drawn as a difference against whatever is under it, so it inverts to white the moment it crosses the wall instead of disappearing into it. |
+
+**Aim speed** in the settings scales the eased sweep; it is on FAST by default.
+
+## Settings
+
+The cog in the top right, or `Esc`, or `Start` on a pad. The world holds still
+while it is open, everything takes effect the moment it is touched, and the
+choices are remembered between sessions.
+
+- **Audio** — music and effects levels, applied live.
+- **Input** — what this machine can be played with, and which of them is in
+  hand, plus the aim speed.
+
+The weapon wheel is a full ring with a mouse or a pad and a **fan above the
+pad** on touch — a thumb dragging up from the bottom edge cannot reach the
+lower half of a ring.
+
+## Staying in the scene
+
+The figure cannot leave the picture. The sides, the underside of the HUD strip
+and the bottom of the world are hard walls, so no amount of speed or knockback
+puts him outside the scene — and if his *legs* end up inside the ground, the
+floor carved out from under him or the level re-laid under his feet, he settles
+up out of it by about a step's worth.
+
+That is the whole of it, deliberately. Walking into masonry is already handled
+a column at a time by the movement itself, and a head clipping the underside of
+a ledge mid-jump is two drawings overlapping for a frame — worth nothing, and
+certainly not worth being shoved across the room for.
+
+## The screen
+
+The scene is a fixed-size thing placed on a variable-size screen, not a thing
+stretched to fill it. The figure, the floor and the wall are all constants in
+world units — the wall is always 470 tall and 420 thick, four and a bit figures
+high — so a phone and an ultrawide get the same wall, the same run-up and the
+same length of game. What the screen shape decides is how much room there is
+*around* it: a tall screen gets more sky and a slightly deeper floor, never a
+taller wall.
+
+A strip along the top belongs to the HUD — the meter, the cog, and whatever
+joins them later — and the scene is laid out underneath it, so nothing solid
+ever climbs into the readouts. It is white paper either way, so the two still
+read as one picture rather than a game with a bar bolted over it.
+
+## Installing it
+
+The page is a small PWA. The title card carries an **install** button under
+START, and only where it leads anywhere: on Chrome and the rest it holds back
+`beforeinstallprompt` and fires it from that press, so the offer lives in the
+game's own card rather than a browser bar over the top of it; on iOS, which has
+no such event, it opens a card spelling out Share → Add to Home Screen. Once it
+is running from a home screen the button stops being drawn at all.
+
+A small service worker (`public/sw.js`) caches the shell so it starts offline
+after the first run — navigations go to the network first and fall back to the
+cache, so a deploy is never pinned behind a stale copy, while the fingerprinted
+assets are cached on first use.
 
 ## The arsenal
 
@@ -320,7 +413,11 @@ src/
   core/
     math.ts            vectors, damping, two-bone IK, hash noise
     sketch.ts          hand-drawn stroke renderer (the "boil")
-    input.ts           keyboard + multi-pointer, with per-frame edges
+    input.ts           keyboard + multi-pointer, with per-frame edges; also
+                       cancels the browser's own zoom / select / drag gestures
+                       and retires fingers whose pointerup never arrived
+    gamepad.ts         two sticks and a handful of edges, polled
+    settings.ts        audio levels and aim speed, remembered
     audio.ts           procedural soundtrack and SFX
   game/
     game.ts            state machine, loop, screen effects, HUD
@@ -333,7 +430,9 @@ src/
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel
-    touch.ts           floating stick, attack zone, weapon pad
+    touch.ts           the two floating sticks, weapon pad
+    aim.ts             stick movement to an aim direction, per device
+    settings-menu.ts   the cog, and the card it opens
 ```
 
 ---
