@@ -22,6 +22,14 @@ type Phase = 'menu' | 'playing' | 'won';
 /** The wall is never quite 100% clean; sweep the last slivers instead. */
 const WIN_THRESHOLD = 0.994;
 
+/**
+ * How far the aiming stick has to go to read as a swing, and how far back it
+ * has to come to stop being one. The gap between them is what stops a stick
+ * resting on the line from machine-gunning.
+ */
+const SWING_ON = 0.62;
+const SWING_OFF = 0.42;
+
 /** Slots 11 and 12 run off the two keys sitting right after the number row. */
 const NUMBER_KEYS = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
@@ -113,7 +121,7 @@ export class Game {
     // instructions before anything has been touched, clicked or pressed.
     this.device = this.input.touchMode ? 'touch' : 'desk';
     this.view = computeWorldSize(window.innerWidth, window.innerHeight);
-    this.terrain = new Terrain(this.view.w, this.view.h);
+    this.terrain = new Terrain(this.view.w, this.view.h, this.hudBand);
     this.resetWorld();
     this.fit();
 
@@ -160,18 +168,33 @@ export class Game {
     this.canvas.width = Math.round(vw * dpr);
     this.canvas.height = Math.round(vh * dpr);
 
-    if (size.w !== this.view.w || size.h !== this.view.h) {
-      this.view = size;
+    const resized = size.w !== this.view.w || size.h !== this.view.h;
+    this.view = size;
+    this.scaleX = this.canvas.width / this.view.w;
+    this.scaleY = this.canvas.height / this.view.h;
+    // The strip depends on the safe area, and the terrain is laid out under the
+    // strip, so both have to be read before the level is told where to sit.
+    this.readSafeArea();
+    this.menu.layout(this.view, this.safe);
+    if (resized || this.terrainGap !== this.hudBand) {
+      this.terrainGap = this.hudBand;
       // Re-lays the level at the new size, keeping the damage already done.
-      this.terrain.resizeTo(size.w, size.h);
+      this.terrain.resizeTo(size.w, size.h, this.terrainGap);
       this.settlePlayer();
       this.layoutButtons();
     }
-    this.scaleX = this.canvas.width / this.view.w;
-    this.scaleY = this.canvas.height / this.view.h;
-    this.readSafeArea();
-    this.menu.layout(this.view, this.safe);
   }
+
+  /**
+   * The strip along the top that belongs to the HUD - the meter and the cog,
+   * and whatever joins them later. The scene is laid out underneath it, so the
+   * wall never climbs into the readouts; it is all white either way, so the two
+   * read as one picture rather than a game with a bar bolted over it.
+   */
+  private get hudBand(): number {
+    return this.safe.top + clamp(this.view.h * 0.05, 44, 92) * 1.3 + 30;
+  }
+  private terrainGap = -1;
 
   /** Reads env(safe-area-inset-*) off the probe and converts it to world units. */
   private readSafeArea(): void {
@@ -228,7 +251,7 @@ export class Game {
   }
 
   private resetWorld(): void {
-    this.terrain = new Terrain(this.view.w, this.view.h);
+    this.terrain = new Terrain(this.view.w, this.view.h, this.hudBand);
     this.particles.clear();
     this.impacts.clear();
     this.freezeT = 0;
@@ -422,11 +445,12 @@ export class Game {
       * (inp.anyDown('ShiftLeft', 'ShiftRight') ? 1 : RUN_PUSH);
     const wheelOpen = inp.down('Tab') || t.wheelOpen || pad.wheel;
 
+    const shove = this.padAttack(pad, wheelOpen);
     // The pad's right stick is a stick like the touch one, only a real one, so
     // it goes through the same solver - eased, because it springs back.
     const padAim = this.padAim.update(rawDt, mode, {
       active: this.device === 'pad', fresh: false,
-      nx: pad.aim.x, ny: pad.aim.y, dead: 0.001,
+      nx: shove.aim.x, ny: shove.aim.y, dead: 0.001,
       world: this.eye, eye: this.eye,
     });
 
@@ -436,13 +460,47 @@ export class Game {
       jump: inp.justPressed('Space') || t.jump || pad.jumpPressed,
       jumpHeld: inp.down('Space') || t.jumpHeld || pad.jump,
       aim: this.resolveAim(t, padAim),
-      firing: (!wheelOpen && (inp.mouseDown || pad.fire)) || t.firing,
-      firePressed: (!wheelOpen && (inp.mousePressed || pad.firePressed)) || t.firePressed,
+      firing: (!wheelOpen && (inp.mouseDown || shove.firing)) || t.firing,
+      firePressed: (!wheelOpen && (inp.mousePressed || shove.pressed)) || t.firePressed,
       wheelOpen,
       wheelPointer: this.wheelPointer(t, pad),
       wheelReleased: inp.justReleased('Tab') || t.wheelReleased || pad.wheelReleased,
       numberKey,
     };
+  }
+
+  /** True while the aiming stick is shoved far enough to count as an attack. */
+  private stickSwinging = false;
+
+  /**
+   * Attacking with a pad, the way a fighting game does it: a direction is an
+   * attack, and an attack takes a direction.
+   *
+   * Shoving the right stick swings that way on its own - no button - and lets
+   * go of a charge the moment the stick comes back to centre, so a charged shot
+   * to the right is hold-right-then-release. The attack button is still there
+   * for a swing straight ahead, and while it is held the *left* stick aims as
+   * well as walks, so a run can be turned into a lunge without moving a thumb.
+   *
+   * The two cannot fight over the aim because the right stick always wins it:
+   * a hand shoving one stick to aim is not also asking with the other.
+   */
+  private padAttack(pad: PadState, wheelOpen: boolean): { aim: Vec2; firing: boolean; pressed: boolean } {
+    const shove = Math.hypot(pad.aim.x, pad.aim.y);
+    const was = this.stickSwinging;
+    // Two thresholds: it takes a shove to start swinging and a real let-go to
+    // stop, so a stick resting on the line does not machine-gun.
+    const swinging = this.device === 'pad' && !wheelOpen
+      && shove > (was ? SWING_OFF : SWING_ON);
+    const pressed = swinging && !was;
+    this.stickSwinging = swinging;
+
+    const aim = shove > 0.001 ? pad.aim
+      // Nothing on the aiming stick: the walking one steers the swing instead,
+      // but only while the button is actually down, or every step would aim.
+      : (pad.fire && Math.hypot(pad.move.x, pad.move.y) > 0.001) ? pad.move
+        : { x: 0, y: 0 };
+    return { aim, firing: swinging || pad.fire, pressed: pressed || pad.firePressed };
   }
 
   /** Where the wheel thinks the pointer is, in whichever way it is being driven. */
@@ -741,9 +799,14 @@ export class Game {
     );
     if (this.phase === 'menu') this.drawMenu();
     if (this.phase === 'won') this.drawWin();
+    // The menu sits over everything, including the wheel and the title card -
+    // and the cursor over that, or it would be pointing at the game from
+    // behind the card it is supposed to be picking things out of.
+    if (this.phase !== 'won') {
+      this.menu.hover(this.device === 'desk' ? this.pointerWorld() : null);
+      this.menu.draw(this.sk, this.view, this.inputReport());
+    }
     if (this.device === 'desk') this.drawCursor();
-    // Last, so it sits over everything including the wheel and the title card.
-    if (this.phase !== 'won') this.menu.draw(this.sk, this.view, this.inputReport());
   }
 
   private drawHud(): void {
@@ -804,8 +867,8 @@ export class Game {
         const lines = this.device === 'pad'
           ? [
               'LEFT STICK  MOVE  ·  UP JUMPS  ·  DOWN CROUCHES',
-              'RIGHT STICK  AIM  ·  R1 / R2 / X  ATTACK',
-              'HOLD L1 AND POINT TO PICK A WEAPON  ·  START  SETTINGS',
+              'SHOVE THE RIGHT STICK TO SWING THAT WAY  ·  LET GO TO RELEASE A CHARGE',
+              'R1 / R2 / X  SWING AHEAD  ·  HOLD L1 AND POINT TO EQUIP  ·  START  SETTINGS',
             ]
           : [
               'TILT THE LEFT SIDE TO WALK  ·  PUSH IT FURTHER TO SPRINT',
@@ -904,8 +967,8 @@ export class Game {
     const rows: Array<[string, string]> = this.device === 'pad'
       ? [
           ['LEFT STICK', 'move — up jumps, down crouches'],
-          ['RIGHT STICK', 'aim, and he turns to follow it'],
-          ['R1 / R2 / X', 'attack, held for combos and charges'],
+          ['RIGHT STICK', 'shove it to swing that way — let go to fire a charge'],
+          ['R1 / R2 / X', 'swing where he looks; the left stick steers it too'],
           ['HOLD L1', 'weapon fan — point at one and let go'],
           ['START', 'settings'],
           ['GOAL', 'wipe the black wall off the screen'],
@@ -995,27 +1058,43 @@ export class Game {
     c.restore();
   }
 
-  /** A drawn crosshair, since the CSS cursor is hidden over the canvas. */
+  /**
+   * A drawn crosshair, since the CSS cursor is hidden over the canvas.
+   *
+   * It is painted as a difference against whatever is under it rather than in
+   * ink, so it comes out white over the wall and black over the paper, pixel by
+   * pixel - a black crosshair simply vanished the moment it reached the wall,
+   * which is exactly where it is needed. Over the settings card it drops the
+   * ring and shortens to a plain pointer: aiming is not what it is doing there.
+   */
   private drawCursor(): void {
     const p = this.pointerWorld();
     const c = this.ctx;
     const sk = this.sk;
-    const spin = this.time * 0.6;
+    const picking = this.menu.open;
     c.save();
-    c.strokeStyle = '#000';
-    c.lineWidth = 2.4;
-    const r = this.phase === 'playing' ? 13 : 9;
-    const pts: Vec2[] = [];
-    for (let i = 0; i < 7; i++) {
-      const a = spin + (i / 7) * TAU;
-      pts.push({ x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r });
+    // White through `difference` inverts what is behind it; grey lands as its
+    // own complement, which still reads against the grey it came from.
+    c.globalCompositeOperation = 'difference';
+    c.strokeStyle = '#fff';
+    c.lineWidth = picking ? 2.8 : 2.4;
+    const r = picking ? 7 : this.phase === 'playing' ? 13 : 9;
+    if (!picking) {
+      const spin = this.time * 0.6;
+      const pts: Vec2[] = [];
+      for (let i = 0; i < 7; i++) {
+        const a = spin + (i / 7) * TAU;
+        pts.push({ x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r });
+      }
+      sk.polyPath(pts, 1);
+      c.stroke();
     }
-    sk.polyPath(pts, 1);
-    c.stroke();
+    const gap = picking ? 2 : r + 4;
+    const len = picking ? r + 6 : r + 11;
     for (const d of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
       c.beginPath();
-      c.moveTo(p.x + Math.cos(d) * (r + 4), p.y + Math.sin(d) * (r + 4));
-      c.lineTo(p.x + Math.cos(d) * (r + 11), p.y + Math.sin(d) * (r + 11));
+      c.moveTo(p.x + Math.cos(d) * gap, p.y + Math.sin(d) * gap);
+      c.lineTo(p.x + Math.cos(d) * len, p.y + Math.sin(d) * len);
       c.stroke();
     }
     c.restore();

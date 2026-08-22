@@ -29,6 +29,16 @@ export class SettingsMenu {
   chip: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private rows: Row[] = [];
   private card: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  private pointer: Vec2 | null = null;
+
+  /** Where the cursor is, so the thing under it can show that it is under it. */
+  hover(p: Vec2 | null): void {
+    this.pointer = p;
+  }
+
+  private under(r: Rect): boolean {
+    return !!this.pointer && this.open && hitRect(r, this.pointer);
+  }
 
   /**
    * World units are not screen units - a portrait phone runs about 2.1 world
@@ -69,9 +79,10 @@ export class SettingsMenu {
   draw(sk: Sketch, view: { w: number; h: number }, input: InputReport): void {
     const c = sk.ctx;
     c.save();
-    plate(sk, this.chip, this.open);
-    gear(sk, this.chip.x + this.chip.w / 2, this.chip.y + this.chip.h / 2, this.chip.h * 0.3,
-      this.open ? '#fff' : '#000');
+    const onChip = !!this.pointer && hitRect(this.chip, this.pointer);
+    plate(sk, onChip ? grow(this.chip, this.chip.h * 0.05) : this.chip, this.open);
+    gear(sk, this.chip.x + this.chip.w / 2, this.chip.y + this.chip.h / 2,
+      this.chip.h * (onChip ? 0.33 : 0.3), this.open ? '#fff' : '#000');
     c.restore();
     if (!this.open) { this.rows = []; return; }
 
@@ -166,9 +177,10 @@ export class SettingsMenu {
     const bw = (w - labelW - gap * (opts.length - 1)) / opts.length;
     opts.forEach((o, i) => {
       const r: Rect = { x: x + labelW + i * (bw + gap), y: y + (h - box) / 2, w: bw, h: box };
-      plate(sk, r, o.on);
+      const hot = this.under(r);
+      plate(sk, hot ? grow(r, box * 0.06) : r, o.on);
       inkText(sk, o.label, r.x + r.w / 2, r.y + r.h / 2 + 1, Math.min(size * 1.1, bw * 0.42),
-        { color: o.on ? '#fff' : '#000', alpha: o.on ? 1 : 0.75 });
+        { color: o.on ? '#fff' : '#000', alpha: o.on || hot ? 1 : 0.75, wobble: hot ? 1 : 0.7 });
       this.rows.push({ r, act: o.act });
     });
   }
@@ -180,6 +192,10 @@ function shortName(id: string): string {
   const name = (paren > 0 ? id.slice(0, paren) : id).trim();
   return (name || id).slice(0, 28).toUpperCase();
 }
+
+/** A rect swollen by `by` on every side, for the one under the cursor. */
+const grow = (r: Rect, by: number): Rect =>
+  ({ x: r.x - by, y: r.y - by, w: r.w + by * 2, h: r.h + by * 2 });
 
 /** A rough inked box, filled when it is the one in force. */
 function plate(sk: Sketch, r: Rect, filled: boolean): void {

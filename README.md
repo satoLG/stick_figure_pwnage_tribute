@@ -67,9 +67,9 @@ touch the glass or the mouse and it switches back.
 
 | Input | Action |
 | --- | --- |
-| Left stick | Move — push up to jump, down to crouch |
-| Right stick | Aim, eased (below) |
-| `R1` / `R2` / `X` | Attack, held for combos and charges |
+| Left stick | Move — push up to jump, down to crouch. While an attack button is held it steers the swing as well, so a run turns into a lunge without moving a thumb |
+| Right stick | Aim, eased (below) — and **shoving it is itself an attack**, no button. A charged weapon lets go the moment the stick comes back to centre, so a charged shot to the right is hold-right, release |
+| `R1` / `R2` / `X` | Attack along the aim he already has |
 | `A` | Jump · `B` Crouch |
 | Hold `L1` / `L2` | Weapon fan — point the right stick at one and let go |
 | D-pad ←→, `Y` | Step through the arsenal |
@@ -94,7 +94,7 @@ degrees of aim. So each pairing gets what suits it (`src/ui/aim.ts`):
 | Touch, ranged | **Point** — the aim goes to the spot under the thumb. There is no stick to wobble, so a shot lands where you put your finger. |
 | Touch, melee | **Direct** — the raw angle of the floating stick, instantly. Fastest and most forgiving, which is what a swing wants. |
 | Gamepad | **Eased** — the aim *swings* towards the stick at a capped speed instead of snapping to it, rising with the square of the push, so the first degrees of travel place a shot and the rim spins him round. A real stick springs back, and needs it. |
-| Mouse | The cursor is the aim. |
+| Mouse | The cursor is the aim. It is drawn as a difference against whatever is under it, so it inverts to white the moment it crosses the wall instead of disappearing into it. |
 
 **Aim speed** in the settings scales the eased sweep; it is on FAST by default.
 
@@ -111,6 +111,21 @@ choices are remembered between sessions.
 The weapon wheel is a full ring with a mouse or a pad and a **fan above the
 pad** on touch — a thumb dragging up from the bottom edge cannot reach the
 lower half of a ring.
+
+## The screen
+
+The scene is a fixed-size thing placed on a variable-size screen, not a thing
+stretched to fill it. The figure, the floor and the wall are all constants in
+world units — the wall is always 470 tall and 420 thick, four and a bit figures
+high — so a phone and an ultrawide get the same wall, the same run-up and the
+same length of game. What the screen shape decides is how much room there is
+*around* it: a tall screen gets more sky and a slightly deeper floor, never a
+taller wall.
+
+A strip along the top belongs to the HUD — the meter, the cog, and whatever
+joins them later — and the scene is laid out underneath it, so nothing solid
+ever climbs into the readouts. It is white paper either way, so the two still
+read as one picture rather than a game with a bar bolted over it.
 
 ## The arsenal
 
