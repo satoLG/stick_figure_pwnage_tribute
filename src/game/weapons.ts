@@ -193,7 +193,11 @@ export class Fists extends MeleeWeapon {
     const size = (big ? 74 : 48) * rand(0.85, 1.25);
 
     if (hit) {
-      ctx.terrain.carveBlob(at.x, at.y, size * 0.62, 0.42, 16, size * 0.48);
+      // Wide and shallow. The reference draws its ink on *paper* - the wall
+      // has already gone where the blow lands, and the spikes and the hand
+      // read black on white. A narrow deep bite leaves the effect sitting on
+      // the black slab where half of it cannot be seen at all.
+      ctx.terrain.carveBlob(at.x, at.y, size * 1.05, 0.42, 18, size * 0.34);
       ctx.particles.debris(at.x, at.y, big ? 4 : 2, 260, a + Math.PI, 2.4);
       ctx.particles.streaks(at.x, at.y, big ? 6 : 3, a + Math.PI, 1.9, 40 + size);
     }
@@ -288,44 +292,95 @@ export class Fists extends MeleeWeapon {
     c.save();
     c.lineJoin = 'round';
     c.lineCap = 'round';
-    for (const p of this.punches) {
+    // Only the newest blow gets a hand drawn on it. The reference never has
+    // two of these on the paper at once - what the older ones leave behind is
+    // their ink and their speed lines, and five overlapping mittens read as a
+    // bunch of grapes rather than as a fist.
+    const newest = this.punches.length - 1;
+    for (let pi = 0; pi < this.punches.length; pi++) {
+      const p = this.punches[pi];
       const k = p.life / p.max;                    // 1 -> 0
-      const open = 1 - k;                          // it keeps expanding as it goes
-      const s = p.size * (0.7 + open * 0.85);
-      c.globalAlpha = clamp(k * 1.6, 0, 1);
+      const open = 1 - k;
+      const s = p.size * (0.8 + open * 0.4);
+      const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+      const at = (d: number, o: number): Vec2 =>
+        ({ x: p.x + ca * d - sa * o, y: p.y + sa * d + ca * o });
+      c.globalAlpha = clamp(k * 1.7, 0, 1);
 
-      // The fan first, so the core sits on top of its own explosion. It is
-      // thrown wide - most of it back down the punch line, but with enough
-      // going the other way that the shape has no obvious direction.
-      c.fillStyle = '#fff';
+      // The fist, which the reference draws as a cloud of overlapping rounded
+      // knuckles in *outline* - no fill, no heavy edge, every stroke the same
+      // weight as the stick figure's own. It is several times the size of his
+      // actual hand, which is the whole joke, and it is left open so the wall
+      // shows through it.
       c.strokeStyle = '#000';
-      c.lineWidth = 2.6;
-      sk.blastPath(p.x, p.y, 13, s * 0.5, s * 2.3, s * 0.34, 3.5, p.ang + Math.PI, p.seed);
-      c.fill();
-      c.stroke();
-      sk.blastPath(p.x, p.y, 7, s * 0.4, s * 1.5, s * 0.26, TAU, 0, p.seed + 51);
-      c.fill();
-      c.stroke();
-
-      // The core: a torn white hole, not a fist.
-      c.fillStyle = '#fff';
-      sk.ragPath(p.x, p.y, s * 0.62, 13, 0.46, p.seed + 7);
-      c.fill();
-      c.lineWidth = 4.4;
-      sk.ragPath(p.x, p.y, s * 0.62, 13, 0.46, p.seed + 7);
-      c.stroke();
-
-      // And the loose scrawls trailing back off it, thrown down fast.
-      c.lineWidth = 3.4;
-      for (let i = 0; i < 5; i++) {
-        const a = p.ang + Math.PI + hashNoise(p.seed + i * 13, sk.boil) * 1.5;
-        const l = s * (1.4 + Math.abs(hashNoise(p.seed + i * 17, sk.boil)) * 2.4);
-        sk.scrawl(
-          { x: p.x + Math.cos(a) * s * 0.5, y: p.y + Math.sin(a) * s * 0.5 },
-          { x: p.x + Math.cos(a) * l, y: p.y + Math.sin(a) * l },
-          3.4 - i * 0.4, s * 0.3, 4,
-        );
+      // Three times his own height, which is what the reference draws. A fist
+      // the size of a fist is just a fist; the joke is the scale.
+      const F = s * 2.8;
+      // Knuckles are ovals, squashed across the line of the punch; balls read
+      // as fruit. Everything below is drawn in that squashed frame.
+      const oval = (dx: number, dy: number, r: number, n: number): Vec2[] => {
+        const q = at(dx, dy);
+        const pts: Vec2[] = [];
+        for (let i2 = 0; i2 < n; i2++) {
+          const a2 = (i2 / n) * TAU;
+          const ex = Math.cos(a2) * r * 0.82, ey = Math.sin(a2) * r * 1.08;
+          pts.push({ x: q.x + ca * ex - sa * ey, y: q.y + sa * ex + ca * ey });
+        }
+        return pts;
+      };
+      // A mitten: one big mass for the back of the hand and a row of knuckles
+      // along the leading edge.
+      const lobes: Array<[number, number, number]> = [
+        [-F * 0.5, F * 0.02, F * 0.5],
+        [-F * 0.02, -F * 0.3, F * 0.34],
+        [F * 0.16, F * 0.02, F * 0.33],
+        [F * 0.1, F * 0.34, F * 0.3],
+        [-F * 0.2, F * 0.5, F * 0.26],
+      ];
+      // Knocked back once behind the whole hand so it reads over the black
+      // wall, then outlined - never filled per lobe, or it turns into a bunch
+      // of grapes instead of a hand.
+      if (pi === newest) {
+        c.fillStyle = '#fff';
+        for (const [dx, dy, r] of lobes) {
+          sk.polyPath(oval(dx, dy, r, 15), 1.4);
+          c.fill();
+        }
+        c.lineWidth = 2.8;
+        for (const [dx, dy, r] of lobes) {
+          sk.polyPath(oval(dx, dy, r, 15), 1.4);
+          c.stroke();
+        }
       }
+      // The creases between the knuckles, and one fingernail.
+      if (pi === newest) {
+        c.lineWidth = 2.4;
+        for (let i2 = 0; i2 < 2; i2++) {
+          sk.line(at(-F * 0.16, -F * 0.16 + i2 * F * 0.34),
+            at(F * 0.16, -F * 0.1 + i2 * F * 0.34), 2.4, 1, 0.7);
+        }
+        sk.polyPath(oval(F * 0.04, -F * 0.36, F * 0.1, 9), 0.9);
+        c.stroke();
+      }
+
+      // Long thin speed slivers raining past it on the line it came in on -
+      // solid black, sharply pointed, scattered well clear of the hand rather
+      // than through it. Half of what sells the speed is these.
+      c.fillStyle = '#000';
+      for (let i2 = 0; i2 < 9; i2++) {
+        const o = hashNoise(p.seed + i2 * 5, sk.boil) * F * 1.9;
+        const back = F * (0.9 + Math.abs(hashNoise(p.seed + i2 * 9, sk.boil)) * 2.2);
+        const l = F * (0.28 + Math.abs(hashNoise(p.seed + i2 * 3, sk.boil)) * 0.55);
+        const q = at(-back, o);
+        sk.tuftPath(q.x, q.y, 1, 0, l, 0.1, p.ang + Math.PI, p.seed + i2, 0.04);
+        c.fill();
+      }
+      // And a small clump of ink at the contact point itself. Small: the
+      // reference marks a hit, it does not stab the drawing with it.
+      const bite = at(F * 0.42, 0);
+      sk.tuftPath(bite.x, bite.y, 16, s * 0.06, s * (0.8 + open * 0.5), 2.8,
+        p.ang + Math.PI, p.seed + 51, 0.05);
+      c.fill();
     }
     c.globalAlpha = 1;
     c.restore();

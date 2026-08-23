@@ -261,6 +261,67 @@ export class Sketch {
     this.polyPath(pts, 1.2);
   }
 
+  /**
+   * The mark the reference actually leaves where something hits.
+   *
+   * Not a starburst and not a fan of leaves: a dense little tuft of thin,
+   * sharp, solid-black slivers flicked out of the point of contact, at wildly
+   * uneven lengths, each one bent a touch off its own axis. Aspect ratio is the
+   * whole thing - a spike is eight or ten times as long as it is wide, and the
+   * moment they get fat they stop being ink and start being foliage.
+   *
+   * Traces only; fill it black.
+   */
+  tuftPath(
+    cx: number, cy: number, count: number, r0: number, r1: number,
+    spread = Math.PI * 2, dir = 0, seed = 0, thin = 0.055,
+  ): void {
+    const c = this.ctx;
+    const step = spread / Math.max(1, count);
+    c.beginPath();
+    for (let i = 0; i < count; i++) {
+      const a = dir + (count === 1 ? 0 : (i / (count - 1) - 0.5) * spread)
+        + hashNoise(seed + i, this.boil) * step * 1.3;
+      // Lengths spread over more than a factor of three, biased short, so the
+      // cluster has a handful of long ones sticking out of a lot of stubs.
+      const g = Math.abs(hashNoise(seed + i * 3, this.boil + 1));
+      const l0 = r0 * (0.25 + Math.abs(hashNoise(seed + i * 5, this.boil)) * 1.1);
+      const l1 = l0 + (r1 - r0) * (0.08 + g * g * g * 2.2);
+      const len = Math.max(2, l1 - l0);
+      const w = len * thin + 0.5;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const nx = -sa, ny = ca;
+      const bend = hashNoise(seed + i * 7, this.boil + 2) * len * 0.2;
+      const p = (d: number, o: number): Vec2 => ({ x: cx + ca * d + nx * o, y: cy + sa * d + ny * o });
+      const tip = p(l1, bend);
+      const m1 = p(l0 + len * 0.45, bend * 0.4 + w * 0.5);
+      const m2 = p(l0 + len * 0.45, bend * 0.4 - w * 0.5);
+      c.moveTo(cx + ca * l0 + nx * w, cy + sa * l0 + ny * w);
+      c.quadraticCurveTo(m1.x, m1.y, tip.x, tip.y);
+      c.quadraticCurveTo(m2.x, m2.y, cx + ca * l0 - nx * w, cy + sa * l0 - ny * w);
+      c.closePath();
+    }
+  }
+
+  /**
+   * The reference's only grey, and it is not grey: it is a screen of dots.
+   * Fills whatever region is currently clipped, so the caller clips to a shape
+   * and calls this to shade it.
+   */
+  halftone(x0: number, y0: number, x1: number, y1: number, step = 5, r = 1.35): void {
+    const c = this.ctx;
+    c.beginPath();
+    let row = 0;
+    for (let y = y0; y < y1; y += step, row++) {
+      const off = (row % 2) * step * 0.5;
+      for (let x = x0 + off; x < x1; x += step) {
+        c.moveTo(x + r, y);
+        c.arc(x, y, r, 0, Math.PI * 2);
+      }
+    }
+    c.fill();
+  }
+
   /** Short radiating impact / speed lines, the signature "hit" punctuation. */
   burst(cx: number, cy: number, count: number, r0: number, r1: number, width: number, spread = Math.PI * 2, dir = 0, seed = 0): void {
     const c = this.ctx;

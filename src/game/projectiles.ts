@@ -260,42 +260,41 @@ export class Projectile {
         c.rotate(-this.angle);
         const seed = Math.floor(this.spin * 5);
         c.fillStyle = '#000';
-        sk.sparkPath(0, 0, 5, r * 0.5, r * 5.5, 3.4, 1.0, this.angle, seed, 0.45);
+        sk.tuftPath(0, 0, 6, r * 0.4, r * 6, 1.1, this.angle, seed, 0.09);
         c.fill();
-        sk.sparkPath(0, 0, 3, r * 0.4, r * 2.4, 2.6, 2.6, this.angle + Math.PI,
-          seed + 31, 0.55);
+        sk.tuftPath(0, 0, 4, r * 0.3, r * 2.6, 2.6, this.angle + Math.PI, seed + 31, 0.1);
         c.fill();
         c.rotate(this.angle);
         break;
       }
       case 'fireball': {
-        // Big enough to be the whole shot rather than a detail on it. Local
-        // space already points +x along the flight, so the tail simply hangs
-        // off the back of it - no re-rotating, which is what had the tongues
-        // sitting at the wrong angle to their own ball.
+        // The reference draws a fireball as a torn white shape over a patch of
+        // halftone with sharp licks flicked off it - not a hoop of petals.
         const r = this.radius;
+        c.rotate(-this.angle);
+        // Halftone bed, clipped to a ragged blob a little wider than the ball.
+        c.save();
+        sk.ragPath(0, 0, r * 1.25, 15, 0.34, 4205);
+        c.clip();
+        c.fillStyle = '#000';
+        sk.halftone(-r * 1.4, -r * 1.4, r * 1.4, r * 1.4, 6, 1.5);
+        c.restore();
+        // The body of it.
         c.fillStyle = '#fff';
         c.strokeStyle = '#000';
-        c.lineWidth = 3;
-        // The trail of flame streaming off the back.
-        sk.blastPath(-r * 0.5, 0, 9, r * 0.7, r * 2.3, r * 0.5, 1.9, Math.PI, 4203);
-        c.fill();
-        c.stroke();
-        // Tongues round the rim, kept close to the ball so the silhouette
-        // stays a ball rather than a star.
-        sk.blastPath(0, 0, 19, r * 0.86, r * 1.26, r * 0.22, TAU, 0, 4201);
-        c.fill();
-        c.stroke();
-        sk.blastPath(0, 0, 6, r * 0.9, r * 1.75, r * 0.3, TAU, 0, 4204);
-        c.fill();
-        c.stroke();
-        // The ball itself.
-        sk.ragPath(0, 0, r * 0.9, 15, 0.24, 4202);
+        sk.ragPath(0, 0, r * 0.92, 15, 0.26, 4202);
         c.fill();
         c.lineWidth = 4.4;
-        sk.ragPath(0, 0, r * 0.9, 15, 0.24, 4202);
+        sk.ragPath(0, 0, r * 0.92, 15, 0.26, 4202);
         c.stroke();
+        // Licks off the rim and a tail dragging behind it, all thin and sharp.
+        c.fillStyle = '#000';
+        sk.tuftPath(0, 0, 20, r * 0.85, r * 1.85, TAU, 0, 4201, 0.085);
+        c.fill();
+        sk.tuftPath(-r * 0.5, 0, 10, r * 0.6, r * 3.2, 1.7, Math.PI, 4203, 0.09);
+        c.fill();
         // One curl inside it, so it has some turn to it.
+        c.strokeStyle = '#000';
         c.lineWidth = 2.6;
         sk.polyPath(ring(r * 0.46, 9, this.spin * 0.5), r * 0.09);
         c.stroke();

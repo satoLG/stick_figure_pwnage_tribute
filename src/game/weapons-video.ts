@@ -466,25 +466,25 @@ export class Wind extends MeleeWeapon {
     const bend = g.curl * L * 0.45;
 
     c.globalAlpha = clamp(k * 1.7, 0, 1);
-    c.fillStyle = '#fff';
-    c.strokeStyle = '#000';
-    c.lineWidth = 3.2;
-    // Fattest a third of the way along and hooking at the tip: a comma, which
-    // is the shape every drawn gust of wind in the world is made of.
-    sk.ribbonPath(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.5 + k * 0.7), 0.34, 0.8);
-    c.fill();
-    c.stroke();
-
-    c.lineWidth = 2.4;
+    // Ink on paper, with a white halo under it so the stroke survives the
+    // black wall. The reference draws wind as *black* tapered strokes; my
+    // white ribbons with an outline were the wrong way round, and read as
+    // ribbons of paper rather than as moving air.
+    const stroke = (a0: Vec2, ctrl: Vec2, b0: Vec2, w: number): void => {
+      c.fillStyle = '#fff';
+      sk.ribbonPath(a0, ctrl, b0, w + 5, 0.34, 0.8);
+      c.fill();
+      c.fillStyle = '#000';
+      sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8);
+      c.fill();
+    };
+    // A comma: fat a third of the way along, hooking to a point at the tip.
+    stroke(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.28 + k * 0.34));
     for (let i = 0; i < 2; i++) {
       const o = (i === 0 ? 1 : -1) * g.width * (0.7 + Math.abs(hashNoise(g.seed + i, sk.boil)) * 0.5);
       const l = L * (0.45 + Math.abs(hashNoise(g.seed + i * 7, sk.boil)) * 0.4);
-      sk.ribbonPath(
-        at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
-        g.width * 0.26 * (0.4 + k), 0.3, 0.85,
-      );
-      c.fill();
-      c.stroke();
+      stroke(at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
+        g.width * 0.14 * (0.4 + k));
     }
   }
 
@@ -521,30 +521,27 @@ export class Wind extends MeleeWeapon {
         const lift = Math.cos(th) * r * 0.22;
         pts.push({ x: base.x + ca * d + nx * o, y: base.y + sa * d + ny * o - lift });
       }
-      // Twice: a fat white stroke under a thin ink one, so the far end of the
-      // funnel does not vanish into the wall it is drilling.
+      // A white halo under a thin ink stroke, so the far end of the funnel
+      // does not vanish into the wall it is drilling.
       c.beginPath();
       for (let i = 0; i < pts.length; i++) {
         if (i === 0) c.moveTo(pts[i].x, pts[i].y); else c.lineTo(pts[i].x, pts[i].y);
       }
       c.strokeStyle = '#fff';
-      c.lineWidth = 7 + v.power * 2.4;
+      c.lineWidth = 6.5 + v.power * 2;
       c.stroke();
       c.strokeStyle = '#000';
-      c.lineWidth = 3 + v.power * 1.6;
+      c.lineWidth = 2.4 + v.power * 1.2;
       c.stroke();
     }
-    // The mouth of it, and the air being torn off the rim.
+    // The air being torn off the mouth of it, and the throat of it in his
+    // hands so the base is obviously his - both as thin ink tufts.
     const at = { x: base.x + ca * head, y: base.y + sa * head };
-    c.lineWidth = 3.4;
-    sk.sparkPath(at.x, at.y, 9, r1 * 0.5, r1 * 2.1, r1 * 0.34, 2.4, v.ang, 4321, 0.55);
+    c.fillStyle = '#000';
+    sk.tuftPath(at.x, at.y, 13, r1 * 0.4, r1 * 2, 2.5, v.ang, 4321, 0.09);
     c.fill();
-    c.stroke();
-    // And the throat of it in his hands, so the base is obviously his.
-    c.lineWidth = 2.6;
-    sk.sparkPath(base.x, base.y, 6, 8, 34 + v.power * 18, 12, TAU, 0, 4322, 0.7);
+    sk.tuftPath(base.x, base.y, 7, 8, 30 + v.power * 16, TAU, 0, 4322, 0.11);
     c.fill();
-    c.stroke();
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
@@ -1145,25 +1142,21 @@ export class ArcaneStaff extends Weapon {
         // Breathing on the spot, and winding tighter as their moment comes.
         const bob = Math.sin(ctx.time * 3.4 + i * 1.3) * 3;
         const ox = o.x, oy = o.y + bob;
-        const r = 7 + Math.sin(ctx.time * 5 + i) * 0.8 + wait * 2.5;
+        const r = 11 + Math.sin(ctx.time * 5 + i) * 1.2 + wait * 3;
+        // Plain open circles, which is exactly how the reference draws these:
+        // a wobbly ring and nothing inside it. Everything I had in here before
+        // - filled cores, white bites, rings of spikes - was three times the
+        // ink the drawing has and read as clutter.
         c.strokeStyle = '#000';
-        // The little ring each one sits inside: the magic bit.
-        c.lineWidth = 1.8;
-        c.globalAlpha = 0.55 + wait * 0.45;
-        sk.polyPath(ring(ox, oy, r * 2.4 - wait * r * 0.7, 9, -ctx.time * (1.1 + i * 0.3)), 1.2);
+        c.lineWidth = 3.4;
+        sk.polyPath(ring(ox, oy, r, 11, ctx.time * 0.7 + i), 1.3);
         c.stroke();
-        sk.polyPath(ring(ox, oy, r * 1.6, 7, ctx.time * (1.6 + i * 0.2)), 1);
-        c.stroke();
-        c.globalAlpha = 1;
-        c.fillStyle = '#000';
-        sk.polyPath(ring(ox, oy, r, 10, ctx.time * 2 + i), 1.2);
-        c.fill();
-        c.fillStyle = '#fff';
-        sk.polyPath(ring(ox, oy, r * 0.42, 8, -ctx.time * 3), 0.9);
-        c.fill();
-        c.fillStyle = '#000';
-        c.lineWidth = 2;
-        sk.burst(ox, oy, 6, r * 1.4, r * (2.2 + wait), 2, TAU, 0, g.seed + i);
+        // A couple of ticks off it as its moment comes, and no more than that.
+        if (wait > 0.55) {
+          c.fillStyle = '#000';
+          sk.tuftPath(ox, oy, 5, r * 1.1, r * (1.5 + wait), TAU, 0, g.seed + i, 0.1);
+          c.fill();
+        }
       }
     }
 
@@ -1699,13 +1692,13 @@ export class Thunderbolt extends Weapon {
     for (const a of this.arcs) {
       const k = a.life / a.max;
       c.globalAlpha = clamp(k * 1.8, 0, 1);
-      // A white core with an ink edge, so the path stays legible over the
-      // black wall. The scratches growing off it are the rest of the look.
+      // A white core with a thin ink edge, so the path stays legible over the
+      // black wall without becoming a rope.
       c.strokeStyle = '#000';
-      c.lineWidth = a.width * (0.4 + k * 0.7) + 3.6;
+      c.lineWidth = a.width * (0.3 + k * 0.5) + 2.6;
       strokePts(c, a.pts);
       c.strokeStyle = '#fff';
-      c.lineWidth = a.width * (0.4 + k * 0.7);
+      c.lineWidth = a.width * (0.3 + k * 0.5);
       strokePts(c, a.pts);
       // And the feathering, which is the actual look: at every kink a ragged
       // fan of curved tapered slivers, mostly running along the bolt and a few
@@ -1714,20 +1707,23 @@ export class Thunderbolt extends Weapon {
       c.fillStyle = '#000';
       c.strokeStyle = '#000';
       c.lineWidth = 1.2;
-      // Thin and long, and only at every other kink: the reference's strokes
-      // are scratches, and a hundred fat ones turn a bolt into a hedge.
-      for (let i = 0; i < a.pts.length - 1; i += 2) {
+      // Ink flicked off the kinks: thin sharp slivers, a few per bend, and
+      // nothing fat anywhere. This is the reference's whole vocabulary for
+      // energy, and the moment the strokes thicken it turns into a hedge.
+      for (let i = 1; i < a.pts.length - 1; i++) {
         const p = a.pts[i];
         const q = a.pts[i + 1];
         const along = Math.atan2(q.y - p.y, q.x - p.x);
-        const seg = Math.hypot(q.x - p.x, q.y - p.y);
-        const reach = (seg * 0.9 + 30) * (0.45 + k * 0.75);
-        sk.sparkPath(p.x, p.y, 3, reach * 0.14, reach, 3.4, 1.0, along, i * 37 + sk.boil, 0.4);
-        c.fill();
-        sk.sparkPath(p.x, p.y, 2, reach * 0.1, reach * 0.5, 2.4, 2.4,
-          along + Math.PI, i * 53 + sk.boil, 0.55);
+        const reach = (26 + Math.abs(hashNoise(i, sk.boil)) * 26) * (0.4 + k * 0.8);
+        sk.tuftPath(p.x, p.y, 4, reach * 0.1, reach, 2.0, along, i * 37 + sk.boil, 0.1);
         c.fill();
       }
+      // And a proper tuft where it earthed itself.
+      const end = a.pts[a.pts.length - 1];
+      const prev = a.pts[a.pts.length - 2];
+      sk.tuftPath(end.x, end.y, 11, 4, (34 + a.width * 6) * (0.4 + k * 0.9), 2.7,
+        Math.atan2(prev.y - end.y, prev.x - end.x), 771, 0.1);
+      c.fill();
     }
     c.globalAlpha = 1;
     c.restore();
