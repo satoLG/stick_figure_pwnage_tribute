@@ -255,49 +255,75 @@ const SALVO_SIZE = 10;
 export class MissilePods extends Weapon {
   readonly id = 9;
   readonly name = 'MISSILE PODS';
-  readonly tagline = 'three at a time, or everything at once';
+  readonly tagline = 'three out the front, or ten off his back';
   override auto = true;
-  override cooldown = 0.8;
+  override cooldown = 0.9;
   /** 0..1 recent launch, for the tube flash. */
   private launch = 0;
   /** 0..1 how far the salvo has finished loading. */
   private load = 0;
   private loadSfx = 0;
+  /** Which of the three front barrels fires next. */
+  private barrel = 0;
 
-  override onEquip(): void { super.onEquip(); this.load = 0; this.launch = 0; }
+  override onEquip(): void { super.onEquip(); this.load = 0; this.launch = 0; this.barrel = 0; }
 
-  /** Where a tube mouth sits: behind the shoulder, `slot` down the pod. */
   /** How far open the rack is standing right now. */
-  private get open(): number { return 0.85 + this.load * 0.45 + this.launch * 0.15; }
+  private get open(): number { return 0.9 + this.load * 0.35 + this.launch * 0.12; }
 
   /**
-   * Which way a plate sweeps. Both of them go up and back - one steep, one
-   * shallow - rather than one up and one down: a plate swept downwards ends up
-   * buried in his own legs, and the pair stop reading as a pair.
+   * Where the whole rig hangs from: the middle of his chest, not his
+   * shoulders. Everything fans out from here, and it has to be low enough that
+   * the tubes stay under his head - a rack drawn across the face of the figure
+   * stops being a rack and starts being a bush.
    */
-  private axis(ctx: WeaponCtx, side: number): number {
-    const f = ctx.sm.facing;
-    const back = f > 0 ? Math.PI : 0;
-    return back + f * (side < 0 ? 1.25 : 0.42) * (0.78 + 0.3 * this.open);
-  }
-
-  private root(ctx: WeaponCtx, side: number): Vec2 {
+  private root(ctx: WeaponCtx): Vec2 {
     const c = ctx.sm.pose.chest;
-    return { x: c.x, y: c.y - 8 + side * 4 };
+    return { x: c.x, y: c.y + 4 };
   }
 
-  /** A tube mouth: `slot` of three, out along the plate's outer edge. */
-  private pod(ctx: WeaponCtx, side: number, slot: number): Vec2 {
-    const a = this.axis(ctx, side);
-    const r = this.root(ctx, side);
-    const L = 84 * this.open;
-    const d = L * (0.28 + slot * 0.24);
-    const o = -18 * side;
+  // --------------------------------------------------------- the geometry ---
+  //
+  // The rig is a bundle of long square tubes strapped round his shoulders: a
+  // bank of three running forward along the aim, ending in open mouths, and a
+  // bank of four swept back behind him. Front bank fires the singles, back
+  // bank dumps the salvo - which is also the only shape that reads at a
+  // glance, because a mouth pointing at the wall is obviously where a missile
+  // comes out of.
+
+  /** Perpendicular offset of front barrel `i`, biased below the aim line. */
+  private frontOffset(i: number): number { return (i - 1) * 15 + 8; }
+
+  /** The mouth of front barrel `i`. */
+  private frontMouth(ctx: WeaponCtx, i: number): Vec2 {
+    const a = ctx.sm.pose.aim;
+    const r = this.root(ctx);
+    const d = 12 + 58 * this.open;
+    const o = this.frontOffset(i);
     return { x: r.x + Math.cos(a) * d - Math.sin(a) * o, y: r.y + Math.sin(a) * d + Math.cos(a) * o };
   }
 
-  private fire(ctx: WeaponCtx, from: Vec2, dir: number, target: Vec2, arm: number): void {
-    const speed = 340 + rand(0, 120);
+  /**
+   * Which way back tube `i` of four sweeps: a fan from below the shoulder line
+   * round to just above it, so the bank spreads behind him rather than over him.
+   */
+  private backAxis(ctx: WeaponCtx, i: number): number {
+    const f = ctx.sm.facing;
+    const back = f > 0 ? Math.PI : 0;
+    return back + f * (-0.34 + i * 0.27) * (0.85 + 0.2 * this.open);
+  }
+
+  /** The mouth of back tube `i`. */
+  private backPod(ctx: WeaponCtx, i: number): Vec2 {
+    const a = this.backAxis(ctx, i);
+    const r = this.root(ctx);
+    const d = (24 + (i % 2) * 14) + 38 * this.open;
+    return { x: r.x + Math.cos(a) * d, y: r.y + Math.sin(a) * d };
+  }
+
+  // ------------------------------------------------------------- shooting ---
+
+  private fire(ctx: WeaponCtx, from: Vec2, dir: number, target: Vec2, speed: number, arm: number): void {
     ctx.projectiles.push(new Projectile({
       x: from.x, y: from.y,
       vx: Math.cos(dir) * speed, vy: Math.sin(dir) * speed,
@@ -305,34 +331,42 @@ export class MissilePods extends Weapon {
       target, turn: 3.4, accel: 1500, topSpeed: 1450, arm, weave: 0.2,
     }));
     ctx.particles.smoke(from.x, from.y, 2, 4);
-    ctx.particles.sparks(from.x, from.y, 3, 180, dir + Math.PI, 1.2);
+    ctx.particles.sparks(from.x, from.y, 3, 200, dir + Math.PI, 1.2);
   }
 
-  /** The ordinary attack: three rounds, all bending towards the crosshair. */
+  /**
+   * The ordinary attack: three rounds out of the front barrels, one after the
+   * other rather than all together - a ripple of three you can count is worth
+   * more than one triple bang, and the barrels take it in turns so you can see
+   * where each came from.
+   */
   protected release(ctx: WeaponCtx): void {
-    const f = ctx.sm.facing;
-    this.launch = 1;
-    this.cooldown = 0.8;
+    this.cooldown = 0.9;
     this.timer = this.cooldown;
-    this.startAnim(0.4);
-    ctx.sfx('launch', rand(1.15, 1.3));
-    ctx.shake(4);
-    ctx.sm.applyRecoil(0.3, ctx.sm.pose.aim, 24);
+    this.startAnim(0.5);
+    ctx.sm.applyRecoil(0.3, ctx.sm.pose.aim, 20);
     for (let i = 0; i < 3; i++) {
-      const from = this.pod(ctx, i === 1 ? 0 : (i === 0 ? -1 : 1), 0);
-      // Up and back out of the tubes, then round onto the target. Everything
-      // launches with some climb in it: a guided round that leaves level with
-      // the floor spends its turn radius on the ground it was standing on.
-      const dir = -Math.PI / 2 + (i - 1) * 0.42 - f * 0.3;
-      const target = {
-        x: ctx.aimPoint.x + rand(-70, 70),
-        y: ctx.aimPoint.y + rand(-60, 60),
-      };
-      this.fire(ctx, from, dir, target, 0.12 + i * 0.03);
+      ctx.after(i * 0.13, () => {
+        const b = this.barrel % 3;
+        this.barrel++;
+        const from = this.frontMouth(ctx, b);
+        // Straight out of the mouth along the aim; the guidance only has to
+        // tidy up the spread afterwards.
+        const dir = this.aimFrom(ctx, from) + rand(-0.05, 0.05);
+        const target = {
+          x: ctx.aimPoint.x + rand(-60, 60),
+          y: ctx.aimPoint.y + rand(-55, 55),
+        };
+        this.fire(ctx, from, dir, target, 620, 0.05);
+        this.launch = 1;
+        ctx.sfx('launch', rand(1.15, 1.32));
+        ctx.shake(3.5);
+        ctx.particles.streaks(from.x, from.y, 3, dir, 0.4, 44);
+      });
     }
   }
 
-  /** Everything the pods have, at everything still standing. */
+  /** Everything the pods have, off his back, at everything still standing. */
   private salvo(ctx: WeaponCtx): void {
     const f = ctx.sm.facing;
     this.launch = 1;
@@ -345,14 +379,14 @@ export class MissilePods extends Weapon {
     ctx.sm.applyRecoil(0.6, ctx.sm.pose.aim, 40);
     for (let i = 0; i < SALVO_SIZE; i++) {
       // Rippled rather than simultaneous: ten rounds leaving on the same frame
-      // is one bang, and ten leaving over a third of a second is a salvo.
+      // is one bang, and ten leaving over half a second is a salvo.
       ctx.after(i * 0.045, () => {
         const side = i % 2 === 0 ? -1 : 1;
-        const from = this.pod(ctx, side, i % 3);
-        // Straight up out of his back and fanned, so the salvo climbs above
-        // him first and comes down on the wall from ten different angles.
+        const from = this.backPod(ctx, i % 4);
+        // Up out of the back tubes and fanned, so the salvo climbs above him
+        // first and comes down on the wall from ten different angles.
         const dir = -Math.PI / 2 + side * rand(0.15, 0.85) - f * 0.2;
-        this.fire(ctx, from, dir, wallPoint(ctx), 0.16 + (i % 4) * 0.05);
+        this.fire(ctx, from, dir, wallPoint(ctx), 340 + rand(0, 120), 0.16 + (i % 4) * 0.05);
         ctx.sfx('launch', rand(1.1, 1.35));
       });
     }
@@ -375,90 +409,119 @@ export class MissilePods extends Weapon {
     this.loadSfx -= ctx.dt;
     if (this.loadSfx <= 0) { ctx.sfx('aura', 1.1 + this.load * 0.5); this.loadSfx = 0.3; }
     if (Math.random() < this.load * 0.4) {
-      const p = this.pod(ctx, Math.random() < 0.5 ? -1 : 1, Math.floor(rand(0, 3)));
+      const p = this.backPod(ctx, Math.floor(rand(0, 4)));
       ctx.particles.sparks(p.x, p.y, 1, 110, ctx.sm.pose.aim + Math.PI, 1.6);
     }
   }
 
-  /** One arm out marking the target; the pods do the rest of the work. */
+  /** One hand under the front bank, steadying it; the rig does the rest. */
   hands(ctx: WeaponCtx): HandTargets {
     const k = this.load;
-    return { main: grip(ctx, 40 - k * 6, -4 - k * 4), off: null };
+    return { main: grip(ctx, 36 - k * 4, 14 + k * 3), off: null };
   }
 
-  /**
-   * The pods themselves: two swept plates standing off his back, half wing and
-   * half rack, with the tube mouths facing out along them. They sit behind the
-   * figure so the man stays the thing you read first.
-   */
+  /** One square tube, knocked out in white with a heavy ink edge. */
+  private tube(sk: Sketch, from: Vec2, ang: number, len: number, half: number, mouth: boolean): void {
+    const c = sk.ctx;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const at = (d: number, o: number): Vec2 => ({ x: from.x + ca * d - sa * o, y: from.y + sa * d + ca * o });
+    const box = [at(0, -half), at(len, -half), at(len, half), at(0, half)];
+    c.fillStyle = '#fff';
+    sk.polyPath(box, 1);
+    c.fill();
+    sk.poly(box, 2.8, false, 1);
+    // A band or two down it, which is what stops a long white box reading as a
+    // blank slab.
+    sk.line(at(len * 0.34, -half), at(len * 0.34, half), 2, 1, 0.4);
+    sk.line(at(len * 0.66, -half), at(len * 0.66, half), 2, 1, 0.4);
+    // The open mouth at the far end: a darker lip, so you can see it is a hole.
+    if (mouth) {
+      sk.line(at(len - 5, -half), at(len - 5, half), 3.2, 1, 0.5);
+      c.fillStyle = '#000';
+      sk.polyPath([at(len - 4, -half * 0.72), at(len, -half * 0.72), at(len, half * 0.72), at(len - 4, half * 0.72)], 0.6);
+      c.fill();
+    }
+  }
+
+  /** The back bank, behind the figure: four tubes swept out over his shoulder. */
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
-    const open = this.open;
+    const root = this.root(ctx);
     c.save();
     c.strokeStyle = '#000';
-    for (const side of [-1, 1]) {
-      const base = this.root(ctx, side);
-      const a = this.axis(ctx, side);
-      const ca = Math.cos(a), sa = Math.sin(a);
-      const at = (d: number, o: number): Vec2 => ({ x: base.x + ca * d - sa * o, y: base.y + sa * d + ca * o });
-      const L = 84 * open;
-      // The plate, knocked out in white so it reads over the wall as well as
-      // over the paper.
-      const plate = [at(0, -15 * side), at(L * 0.5, -22 * side), at(L, -10 * side), at(L * 0.86, 10 * side), at(4, 13 * side)];
-      c.fillStyle = '#fff';
-      sk.polyPath(plate, 1.2);
-      c.fill();
-      sk.poly(plate, 2.8, false, 1.2);
-      // Three tube mouths down the outer edge.
-      for (let i = 0; i < 3; i++) {
-        const d = L * (0.28 + i * 0.24);
-        sk.line(at(d, -18 * side), at(d, -8 * side), 3.2, 1, 0.4);
-      }
-      // The spar it is all bolted to, so it reads as a rack and not a fin.
-      sk.line(at(2, 0), at(L * 0.9, -6 * side), 2.2, 2, 0.5);
-      if (this.launch > 0.02) {
-        c.lineWidth = 2.4;
-        const mouth = at(L * 0.6, -16 * side);
-        sk.burst(mouth.x, mouth.y, 5, 5, 34 * this.launch, 2.4, 1.4, a, 5100 + side);
-      }
+    for (let i = 0; i < 4; i++) {
+      const a = this.backAxis(ctx, i);
+      const len = (46 + (i % 2) * 14) * this.open;
+      const start = { x: root.x + Math.cos(a) * 5, y: root.y + Math.sin(a) * 5 };
+      this.tube(sk, start, a, len, 7 - (i % 2) * 1.2, true);
     }
+    // The yoke it is all hung off, across his back.
+    const a0 = this.backAxis(ctx, 0), a3 = this.backAxis(ctx, 3);
+    sk.line(
+      { x: root.x + Math.cos(a0) * 18, y: root.y + Math.sin(a0) * 18 },
+      { x: root.x + Math.cos(a3) * 18, y: root.y + Math.sin(a3) * 18 },
+      3.4, 2, 0.6,
+    );
     c.restore();
   }
 
+  /**
+   * The front bank, over the figure: three barrels running along the aim with
+   * their mouths pointing at whatever he is. Drawn on top of him, because in
+   * the reference the rig is strapped over the arm rather than behind it.
+   */
   draw(sk: Sketch, ctx: WeaponCtx): void {
-    if (this.load < 0.03) return;
-    // Loading tell: rings closing on the pods, so the wind-up is visible from
-    // the far side of the screen before ten rounds arrive.
     const c = sk.ctx;
-    const k = this.load;
+    const a = ctx.sm.pose.aim;
+    const root = this.root(ctx);
+    const len = 58 * this.open;
     c.save();
     c.strokeStyle = '#000';
-    c.lineWidth = 1.8 + k * 1.6;
-    for (const side of [-1, 1]) {
-      const p = this.pod(ctx, side, 1);
-      for (let i = 0; i < 2; i++) {
-        const phase = (ctx.time * 2.4 + i / 2) % 1;
-        sk.polyPath(ring(p.x, p.y, (1 - phase) * 34 * k + 5, 10, ctx.time * 2), 1.4);
-        c.stroke();
+    const seat = (o: number): Vec2 => ({
+      x: root.x + Math.cos(a) * 12 - Math.sin(a) * o,
+      y: root.y + Math.sin(a) * 12 + Math.cos(a) * o,
+    });
+    for (let i = 0; i < 3; i++) {
+      this.tube(sk, seat(this.frontOffset(i)), a, len * (i === 1 ? 1 : 0.86), 7, true);
+    }
+    // The block they are all socketed into, across the near ends.
+    sk.line(seat(this.frontOffset(0) - 8), seat(this.frontOffset(2) + 8), 4, 2, 0.6);
+
+    if (this.launch > 0.02) {
+      const m = this.frontMouth(ctx, (this.barrel + 2) % 3);
+      c.lineWidth = 2.8;
+      sk.burst(m.x, m.y, 7, 6, 42 * this.launch, 2.8, 1.5, a, 5100);
+    }
+    // Loading tell: rings closing on the back tubes, so ten rounds arriving is
+    // never a surprise.
+    if (this.load > 0.03) {
+      c.lineWidth = 1.8 + this.load * 1.6;
+      for (const i of [0, 3]) {
+        const p = this.backPod(ctx, i);
+        for (let r = 0; r < 2; r++) {
+          const phase = (ctx.time * 2.4 + r / 2) % 1;
+          sk.polyPath(ring(p.x, p.y, (1 - phase) * 34 * this.load + 5, 10, ctx.time * 2), 1.4);
+          c.stroke();
+        }
       }
     }
     c.restore();
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
-    // A rack of three tubes with one round already on its way out.
-    sk.poly([
-      { x: x - s * 0.42, y: y - s * 0.28 }, { x: x + s * 0.04, y: y - s * 0.34 },
-      { x: x + s * 0.06, y: y + s * 0.22 }, { x: x - s * 0.42, y: y + s * 0.3 },
-    ], 2.2, false, 0.5);
+    // Three barrels seen from the side, mouths to the right, one round away.
     for (let i = -1; i <= 1; i++) {
-      sk.line({ x: x + s * 0.05, y: y + i * s * 0.17 }, { x: x + s * 0.16, y: y + i * s * 0.17 }, 2.2, 1, 0.3);
+      const y0 = y + i * s * 0.2;
+      sk.poly([
+        { x: x - s * 0.46, y: y0 - s * 0.07 }, { x: x + s * 0.06, y: y0 - s * 0.07 },
+        { x: x + s * 0.06, y: y0 + s * 0.07 }, { x: x - s * 0.46, y: y0 + s * 0.07 },
+      ], 2, false, 0.4);
+      sk.line({ x: x + s * 0.02, y: y0 - s * 0.07 }, { x: x + s * 0.02, y: y0 + s * 0.07 }, 2, 1, 0.3);
     }
     sk.poly([
-      { x: x + s * 0.2, y: y - s * 0.24 }, { x: x + s * 0.48, y: y - s * 0.14 },
-      { x: x + s * 0.2, y: y - s * 0.04 },
-    ], 2, false, 0.4);
-    sk.line({ x: x + s * 0.1, y: y - s * 0.14 }, { x: x + s * 0.2, y: y - s * 0.14 }, 1.8, 1, 0.3);
+      { x: x + s * 0.18, y: y - s * 0.09 }, { x: x + s * 0.46, y: y },
+      { x: x + s * 0.18, y: y + s * 0.09 },
+    ], 2.1, false, 0.4);
   }
 }
 

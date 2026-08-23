@@ -193,15 +193,15 @@ assets are cached on first use.
 
 | # | Key | Weapon | Behaviour |
 | --- | --- | --- | --- |
-| 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run, a spinning backfist if you lean on it |
+| 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of fists several times the size of his own hammering the wall, and then he is out of it |
 | 2 | `2` | Greatsword | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front |
-| 3 | `3` | Warhammer | Ploughs along behind him, then craters instead of cutting; the shock runs out along the ground |
+| 3 | `3` | Warhammer | A head about as tall as he is on a haft he can barely hold. Ploughs along behind him, then craters instead of cutting, and every landing throws a sheet of speed lines across a third of the screen |
 | 4 | `4` | Claws | Three parallel gouges a pass, with masonry left standing between them; hold it down for a flurry and one opening finisher |
 | 5 | `5` | Magnum | One hand, one round at a time, and a hole out of all proportion to it; the recoil throws the barrel up and shoves him back |
 | 6 | `6` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
 | 7 | `7` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
 | 8 | `8` | Bazooka | One warhead, one very large hole, and a backblast out of the open end |
-| 9 | `9` | Missile pods | Three guided rounds that climb out of his back and turn onto the crosshair — or hold it down and put ten into the wall at once |
+| 9 | `9` | Missile pods | A rack of tubes round his shoulders: three rounds one after another out of the front mouths, or hold it down and dump ten off the back tubes at once |
 | 10 | `0` | Arcane staff | Tap for four bolts in a fan; hold for two rings, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
 | 11 | `-` | Mecha | Wings out: jump climbs, crouch dives. Grounded he cuts with a blade that slides out of his forearm; airborne it is quick little rounds; hold it and four rods unfold out of his back and burn one point |
 | 12 | `=` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
@@ -405,7 +405,9 @@ chains are, where it rests and how to draw itself, which is why the claws'
 five-hit flurry and the hammer's meteor are the same twelve lines of data with
 different numbers. A move can also set `rake`, which swaps the one solid wedge
 a blade takes out for a set of thin parallel gouges — the claw marks, where the
-gaps between the scores are the whole effect.
+gaps between the scores are the whole effect — and `impact`, which sizes the fan
+of lines the blow converges on. The hammer asks for the top of that range, and
+gets the sheet of speed lines the reference draws under a hit that big.
 
 `dragAngle` solves for the angle that puts the far end of a weapon flat on the
 floor behind the figure. The greatsword never comes up off it at all — standing
@@ -421,6 +423,13 @@ ink edge, opening and thinning as it fades. It is drawn *behind* the figure, so
 a swing that takes half the screen never hides the person who threw it. The
 claws feed it three at once at three different radii, which is how a rake ends
 up reading as a rake.
+
+Bare hands have nothing to feed it with, so the barrage draws its own: blocky
+fists two or three times the size of his, knocked out in white with a heavy ink
+edge and a fan of speed lines dragging back along the line each one came in on.
+They outlive the gap between blows deliberately — three or four of them
+overlapping is what separates a flurry from a metronome — and his arms piston
+out of phase behind them, leaving afterimages the whole time.
 
 The blades themselves hang off the swing rather than the aim. `gripAt` places
 the hands around the *blade* angle, so the arms lead the sword around and the

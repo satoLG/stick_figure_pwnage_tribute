@@ -60,6 +60,13 @@ export interface MeleeMove {
   ghost?: number;
   /** Kicks dust and a ring out along the floor where it lands. */
   quake?: number;
+  /**
+   * How big the fan of lines converging on the point of contact comes out,
+   * 0.3..2. The default is a light or a heavy hit; a weapon whose whole point
+   * is the size of the blow - the hammer - asks for the top of the range, and
+   * gets a sheet of speed lines across a third of the screen.
+   */
+  impact?: number;
   /** Shown in the HUD while the chain is running. */
   name?: string;
 }
@@ -293,7 +300,7 @@ export abstract class MeleeWeapon extends Weapon {
     const bit = removed > 0;
     const shake = mv.shake ?? (heavy ? 17 : 6);
     ctx.shake(bit ? shake : shake * 0.4);
-    ctx.hit(at.x, at.y, a, heavy ? 1.6 : 0.85);
+    ctx.hit(at.x, at.y, a, mv.impact ?? (heavy ? 1.6 : 0.85));
     // Inverting the whole screen is the loudest thing this game can do, so it
     // is spent only on a charged special - the held chain's heavy finishers.
     if (heavy && this.mode === 'hold') ctx.invert(0.16);

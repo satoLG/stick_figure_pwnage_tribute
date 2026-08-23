@@ -16,9 +16,26 @@ export type { WeaponCtx };
 // ---------------------------------------------------------------------------
 /**
  * Four punches on the ground, a shoulder charge out of a run, a dive out of a
- * jump and a pair of haymakers if you lean on the button. No weapon to draw, so
- * everything has to be in the arms.
+ * jump, a pair of haymakers if you lean on the button - and, if you keep
+ * leaning on it, the barrage. No weapon to draw, so everything has to be in
+ * the arms and in what comes off the knuckles.
  */
+/** Seconds of held trigger before the haymakers turn into the barrage. */
+const BARRAGE_HOLD = 0.6;
+/** How long it can run before he is out of it. */
+const BARRAGE_MAX = 5;
+/** Seconds between blows. Fast enough that you cannot count them. */
+const BARRAGE_RATE = 0.075;
+/** How far in front of his chest the barrage can find a wall to hit. */
+const BARRAGE_REACH = 235;
+
+/** One giant fist landing on the wall, for the fraction of a second it is there. */
+interface BigPunch {
+  x: number; y: number;
+  ang: number; size: number;
+  life: number; max: number;
+  seed: number;
+}
 const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
   ground: [
     { kind: 'thrust', from: 0, to: 0, wind: 0.26, strike: 0.24, anim: 0.17, cooldown: 0.16, reach: 0.9, thick: 15, shake: 4, name: 'JAB' },
@@ -70,11 +87,127 @@ const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 export class Fists extends MeleeWeapon {
   readonly id = 1;
   readonly name = 'BARE HANDS';
-  readonly tagline = 'four punches, then something worse';
+  readonly tagline = 'four punches, then hold on';
   protected readonly len = 74;
   protected readonly sets = FIST_SETS;
 
+  /** Seconds the barrage has been running; zero when it is not. */
+  private barrageT = 0;
+  /** Set when it has run its full length: no more until the trigger comes up. */
+  private spent = false;
+  /** Rate limiter for the blows themselves. */
+  private punchT = 0;
+  private punches: BigPunch[] = [];
+
   constructor() { super(); this.animLen = 0.18; this.cooldown = 0.16; }
+
+  override onEquip(): void { super.onEquip(); this.endBarrage(); this.punches.length = 0; }
+  override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.endBarrage(); }
+
+  private endBarrage(): void {
+    this.barrageT = 0;
+    this.spent = false;
+    this.punchT = 0;
+  }
+
+  override get comboLabel(): string | null {
+    if (this.barrageT > 0) {
+      // Counting down what is left of it, because five seconds of this is a
+      // resource and the player should be able to see it going.
+      return `BARRAGE  ${Math.max(0, BARRAGE_MAX - this.barrageT).toFixed(1)}`;
+    }
+    return super.comboLabel;
+  }
+
+  /**
+   * Once the barrage is up the ordinary chain stops coming out - and it stays
+   * stopped after the five seconds are gone, until the trigger is released. An
+   * empty barrage dropping the player back into haymakers would read as the
+   * flurry restarting rather than as running out.
+   */
+  protected override suppressFire(): boolean {
+    return this.heldFor > BARRAGE_HOLD;
+  }
+
+  protected override tick(ctx: WeaponCtx, held: boolean): void {
+    super.tick(ctx, held);
+    for (let i = this.punches.length - 1; i >= 0; i--) {
+      this.punches[i].life -= ctx.dt;
+      if (this.punches[i].life <= 0) this.punches.splice(i, 1);
+    }
+
+    if (!held || this.heldFor <= BARRAGE_HOLD) {
+      if (this.barrageT > 0 || this.spent) this.endBarrage();
+      return;
+    }
+    if (this.spent) return;
+
+    this.barrageT += ctx.dt;
+    if (this.barrageT >= BARRAGE_MAX) {
+      // Out of it. A real recovery, so the last blow lands and then nothing
+      // does for a moment.
+      this.spent = true;
+      this.barrageT = 0;
+      this.cooldown = 0.8;
+      this.timer = 0.8;
+      ctx.sfx('heavyswing', 0.6);
+      return;
+    }
+    // He is leaning into it, so the whole figure creeps forward as it runs,
+    // and the arms are moving fast enough to smear.
+    ctx.sm.dash(ctx.sm.facing * 26 * ctx.dt);
+    ctx.sm.addGhostBurst(0.12);
+    ctx.shake(2.5);
+
+    this.punchT -= ctx.dt;
+    if (this.punchT > 0) return;
+    this.punchT = BARRAGE_RATE;
+    this.throwPunch(ctx);
+  }
+
+  /**
+   * One blow of the barrage. It is not a hand reaching the wall - his arm is
+   * nowhere near it - it is the *shock* of the punch arriving there as a fist
+   * several times the size of his own, which is exactly how the reference
+   * draws a flurry that matters.
+   */
+  private throwPunch(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    const c = sm.pose.chest;
+    const a = sm.pose.aim + rand(-0.26, 0.26);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const hit = ctx.terrain.strikePoint(c.x, c.y, ca, sa, BARRAGE_REACH, 3);
+    const at = hit ?? { x: c.x + ca * 150, y: c.y + sa * 150 };
+    // Every fifth or so lands properly, so the flurry has a beat in it instead
+    // of being one continuous noise.
+    const big = Math.random() < 0.22;
+    const size = (big ? 58 : 40) * rand(0.9, 1.15);
+
+    if (hit) {
+      ctx.terrain.carveBlob(at.x, at.y, size * 0.8, 0.34, 16, size * 0.6);
+      ctx.particles.debris(at.x, at.y, big ? 4 : 2, 250, a + Math.PI, 2.2);
+      if (big) ctx.particles.streaks(at.x, at.y, 4, a + Math.PI, 1.4, 60);
+    }
+    // They outlive the gap between blows on purpose: three or four of them
+    // overlapping at once is what makes it a flurry rather than a metronome.
+    this.punches.push({
+      x: at.x, y: at.y, ang: a, size,
+      life: 0.23, max: 0.23, seed: Math.floor(rand(0, 9999)),
+    });
+    if (this.punches.length > 7) this.punches.shift();
+
+    ctx.sfx('punch', (big ? 0.68 : 1) * rand(0.9, 1.2));
+    ctx.shake(big ? 8 : 3.5);
+    if (big) ctx.flash(0.1);
+    sm.applyRecoil(0.14, a, 0);
+  }
+
+  /** Leaning bodily into the flurry for as long as it lasts. */
+  override stance(ctx: WeaponCtx): Stance | null {
+    if (this.barrageT <= 0) return super.stance(ctx);
+    const k = clamp(this.barrageT / 0.25, 0, 1);
+    return { kind: 'brace', weight: k * 0.85, lean: 0.2, hip: -10 };
+  }
 
   protected restAngle(ctx: WeaponCtx): number { return ctx.sm.pose.aim; }
 
@@ -89,6 +222,17 @@ export class Fists extends MeleeWeapon {
   override hands(ctx: WeaponCtx): HandTargets | null {
     const t = this.t;
     const f = ctx.sm.facing;
+    if (this.barrageT > 0) {
+      // Both arms pistoning flat out, out of phase with each other. The speed
+      // is the point: at this rate the arms read as a blur of their own.
+      const p = ctx.time * 30;
+      const r = Math.sin(p) * 0.5 + 0.5;
+      const l = Math.sin(p + Math.PI) * 0.5 + 0.5;
+      return {
+        main: grip(ctx, 29 + r * 19, -5 + r * 2),
+        off: grip(ctx, 29 + l * 19, 13 - l * 2),
+      };
+    }
     // Between punches the arms are released back to the gait, so running with
     // bare hands swings them instead of carrying a frozen guard around.
     if (this.anim <= 0 && Math.abs(ctx.sm.vel.x) > 45) return null;
@@ -117,6 +261,7 @@ export class Fists extends MeleeWeapon {
 
   /** No weapon: what you see is the shock coming off the knuckles. */
   protected drawWeapon(sk: Sketch, ctx: WeaponCtx): void {
+    if (this.punches.length > 0) this.drawPunches(sk);
     if (this.anim <= 0 || this.t > 0.62) return;
     const mv = this.move;
     const big = !!mv.heavy || (mv.thick ?? 0) > 24;
@@ -124,6 +269,44 @@ export class Fists extends MeleeWeapon {
     const a = ctx.sm.pose.aim;
     sk.ctx.lineWidth = big ? 3 : 2.2;
     sk.burst(h.x, h.y, big ? 7 : 4, 8, big ? 40 : 22, big ? 3 : 2.2, big ? 2.4 : 1.5, a + Math.PI, 77);
+  }
+
+  /**
+   * The barrage itself: blocky fists two or three times the size of his own,
+   * knocked out in white with a heavy ink edge so they read against the black
+   * wall they are landing on, each one opening out as it fades.
+   */
+  private drawPunches(sk: Sketch): void {
+    const c = sk.ctx;
+    c.save();
+    c.lineJoin = 'round';
+    for (const p of this.punches) {
+      const k = p.life / p.max;                    // 1 -> 0
+      const s = p.size * (0.78 + (1 - k) * 0.45);
+      const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+      const at = (d: number, o: number): Vec2 =>
+        ({ x: p.x + ca * d - sa * o, y: p.y + sa * d + ca * o });
+      // A fist seen from behind: four knuckles at the leading face, the back
+      // of the hand behind them, and a wrist trailing out of it.
+      const pts = [
+        at(s * 0.3, -s * 0.6), at(s * 0.46, -s * 0.3), at(s * 0.5, 0), at(s * 0.46, s * 0.3),
+        at(s * 0.3, s * 0.6), at(-s * 0.7, s * 0.5), at(-s * 0.95, 0), at(-s * 0.7, -s * 0.5),
+      ];
+      c.globalAlpha = clamp(k * 1.7, 0, 1);
+      c.fillStyle = '#fff';
+      sk.polyPath(pts, 1.5);
+      c.fill();
+      c.strokeStyle = '#000';
+      sk.poly(pts, 4.2, false, 1.5);
+      for (let i = -1; i <= 1; i++) {
+        sk.line(at(s * 0.14, i * s * 0.3), at(s * 0.42, i * s * 0.31), 2.4, 1, 0.5);
+      }
+      // Speed lines dragging back off it, along the line it came in on.
+      c.lineWidth = 3.2;
+      sk.burst(p.x, p.y, 6, s * 1, s * 2.7, 3.2, 1.3, p.ang + Math.PI, p.seed);
+    }
+    c.globalAlpha = 1;
+    c.restore();
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
@@ -309,9 +492,12 @@ export class Greatsword extends MeleeWeapon {
 // 3. WARHAMMER
 // ---------------------------------------------------------------------------
 /**
- * The other end of the melee scale: no edge, no finesse, just a head the size
- * of an anvil coming down. It craters instead of cutting, and the ground picks
- * the shock up and carries it forward.
+ * The other end of the melee scale, and deliberately absurd: a head about as
+ * tall as he is on a haft he can barely get both hands round. It craters
+ * instead of cutting, the ground picks the shock up and carries it forward,
+ * and every landing asks for the biggest fan of lines the game can draw -
+ * `impact: 2` is a sheet of speed lines across a third of the screen, which is
+ * how the reference punctuates a blow this size.
  */
 const MAUL = BLASTS.maul;
 const MAUL_LIGHT = { ...MAUL, radius: MAUL.radius * 0.85, debris: Math.round(MAUL.debris * 0.8) };
@@ -320,35 +506,38 @@ const MAUL_BIG = { ...MAUL, radius: MAUL.radius * 1.4, debris: Math.round(MAUL.d
 const HAMMER_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
   ground: [
     {
-      from: -2.35, to: 1.25, wind: 0.48, strike: 0.15, anim: 0.9, cooldown: 1.0, reach: 0.9, thick: 46,
-      blast: MAUL, heavy: true, flash: 0.55, invert: 0.075, shake: 30, quake: 1.4,
-      hitSfx: 'slam', hitPitch: 0.95, stance: 'brace', stanceLean: -0.2, stanceHip: -12, name: 'SMASH',
+      // Straight up over the head and straight back down, which is the swing
+      // the reference draws: everything above him, then everything below.
+      from: -2.45, to: 1.05, wind: 0.5, strike: 0.15, anim: 1.0, cooldown: 1.1, reach: 0.92, thick: 66,
+      blast: MAUL, heavy: true, impact: 2, flash: 0.55, invert: 0.075, shake: 30, quake: 1.6,
+      hitSfx: 'slam', hitPitch: 0.9, stance: 'brace', stanceLean: -0.22, stanceHip: -14, name: 'SMASH',
     },
     {
-      from: 2.2, to: -0.55, wind: 0.42, strike: 0.16, anim: 0.78, cooldown: 0.9, reach: 0.92, thick: 62,
-      heavy: true, dash: 90, flash: 0.34, invert: 0.05, shake: 24, quake: 0.9,
-      hitSfx: 'slam', hitPitch: 1.05, name: 'LOW SWEEP',
+      from: 2.25, to: -0.55, wind: 0.42, strike: 0.16, anim: 0.86, cooldown: 0.95, reach: 0.94, thick: 84,
+      heavy: true, impact: 1.8, dash: 90, flash: 0.34, invert: 0.05, shake: 24, quake: 1.1,
+      hitSfx: 'slam', hitPitch: 1.0, name: 'LOW SWEEP',
     },
   ],
   run: [
     {
-      from: -2.0, to: 1.1, wind: 0.34, strike: 0.16, anim: 0.72, cooldown: 0.85, reach: 0.92, thick: 54,
-      blast: MAUL_LIGHT, heavy: true, dash: 260, slide: 0.22, flash: 0.4, invert: 0.05, shake: 26,
-      quake: 1.1, hitSfx: 'slam', hitPitch: 1.0, stance: 'lunge', stanceHip: -12, name: 'RUNNING SWING',
+      from: -2.1, to: 1.15, wind: 0.34, strike: 0.16, anim: 0.78, cooldown: 0.9, reach: 0.94, thick: 74,
+      blast: MAUL_LIGHT, heavy: true, impact: 1.9, dash: 260, slide: 0.22, flash: 0.4, invert: 0.05,
+      shake: 26, quake: 1.2, hitSfx: 'slam', hitPitch: 0.95, stance: 'lunge', stanceHip: -14,
+      name: 'RUNNING SWING',
     },
   ],
   air: [
     {
-      from: -1.5, to: 1.5, wind: 0.28, strike: 0.16, anim: 0.52, cooldown: 0.9, reach: 0.95, thick: 54,
-      blast: MAUL_BIG, heavy: true, lift: -520, flash: 0.6, invert: 0.08, shake: 32, quake: 1.6,
-      hitSfx: 'slam', hitPitch: 0.8, name: 'METEOR',
+      from: -1.6, to: 1.3, wind: 0.28, strike: 0.16, anim: 0.56, cooldown: 0.95, reach: 0.96, thick: 74,
+      blast: MAUL_BIG, heavy: true, impact: 2, lift: -520, flash: 0.6, invert: 0.08, shake: 32, quake: 1.8,
+      hitSfx: 'slam', hitPitch: 0.76, name: 'METEOR',
     },
   ],
   hold: [
     {
-      from: 2.7, to: -1.4, wind: 0.4, strike: 0.18, anim: 1.0, cooldown: 1.2, reach: 0.95, thick: 70,
-      blast: MAUL_BIG, heavy: true, spin: 1, hop: 225, flash: 0.6, invert: 0.085, shake: 34, quake: 1.5,
-      hitSfx: 'slam', hitPitch: 0.72, name: 'GIANT SWING',
+      from: 2.8, to: -1.45, wind: 0.4, strike: 0.18, anim: 1.1, cooldown: 1.3, reach: 0.98, thick: 96,
+      blast: MAUL_BIG, heavy: true, impact: 2, spin: 1, hop: 235, flash: 0.6, invert: 0.085, shake: 34,
+      quake: 1.7, hitSfx: 'slam', hitPitch: 0.68, name: 'GIANT SWING',
     },
   ],
 };
@@ -356,18 +545,22 @@ const HAMMER_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 export class Warhammer extends MeleeWeapon {
   readonly id = 3;
   readonly name = 'WARHAMMER';
-  readonly tagline = 'one swing, one crater';
-  protected readonly len = 112;
+  readonly tagline = 'the head is bigger than he is';
+  protected readonly len = 168;
   protected readonly sets = HAMMER_SETS;
+
+  /** Half the height of the striking face, and how deep the block runs. */
+  private readonly headW = 44;
+  private readonly headD = 56;
 
   private dragT = 0;
   private scraped = 0;
 
   constructor() {
     super();
-    this.animLen = 0.95;
+    this.animLen = 1.0;
     this.cooldown = 1.15;
-    this.gripFwd = 36;
+    this.gripFwd = 34;
     this.gripLead = 0.3;
   }
 
@@ -379,9 +572,9 @@ export class Warhammer extends MeleeWeapon {
   protected restAngle(ctx: WeaponCtx): number {
     const carried = mirror(0.86 + Math.sin(ctx.time * 1.05) * 0.03, ctx.sm.facing);
     if (this.dragT < 0.01) return carried;
-    // The head is a block hanging off the end of the shaft, so it rides a
-    // little short of the full length.
-    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - 18, ctx.sm.facing);
+    // The head is a block hanging off the end of the shaft, so the tip that
+    // actually finds the floor is a whole head-depth short of the full length.
+    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - this.headD * 0.6, ctx.sm.facing);
     return drag === null ? carried : carried + (drag - carried) * this.dragT;
   }
 
@@ -398,16 +591,18 @@ export class Warhammer extends MeleeWeapon {
     if (this.scraped < 34) return;
     this.scraped = 0;
     const back = sm.vel.x > 0 ? Math.PI : 0;
-    ctx.particles.dust(tip.x, tip.y, 2, back, 0.8);
-    ctx.particles.sparks(tip.x, tip.y - 2, 1, 80, back, 1.4);
-    ctx.sfx('scrape', clamp(0.45 + speed / 900, 0.45, 0.9));
+    ctx.particles.dust(tip.x, tip.y, 3, back, 1);
+    ctx.particles.sparks(tip.x, tip.y - 2, 2, 90, back, 1.4);
+    ctx.sfx('scrape', clamp(0.4 + speed / 900, 0.4, 0.85));
   }
 
   protected restHands(ctx: WeaponCtx, ba: number): HandTargets {
     const f = ctx.sm.facing;
+    // Both fists crowded onto the butt of the haft: the only way to hold
+    // something with this much of its weight out at the far end.
     return {
-      main: gripAt(ctx, ba - 0.3 * f, 26, 5 * f),
-      off: gripAt(ctx, ba - 0.5 * f, 12, 14 * f),
+      main: gripAt(ctx, ba - 0.3 * f, 24, 5 * f),
+      off: gripAt(ctx, ba - 0.52 * f, 10, 14 * f),
     };
   }
 
@@ -417,32 +612,47 @@ export class Warhammer extends MeleeWeapon {
     const ca = Math.cos(ang), sa = Math.sin(ang);
     const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
     const L = this.len;
+    const W = this.headW;
+    const D = this.headD;
 
-    // Haft.
-    sk.line(at(-30, 0), at(L - 26, 0), 5, 2, 0.6);
-    sk.line(at(-30, -5), at(-30, 5), 4, 1, 0.4);
-    // The head: a heavy block with a striking face and a spike behind it.
-    sk.poly([
-      at(L - 30, -25), at(L + 4, -25), at(L + 4, 25), at(L - 30, 25),
-    ], 3.6, false, 0.7);
-    sk.line(at(L - 2, -25), at(L - 2, 25), 2.4, 1, 0.5);
-    sk.poly([at(L - 30, -13), at(L - 46, -6), at(L - 46, 6), at(L - 30, 13)], 3, false, 0.5);
-    sk.line(at(L - 30, -25), at(L - 30, 25), 2.6, 1, 0.5);
+    c.strokeStyle = '#000';
+    // Haft: one heavy stroke, running well behind his hands so the thing has a
+    // butt to counterweight against.
+    sk.line(at(-46, 0), at(L - D + 8, 0), 6.5, 2, 0.6);
+    sk.line(at(-46, -8), at(-46, 8), 5, 1, 0.4);
+    // The collar the haft disappears into.
+    sk.poly([at(L - D - 20, -15), at(L - D, -22), at(L - D, 22), at(L - D - 20, 15)], 3.6, false, 0.5);
 
-    // A flash of impact on landing.
+    // The head: a plain slab, knocked out in white with a heavy ink edge. A
+    // block this size drawn solid would swallow the figure every time it swung
+    // past him, and drawn as bare outline it would vanish into the black wall
+    // exactly where it matters - so it is white with an edge, like everything
+    // else in here that has to read over both.
+    const block = [at(L - D, -W), at(L + 12, -W), at(L + 12, W), at(L - D, W)];
+    c.fillStyle = '#fff';
+    sk.polyPath(block, 1.3);
+    c.fill();
+    sk.poly(block, 5.2, false, 1.3);
+    // The striking face banded off the body of the block, and a seam behind it.
+    sk.line(at(L, -W), at(L, W), 3.4, 1, 0.7);
+    sk.line(at(L - D + 14, -W), at(L - D + 14, W), 2.6, 1, 0.7);
+
+    // A flash of impact on landing, sized off the head rather than off nothing.
     if (this.striking > 0.55 && this.striking < 0.95) {
-      const tip = at(L + 6, 0);
-      c.lineWidth = 3.4;
-      sk.burst(tip.x, tip.y, 11, 12, 60, 3.4, TAU, 0, 909);
+      const tip = at(L + 16, 0);
+      c.lineWidth = 4;
+      sk.burst(tip.x, tip.y, 13, 20, 110, 4, TAU, 0, 909);
     }
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
-    sk.line({ x: x - s * 0.4, y: y + s * 0.4 }, { x: x + s * 0.18, y: y - s * 0.18 }, 2.8, 2, 0.5);
+    // Long haft, and a head that takes up most of the box.
+    sk.line({ x: x - s * 0.42, y: y + s * 0.44 }, { x: x + s * 0.06, y: y - s * 0.12 }, 3, 2, 0.5);
     sk.poly([
-      { x: x + s * 0.06, y: y - s * 0.3 }, { x: x + s * 0.42, y: y - s * 0.44 },
-      { x: x + s * 0.5, y: y - s * 0.12 }, { x: x + s * 0.14, y: y + s * 0.02 },
-    ], 2.4, false, 0.5);
+      { x: x - s * 0.14, y: y - s * 0.44 }, { x: x + s * 0.42, y: y - s * 0.44 },
+      { x: x + s * 0.42, y: y + s * 0.06 }, { x: x - s * 0.14, y: y + s * 0.06 },
+    ], 2.8, false, 0.5);
+    sk.line({ x: x + s * 0.3, y: y - s * 0.44 }, { x: x + s * 0.3, y: y + s * 0.06 }, 2, 1, 0.4);
   }
 }
 

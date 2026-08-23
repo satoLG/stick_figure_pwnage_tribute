@@ -253,7 +253,7 @@ export const BLASTS: Record<string, Blast> = {
   /** A bolt off the staff - a bite of light rather than a charge going off. */
   orb: { radius: 31, shake: 7, flash: 0.2, debris: 16, sfx: 'explosion', bites: 5 },
   /** The warhammer does not explode, but it craters exactly like something did. */
-  maul: { radius: 68, shake: 30, flash: 0.5, debris: 50, sfx: 'explosion', bites: 11 },
+  maul: { radius: 94, shake: 32, flash: 0.5, debris: 68, sfx: 'explosion', bites: 13 },
 };
 
 export const clampBlast = (b: Blast, scale: number): Blast => ({
