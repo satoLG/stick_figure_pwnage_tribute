@@ -37,6 +37,7 @@ const NUMBER_KEYS = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0',
   'Minus', 'Equal', 'BracketLeft', 'BracketRight',
+  'Semicolon', 'Quote', 'Backslash',
 ];
 
 /** Everything the player is asking for this frame, whatever device said it. */
@@ -735,6 +736,9 @@ export class Game {
     // A weapon whose effect has swallowed the arms says so every frame, so
     // putting it away is just not saying it any more.
     this.sm.armsHidden = this.weapon.hidesArms;
+    this.sm.headHidden = this.weapon.hidesHead;
+    this.sm.bodyHidden = this.weapon.hidesBody;
+    this.sm.headScale = this.weapon.headScale;
     // Weapons that own the whole body - a charge-up, a heavy wind-up - say so
     // here, every frame, so dropping the stance is just saying nothing.
     this.sm.setStance(this.weapon.stance(wctx));
@@ -837,6 +841,9 @@ export class Game {
     this.sm.setHands(null);
     this.sm.setStance(null);
     this.sm.armsHidden = false;
+    this.sm.headHidden = false;
+    this.sm.bodyHidden = false;
+    this.sm.headScale = 1;
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.update(dt, this.terrain);
@@ -1028,7 +1035,7 @@ export class Game {
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip, at a wall to kick off it)',
           'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
-          'HOLD TAB  WEAPON WHEEL     1-0 - = [ ]  QUICK SWAP',
+          'HOLD TAB  WEAPON WHEEL     TOP ROW OF KEYS  QUICK SWAP',
         ];
         const y0 = h - 96 - this.safe.bottom;
         const hintInk = y0 > this.terrain.groundTop ? '#fff' : '#000';
@@ -1128,7 +1135,7 @@ export class Game {
 
     inkText(sk, 'A PLAYABLE TRIBUTE', w / 2, h * 0.4, clamp(w * 0.022, 14, 19),
       { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.72, wobble: 0.6 });
-    inkText(sk, 'ONE STICK FIGURE, FOURTEEN WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
+    inkText(sk, 'ONE STICK FIGURE, SEVENTEEN WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
       clamp(w * 0.019, 12, 17), { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.55, wobble: 0.5 });
 
     const press = this.input.pointer;
@@ -1178,7 +1185,7 @@ export class Game {
           ['SPACE', 'jump — again in the air to somersault'],
           ['SPACE AT A WALL', 'kick off it — chain them to climb'],
           ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
-          ['HOLD TAB', 'weapon wheel   ·   1-0 - = [ ] to quick swap'],
+          ['HOLD TAB', 'weapon wheel   ·   the top row of keys quick-swaps'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
     const rowSize = clamp(w * 0.019, 11, 16);

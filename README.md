@@ -1,7 +1,7 @@
 # Stick Figure Pwnage — Tribute
 
 A playable tribute to the early-2000s stick figure fight animations: one stick
-figure, fourteen weapons, and a very destructible black wall.
+figure, seventeen weapons, and a very destructible black wall.
 
 Everything on screen is drawn from code. There are no sprites, no textures and
 no audio files anywhere in this repository — the figure, the weapons, the
@@ -46,7 +46,7 @@ npx vercel --prod
 | Attack while running / in the air | Its own chain again — four per melee weapon |
 | `Space` / `S` with the mecha | With the wings out jump is a throttle, not a jump: hold it to climb, crouch to dive, let go of both to sink |
 | Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
-| `1`–`0`, `-`, `=`, `[`, `]` | Quick-swap without opening the wheel |
+| `1`–`0`, `-`, `=`, `[`, `]`, `;`, `'`, `\\` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
 | `Esc` | Settings — and on the win screen, back to the main menu |
 | `R` | Restart, on the win screen |
@@ -196,17 +196,20 @@ assets are cached on first use.
 | 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of blows going off against the wall faster than the drawing can follow, at which point his arms stop being drawn at all |
 | 2 | `2` | Greatsword | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front |
 | 3 | `3` | Warhammer | A head about as tall as he is on a haft he can barely hold. Ploughs along behind him, then craters instead of cutting, and every landing throws a sheet of speed lines across a third of the screen |
-| 4 | `4` | Wind | Nothing in his hands: every swing throws three claws of air a long way out in front, and what they leave is three scores with wall still standing between them. Hold it and he pulls the air in around himself, then lets a tempest go that cuts the whole face at a dozen points |
+| 4 | `4` | Wind | Nothing in his hands: every swing throws three curls of air a long way out in front, and what they leave is three scores with wall still standing between them. Hold it and he pulls the air in around himself; letting go throws a whirlwind whose base stays in his hands and whose mouth runs out along the aim, cutting as it goes |
 | 5 | `5` | Magnum | One hand, one round at a time, and a hole out of all proportion to it; the recoil throws the barrel up and shoves him back |
 | 6 | `6` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
 | 7 | `7` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
 | 8 | `8` | Bazooka | One warhead, one very large hole, and a backblast out of the open end |
 | 9 | `9` | Missile pods | A rack of tubes round his shoulders: three rounds one after another out of the front mouths, or hold it down and dump ten off the back tubes at once |
-| 10 | `0` | Arcane staff | Tap to summon four orbs that simply hang there for a second, then go in one at a time around where you were pointing — cast again and another set stacks beside the first. Hold for hoops sliding up the shaft, two more round the head, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
+| 10 | `0` | Arcane staff | Tap to summon four orbs, well apart, that simply hang there for a second and then go in one at a time on thick white trails around where you were pointing — cast again and another set stacks beside the first. Hold for hoops sliding up the shaft, two more round the head, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
 | 11 | `-` | Shinobi | Two kunai thrown roughly where you are looking. Hold it and he sinks into a crouch making seals — shown as an inset panel zoomed on his hands — then folds forward, puts a hand to his mouth and breathes a fireball bigger than he is |
-| 12 | `=` | Thunderbolt | Discharges that skip off the ground and walk their way to the wall; hold it and the charge crawls all over him, then goes off in twenty-two directions at once |
+| 12 | `=` | Thunderbolt | Discharges that skip off the ground and take a bite out of everything they touch on the way to the wall; hold it and the charge crawls all over him, then earths itself in sixteen directions at once |
 | 13 | `[` | Mecha | Wings out: jump climbs, crouch dives. Grounded he cuts with a blade that slides out of his forearm; airborne it is quick little rounds; hold it and four rods unfold out of his back and burn one point |
 | 14 | `]` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
+| 15 | `;` | The shout | A cape, and a mouth that opens wider than a head should. Tap and he shouts a beam out of it; hold and something comes up out of the floor behind him and answers with one four times the size. Neither of them aims — they go straight out along his facing |
+| 16 | `'` | Titan | He climbs inside a machine several times his size and stops being drawn at all. It punches holes in the wall and cuts with its eyes; hold it and the arm folds into a launcher, puts five guided rounds downrange, catches fire, drops him out of the top, folds itself into a slab, and he throws the slab through the wall |
+| 17 | `\\` | Split head | His skull comes apart across the middle. What is behind it is a lens that cuts thin slots wherever you point; hold it and the halves swing right out and four very unfriendly rounds leave the rack |
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
@@ -431,6 +434,13 @@ and everything explosive in the game is built out of them:
   traces without painting, so the caller fills white and strokes black, which
   is the only treatment that reads over the paper *and* over the black wall.
 - `ragPath` — a torn closed blob, for the hole an impact punches in the picture.
+- `ribbonPath` — a curved tapered stroke with real width, fattest wherever you
+  ask for and pointed at both ends. It is what everything fluid is drawn with:
+  the curls of wind are commas made of these, not arcs at a radius.
+- `sparkPath` — the same idea as `blastPath` with a bend in every stroke and the
+  jitter cranked so they cluster in threes and leave paper between the clusters.
+  Electricity is drawn out of these: long thin curved scratches, which is what
+  the reference actually puts on the page, rather than a tidy zigzag.
 
 `burst` is still there for small punctuation. Anything that has actually gone
 off uses these instead.
@@ -502,6 +512,17 @@ him sinking gently rather than hanging in the air. The legs trail and lead the
 climb, the arms sweep back out of the way of them, and swapping to anything
 else in mid-air hands him straight back to gravity.
 
+### Taking pieces of him off the drawing (`Stickman.armsHidden` and friends)
+
+Three of the powers are not things he holds, they are things he becomes, and
+the honest way to draw that is to stop drawing the parts they replace. A weapon
+declares `hidesArms`, `hidesHead` or `hidesBody` and the figure simply leaves
+them out that frame; `headScale` swells the head for a shout. So the barrage
+has no arms, the split head has no head, and while the titan is standing there
+is no stick figure at all — the machine is posed off the same skeleton, blown
+up around the point his feet are on, so it still walks with his gait, leans
+with his lean and takes his recoil.
+
 ### The hand-drawn look (`src/core/sketch.ts`)
 
 Real frame-by-frame animation wobbles because every frame is redrawn by hand.
@@ -570,10 +591,12 @@ src/
     stickman.ts        procedural skeleton, gaits, stances and afterimages
     weapon-base.ts     the Weapon contract, grips, slash crescents, hitscan
     melee.ts           the melee combo framework (four chains per weapon)
-    weapons.ts         eight of the fourteen weapons, and the arsenal order
+    weapons.ts         eight of the seventeen weapons, and the arsenal order
     weapons-video.ts   the six lifted straight out of the source animation:
                        wind, missile pods, arcane staff, shinobi,
                        thunderbolt, mecha
+    weapons-forms.ts   the three that change what he is rather than what he
+                       is holding: the shout, the titan, the split head
     projectiles.ts     rockets, shells, guided missiles, kunai, bouncing
                        lightning, orbs, a very large fireball, blasts
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers

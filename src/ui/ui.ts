@@ -42,7 +42,7 @@ export interface Rect { x: number; y: number; w: number; h: number; }
  * The key that equips slot `i`. The number row runs out at ten weapons, so the
  * two after it borrow the keys immediately to its right.
  */
-const SLOT_KEYS = ['0', '-', '=', '[', ']'];
+const SLOT_KEYS = ['0', '-', '=', '[', ']', ';', "'", '\\'];
 export const slotKey = (i: number): string =>
   i < 9 ? String(i + 1) : (SLOT_KEYS[i - 9] ?? '?');
 

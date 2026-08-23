@@ -1,4 +1,4 @@
-import { angleDelta, clamp, hashNoise, rand, TAU, type Vec2 } from '../core/math';
+import { angleDelta, clamp, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Terrain } from './terrain';
 
@@ -52,6 +52,12 @@ export class Projectile {
    * dying in the dirt at his feet.
    */
   private bounces = 0;
+  /**
+   * Radius of the bite taken out of whatever it glances off. A discharge that
+   * skipped along the wall without marking it read as a stone; every touch
+   * should cost the masonry something, even if only a little.
+   */
+  private bounceBite = 0;
   /** Points it has actually bounced at, for anything that wants to draw them. */
   readonly hops: Vec2[] = [];
 
@@ -59,7 +65,7 @@ export class Projectile {
     x: number; y: number; vx: number; vy: number;
     kind: ProjectileKind; gravity?: number; radius?: number; life?: number; blast: Blast;
     target?: Vec2 | null; turn?: number; accel?: number; topSpeed?: number;
-    arm?: number; weave?: number; bounces?: number;
+    arm?: number; weave?: number; bounces?: number; bounceBite?: number;
   }) {
     this.x = opts.x; this.y = opts.y;
     this.vx = opts.vx; this.vy = opts.vy;
@@ -75,6 +81,7 @@ export class Projectile {
     this.armT = opts.arm ?? 0;
     this.weave = opts.weave ?? 0;
     this.bounces = opts.bounces ?? 0;
+    this.bounceBite = opts.bounceBite ?? 0;
     this.angle = Math.atan2(this.vy, this.vx);
   }
 
@@ -141,6 +148,9 @@ export class Projectile {
   private bounce(at: Vec2, terrain: Terrain): void {
     this.bounces--;
     this.hops.push({ x: at.x, y: at.y });
+    if (this.bounceBite > 0) {
+      terrain.carveBlob(at.x, at.y, this.bounceBite, 0.42, 13, this.bounceBite * 0.9);
+    }
     let nx = 0, ny = 0;
     const probe = Math.max(4, this.radius * 1.6);
     for (let i = 0; i < 12; i++) {
@@ -243,36 +253,19 @@ export class Projectile {
         break;
       }
       case 'bolt': {
-        // Electricity, so it is never a shape - it is a jag with forks off it.
+        // Electricity is never a shape, and it is never a tidy zigzag either:
+        // it is a ragged cluster of curved tapered strokes going the way it is
+        // going, with a few thrown back the other way.
         const r = this.radius;
         c.rotate(-this.angle);
-        c.lineWidth = 3.4;
-        const a = this.angle;
-        const seed = Math.floor(this.spin * 3);
-        const jag: Vec2[] = [];
-        for (let i = 0; i <= 5; i++) {
-          const t = i / 5;
-          const d = (t - 0.7) * r * 8;
-          jag.push({
-            x: Math.cos(a) * d - Math.sin(a) * hashNoise(seed + i, i) * r * 1.5,
-            y: Math.sin(a) * d + Math.cos(a) * hashNoise(seed + i * 3, i + 2) * r * 1.5,
-          });
-        }
-        c.beginPath();
-        for (let i = 0; i < jag.length; i++) {
-          if (i === 0) c.moveTo(jag[i].x, jag[i].y); else c.lineTo(jag[i].x, jag[i].y);
-        }
-        c.stroke();
-        // A couple of forks thrown off the middle of it.
-        c.lineWidth = 2.2;
-        for (let i = 1; i < 4; i++) {
-          const p = jag[i];
-          const fa = a + hashNoise(seed + i * 7, 5) * 2.2;
-          c.beginPath();
-          c.moveTo(p.x, p.y);
-          c.lineTo(p.x + Math.cos(fa) * r * 2.4, p.y + Math.sin(fa) * r * 2.4);
-          c.stroke();
-        }
+        const seed = Math.floor(this.spin * 5);
+        c.fillStyle = '#000';
+        sk.sparkPath(0, 0, 5, r * 0.5, r * 5.5, 3.4, 1.0, this.angle, seed, 0.45);
+        c.fill();
+        sk.sparkPath(0, 0, 3, r * 0.4, r * 2.4, 2.6, 2.6, this.angle + Math.PI,
+          seed + 31, 0.55);
+        c.fill();
+        c.rotate(this.angle);
         break;
       }
       case 'fireball': {
@@ -319,8 +312,36 @@ export class Projectile {
     }
     c.restore();
 
+    // A summoned orb drags a real trail: a thick white band with an ink edge,
+    // so four of them crossing the room read as four lines going somewhere
+    // rather than four dots that happen to be moving.
+    if (this.kind === 'orb' && this.trail.length > 3) {
+      const n = this.trail.length;
+      const top: Vec2[] = [], bot: Vec2[] = [];
+      for (let i = 0; i < n; i++) {
+        const p = this.trail[i];
+        const q = this.trail[Math.min(n - 1, i + 1)];
+        const dx = q.x - p.x || 1, dy = q.y - p.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const w = this.radius * (0.25 + (i / n) * 0.85);
+        top.push({ x: p.x - (dy / len) * w, y: p.y + (dx / len) * w });
+        bot.push({ x: p.x + (dy / len) * w, y: p.y - (dx / len) * w });
+      }
+      c.beginPath();
+      c.moveTo(top[0].x, top[0].y);
+      for (const p of top) c.lineTo(p.x, p.y);
+      for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y);
+      c.closePath();
+      c.fillStyle = '#fff';
+      c.fill();
+      c.strokeStyle = '#000';
+      c.lineWidth = 2.8;
+      c.stroke();
+    }
+
     // Motion trail: a thinning ribbon behind the projectile.
-    if (this.kind !== 'pellet' && this.kind !== 'fireball' && this.trail.length > 2) {
+    if (this.kind !== 'pellet' && this.kind !== 'fireball' && this.kind !== 'orb'
+      && this.trail.length > 2) {
       c.beginPath();
       for (let i = 0; i < this.trail.length; i++) {
         const p = this.trail[i];

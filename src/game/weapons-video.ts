@@ -8,13 +8,13 @@
  * fitted to the pictures afterwards, never the other way round.
  */
 import {
-  clamp, damp, easeOutCubic, easeOutQuint, hashNoise, lerp, rand, TAU, type Vec2,
+  angleDelta, clamp, damp, easeOutCubic, easeOutQuint, hashNoise, lerp, rand, TAU, type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import { MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { BLASTS, Projectile } from './projectiles';
 import { type HandTargets, type Stance } from './stickman';
-import { grip, gripAt, SlashFx, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
+import { grip, gripAt, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
 
 /** A rough ring, the way everything round in this game is drawn. */
 function ring(x: number, y: number, r: number, n: number, rot: number): Vec2[] {
@@ -79,12 +79,38 @@ const GALE_HOLD = 0.55;
 /** How long the storm takes to blow itself out once it is let go. */
 const GALE_TIME = 0.85;
 
-/** One cut of air on its way out; it keeps opening as it goes. */
+/**
+ * One curl of air on its way out. Everything the weapon draws is one of these:
+ * a curved tapered ribbon that travels along `ang`, hooks as it goes, and
+ * widens and slows as it dies. Three of them abreast is a claw of wind; a
+ * dozen of them wound round an axis is the tempest.
+ */
 interface Gust {
   x: number; y: number;
   ang: number; len: number;
+  /** How hard the ribbon bends, and which way. */
+  curl: number;
+  /** Sideways offset from the line it was thrown along. */
+  off: number;
+  width: number;
   life: number; max: number;
   seed: number;
+}
+
+/**
+ * The whirlwind. Its base stays in his hands and its head runs out along the
+ * aim, so what you see is a funnel being thrown rather than a shape appearing
+ * at the far end of one.
+ */
+interface Vortex {
+  /** 0..1 how far the head has travelled down its own length. */
+  run: number;
+  ang: number;
+  len: number;
+  power: number;
+  /** How far along it the wall stopped it, in world units. */
+  reach: number;
+  spin: number;
 }
 
 const WIND_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
@@ -148,15 +174,12 @@ export class Wind extends MeleeWeapon {
   protected readonly len = 172;
   protected readonly sets = WIND_SETS;
 
-  /** The claw marks a pass leaves hanging - one per claw, not one per swing. */
-  private marks = new SlashFx();
   private marked = false;
   /** 0..1 how much of the storm he has pulled in around himself. */
   private gather = 0;
   private gatherSfx = 0;
-  /** Counts down through the storm itself. */
-  private storm = 0;
-  private stormPower = 1;
+  /** The funnel, while one is running. */
+  private vortex: Vortex | null = null;
   private gusts: Gust[] = [];
 
   constructor() {
@@ -169,24 +192,22 @@ export class Wind extends MeleeWeapon {
 
   override onEquip(): void {
     super.onEquip();
-    this.marks.clear();
     this.gusts.length = 0;
     this.marked = false;
     this.gather = 0;
-    this.storm = 0;
+    this.vortex = null;
   }
 
   override onUnequip(ctx: WeaponCtx): void {
     super.onUnequip(ctx);
-    this.marks.clear();
     this.gusts.length = 0;
     this.gather = 0;
-    this.storm = 0;
+    this.vortex = null;
   }
 
   override get comboLabel(): string | null {
     if (this.gather > 0.02) return `GATHERING  ${Math.round(this.gather * 100)}%`;
-    if (this.storm > 0) return 'TEMPEST';
+    if (this.vortex) return 'TEMPEST';
     return super.comboLabel;
   }
 
@@ -203,74 +224,113 @@ export class Wind extends MeleeWeapon {
   // -------------------------------------------------------------- the storm ---
 
   protected override suppressFire(): boolean {
-    return this.heldFor > GALE_HOLD || this.storm > 0;
+    return this.heldFor > GALE_HOLD || this.vortex !== null;
   }
 
+  /**
+   * Letting go throws the funnel. Its base stays on his hands and its head
+   * runs out along the aim, cutting as it travels - which is a whirlwind being
+   * launched, rather than a scatter of slashes appearing on the wall.
+   */
   protected override onLetGo(ctx: WeaponCtx): void {
     if (this.heldFor <= GALE_HOLD || this.gather < 0.2) { this.gather = 0; return; }
-    this.stormPower = 0.4 + this.gather * 0.6;
-    this.storm = GALE_TIME;
+    const power = 0.4 + this.gather * 0.6;
     this.gather = 0;
-    this.cooldown = 1.4;
+    this.cooldown = 1.5;
     this.timer = this.cooldown;
-    ctx.sfx('heavyswing', 0.55);
-    ctx.shake(10 * this.stormPower);
-    ctx.flash(0.2 * this.stormPower);
-    ctx.sm.applyRecoil(0.7, ctx.sm.pose.aim, 60 * this.stormPower);
+    const a = ctx.sm.pose.aim;
+    const hands = this.mouthOfFunnel(ctx);
+    const front = ctx.terrain.strikePoint(hands.x, hands.y, Math.cos(a), Math.sin(a), 1200, 6);
+    this.vortex = {
+      run: 0, ang: a, len: 300 + power * 260, power, spin: rand(0, TAU),
+      reach: front ? Math.hypot(front.x - hands.x, front.y - hands.y) + 90 : 1200,
+    };
+    ctx.sfx('heavyswing', 0.5);
+    ctx.shake(9 * power);
+    ctx.flash(0.16 * power);
+    ctx.sm.applyRecoil(0.7, a, 70 * power);
     ctx.sm.addGhostBurst(0.3);
-
-    // The tempest itself: a run of cuts arriving across the whole face over
-    // the next second, each one three claws wide, at its own place and angle.
-    const cuts = Math.round(8 + this.stormPower * 8);
-    for (let i = 0; i < cuts; i++) {
-      ctx.after(i * (GALE_TIME / cuts) * 0.9, () => this.stormCut(ctx));
-    }
   }
 
-  /** One cut of the tempest: three parallel rips into whatever it reaches. */
-  private stormCut(ctx: WeaponCtx): void {
-    const sm = ctx.sm;
-    const c = sm.center;
-    const a = sm.pose.aim + rand(-0.55, 0.55);
-    const ca = Math.cos(a), sa = Math.sin(a);
-    const hit = ctx.terrain.strikePoint(c.x, c.y, ca, sa, 1100, 5);
-    const at = hit ?? { x: c.x + ca * 420, y: c.y + sa * 420 };
-    const reach = 70 + this.stormPower * 60;
-    if (hit) {
-      // Three gouges side by side, cut along the line the wind is travelling.
-      // Wind scores the face; it does not open a doorway - the depth is what
-      // keeps the storm spectacular without making everything else pointless.
+  /** Where the funnel is anchored: between his hands, out along the aim. */
+  private mouthOfFunnel(ctx: WeaponCtx): Vec2 {
+    const p = ctx.sm.pose;
+    return { x: (p.handR.x + p.handL.x) / 2, y: (p.handR.y + p.handL.y) / 2 };
+  }
+
+  /** One frame of the funnel: it advances, and it cuts what it is passing. */
+  private runVortex(ctx: WeaponCtx): void {
+    const v = this.vortex;
+    if (!v) return;
+    const prev = v.run;
+    v.run = Math.min(1, v.run + ctx.dt / GALE_TIME);
+    v.spin += ctx.dt * 9;
+    // It tracks the aim lazily, so it can be steered across the face a little.
+    v.ang += angleDelta(v.ang, ctx.sm.pose.aim) * Math.min(1, ctx.dt * 3);
+
+    const base = this.mouthOfFunnel(ctx);
+    const ca = Math.cos(v.ang), sa = Math.sin(v.ang);
+    const head = Math.min(v.reach, v.len * v.run + 60);
+    const was = Math.min(v.reach, v.len * prev + 60);
+    if (head > was) {
+      // Three gouges abreast, cut along the funnel as its head passes through.
+      const wide = (14 + v.power * 26) * (0.4 + v.run * 0.9);
       for (let i = -1; i <= 1; i++) {
-        const o = i * (18 + this.stormPower * 8);
-        const x0 = at.x - sa * o, y0 = at.y + ca * o;
-        ctx.terrain.carveCapsule(x0, y0, x0 + ca * reach, y0 + sa * reach,
-          8 + this.stormPower * 4, 0.35, 26 + this.stormPower * 20);
+        const o = i * wide;
+        const x0 = base.x + ca * was - sa * o, y0 = base.y + sa * was + ca * o;
+        const x1 = base.x + ca * head - sa * o, y1 = base.y + sa * head + ca * o;
+        ctx.terrain.carveCapsule(x0, y0, x1, y1, 8 + v.power * 5, 0.35, 16 + v.power * 16);
       }
-      ctx.particles.debris(at.x, at.y, 3, 260, a + Math.PI, 2.2);
-      ctx.particles.streaks(at.x, at.y, 5, a, 0.7, 90);
+      const at = { x: base.x + ca * head, y: base.y + sa * head };
+      ctx.particles.streaks(at.x, at.y, 2, v.ang, 0.8, 90);
+      if (Math.random() < 0.6) ctx.particles.debris(at.x, at.y, 2, 240, v.ang + Math.PI, 2.2);
     }
+    ctx.shake(3 * v.power * (1 - v.run * 0.4));
+    if (Math.random() < 0.5) ctx.sfx('slash', rand(1.2, 1.6));
+
+    if (v.run < 1) return;
+    // It arrives, and comes apart across the face in a spray of curls.
+    const at = { x: base.x + ca * head, y: base.y + sa * head };
+    for (let i = 0; i < 9; i++) {
+      const a = v.ang + rand(-1.1, 1.1);
+      const cca = Math.cos(a), ssa = Math.sin(a);
+      const hit = ctx.terrain.strikePoint(at.x - cca * 40, at.y - ssa * 40, cca, ssa, 340, 5);
+      if (hit) {
+        const reach = 70 + v.power * 70;
+        for (let g = -1; g <= 1; g++) {
+          const o = g * (16 + v.power * 8);
+          const x0 = hit.x - ssa * o, y0 = hit.y + cca * o;
+          ctx.terrain.carveCapsule(x0, y0, x0 + cca * reach, y0 + ssa * reach,
+            8 + v.power * 4, 0.35, 24 + v.power * 18);
+        }
+        ctx.particles.debris(hit.x, hit.y, 3, 260, a + Math.PI, 2.2);
+      }
+      this.addGust(at.x, at.y, a, 200 + v.power * 160, 26 + v.power * 16, rand(-0.5, 0.5));
+    }
+    ctx.hit(at.x, at.y, v.ang, 1.6);
+    ctx.shake(9 * v.power);
+    this.vortex = null;
+  }
+
+  private addGust(x: number, y: number, ang: number, len: number, width: number, curl: number): void {
     this.gusts.push({
-      x: at.x - ca * 60, y: at.y - sa * 60, ang: a,
-      len: 180 + this.stormPower * 160, life: 0.3, max: 0.3,
-      seed: Math.floor(rand(0, 9999)),
+      x, y, ang, len, curl, width, off: 0,
+      life: 0.34, max: 0.34, seed: Math.floor(rand(0, 9999)),
     });
-    if (this.gusts.length > 10) this.gusts.shift();
-    ctx.sfx('slash', rand(1.15, 1.5));
-    ctx.shake(4);
+    if (this.gusts.length > 22) this.gusts.shift();
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
     super.tick(ctx, held);
-    this.marks.update(ctx.dt);
     for (let i = this.gusts.length - 1; i >= 0; i--) {
       this.gusts[i].life -= ctx.dt;
       if (this.gusts[i].life <= 0) this.gusts.splice(i, 1);
     }
-    this.storm = Math.max(0, this.storm - ctx.dt);
+    this.runVortex(ctx);
 
     // Pulling the air in. It has to be visible from across the room, because
     // what happens next takes a second and a half to play out.
-    const pulling = held && this.heldFor > GALE_HOLD && this.storm <= 0;
+    const pulling = held && this.heldFor > GALE_HOLD && !this.vortex;
     if (pulling) {
       this.gather = Math.min(1, this.gather + ctx.dt / 1.1);
       ctx.shake(0.6 + this.gather * 2.2);
@@ -293,26 +353,33 @@ export class Wind extends MeleeWeapon {
   }
 
   /**
-   * Three claws of air, thrown at the outer end of the reach and set to keep
-   * opening outwards as they fade. The growth is what turns a crescent into a
-   * gust: it does not sit where it was cut, it travels.
+   * Three claws of air, thrown forward off the swing. They are curls, not
+   * arcs: each one hooks the way the hand went, which is how the reference
+   * draws moving air, and they travel outwards rather than sitting where they
+   * were cut.
    */
   private addMarks(ctx: WeaponCtx): void {
     const mv = this.move;
     const h = ctx.sm.pose.handR;
     const f = ctx.sm.facing;
     const a = ctx.sm.pose.aim;
-    const from = a + mv.from * f;
-    const to = a + mv.to * f;
     const n = mv.rake ?? 3;
     const reach = this.len * (mv.reach ?? 1);
+    // Which way the hand swept: the curls hook the same way.
+    const curl = Math.sign(mv.to - mv.from) * f * 0.55;
     for (let i = 0; i < n; i++) {
-      const t = n === 1 ? 0.5 : i / (n - 1);
-      this.marks.add(
-        h.x, h.y, reach * (0.56 + t * 0.44), from, to,
-        7 + (mv.thick ?? 26) * 0.2, 0.3, 78,
-      );
+      const t = n === 1 ? 0.5 : i / (n - 1) - 0.5;
+      this.gusts.push({
+        x: h.x + Math.cos(a) * 26, y: h.y + Math.sin(a) * 26,
+        ang: a + t * 0.34 * f,
+        len: reach * (0.8 + Math.abs(t) * 0.3),
+        curl: curl * (0.7 + Math.abs(t) * 0.9),
+        off: t * (18 + (mv.thick ?? 26) * 0.4),
+        width: 16 + (mv.thick ?? 26) * 0.42,
+        life: 0.3, max: 0.3, seed: Math.floor(rand(0, 9999)),
+      });
     }
+    if (this.gusts.length > 22) this.gusts.splice(0, this.gusts.length - 22);
     ctx.particles.streaks(
       h.x + Math.cos(a) * reach * 0.7, h.y + Math.sin(a) * reach * 0.7,
       4, a, 1.1, 70,
@@ -368,40 +435,116 @@ export class Wind extends MeleeWeapon {
     c.restore();
   }
 
-  /** Nothing in his hands: the marks and the gusts are the whole weapon. */
-  protected drawWeapon(sk: Sketch, _ctx: WeaponCtx): void {
+  /** Nothing in his hands: the curls of air are the whole weapon. */
+  protected drawWeapon(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
-    this.marks.draw(sk);
-    if (this.gusts.length === 0) return;
     c.save();
     c.lineJoin = 'round';
-    for (const g of this.gusts) {
-      const k = g.life / g.max;
-      const open = 1 - k;
-      c.globalAlpha = clamp(k * 1.6, 0, 1);
-      c.fillStyle = '#fff';
-      c.strokeStyle = '#000';
-      c.lineWidth = 3;
-      // Three long claws of air travelling along the cut, opening as they go.
-      sk.blastPath(g.x, g.y, 3, g.len * 0.12, g.len * (0.9 + open * 0.5),
-        26 + open * 22, 0.34, g.ang, g.seed);
-      c.fill();
-      c.stroke();
-      // And the loose air torn along with them.
-      c.lineWidth = 2.4;
-      for (let i = 0; i < 4; i++) {
-        const o = (hashNoise(g.seed + i * 5, sk.boil)) * 46;
-        const nx = -Math.sin(g.ang), ny = Math.cos(g.ang);
-        const l = g.len * (0.5 + Math.abs(hashNoise(g.seed + i * 9, sk.boil)) * 0.8);
-        sk.scrawl(
-          { x: g.x + nx * o, y: g.y + ny * o },
-          { x: g.x + nx * o + Math.cos(g.ang) * l, y: g.y + ny * o + Math.sin(g.ang) * l },
-          2.4, 18, 4,
-        );
-      }
-    }
+    c.lineCap = 'round';
+    for (const g of this.gusts) this.drawGust(sk, g);
+    if (this.vortex) this.drawVortex(sk, ctx, this.vortex);
     c.globalAlpha = 1;
     c.restore();
+  }
+
+  /**
+   * One curl of air: a tapered ribbon bent along its own travel, with a couple
+   * of thinner ones trailing it. Everything about it curves - a wind drawn as
+   * straight lines is a speed line, and this has to read as air.
+   */
+  private drawGust(sk: Sketch, g: Gust): void {
+    const c = sk.ctx;
+    const k = g.life / g.max;
+    const run = 1 - k;
+    const ca = Math.cos(g.ang), sa = Math.sin(g.ang);
+    const nx = -sa, ny = ca;
+    // It travels: the whole ribbon slides forward and thins as it dies.
+    const lead = g.len * run * 0.55;
+    const at = (d: number, o: number): Vec2 =>
+      ({ x: g.x + ca * (d + lead) + nx * (o + g.off), y: g.y + sa * (d + lead) + ny * (o + g.off) });
+    const L = g.len * (0.75 + run * 0.35);
+    const bend = g.curl * L * 0.45;
+
+    c.globalAlpha = clamp(k * 1.7, 0, 1);
+    c.fillStyle = '#fff';
+    c.strokeStyle = '#000';
+    c.lineWidth = 3.2;
+    // Fattest a third of the way along and hooking at the tip: a comma, which
+    // is the shape every drawn gust of wind in the world is made of.
+    sk.ribbonPath(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.5 + k * 0.7), 0.34, 0.8);
+    c.fill();
+    c.stroke();
+
+    c.lineWidth = 2.4;
+    for (let i = 0; i < 2; i++) {
+      const o = (i === 0 ? 1 : -1) * g.width * (0.7 + Math.abs(hashNoise(g.seed + i, sk.boil)) * 0.5);
+      const l = L * (0.45 + Math.abs(hashNoise(g.seed + i * 7, sk.boil)) * 0.4);
+      sk.ribbonPath(
+        at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
+        g.width * 0.26 * (0.4 + k), 0.3, 0.85,
+      );
+      c.fill();
+      c.stroke();
+    }
+  }
+
+  /**
+   * The funnel. Strands wound round the axis, drawn as the sine wave a helix
+   * projects to from the side, widening from his hands out to the head - so
+   * the base stays in his grip and the mouth of it is what reaches the wall.
+   */
+  private drawVortex(sk: Sketch, ctx: WeaponCtx, v: Vortex): void {
+    const c = sk.ctx;
+    const base = this.mouthOfFunnel(ctx);
+    const ca = Math.cos(v.ang), sa = Math.sin(v.ang);
+    const nx = -sa, ny = ca;
+    const head = Math.min(v.reach, v.len * v.run + 60);
+    const r1 = (34 + v.power * 46) * (0.5 + v.run * 0.7);
+    const strands = 8;
+
+    c.globalAlpha = 1;
+    c.fillStyle = '#fff';
+    c.strokeStyle = '#000';
+    for (let s = 0; s < strands; s++) {
+      const phase = v.spin + (s / strands) * TAU;
+      const turns = 1.6 + (s % 2) * 0.4;
+      const pts: Vec2[] = [];
+      const N = 22;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const d = head * t;
+        // The funnel opens out from nothing at his hands to its full mouth.
+        const r = r1 * Math.pow(t, 0.72);
+        const th = phase + t * turns * TAU;
+        const o = Math.sin(th) * r;
+        // A little depth: strands on the far side of the axis ride higher.
+        const lift = Math.cos(th) * r * 0.22;
+        pts.push({ x: base.x + ca * d + nx * o, y: base.y + sa * d + ny * o - lift });
+      }
+      // Twice: a fat white stroke under a thin ink one, so the far end of the
+      // funnel does not vanish into the wall it is drilling.
+      c.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        if (i === 0) c.moveTo(pts[i].x, pts[i].y); else c.lineTo(pts[i].x, pts[i].y);
+      }
+      c.strokeStyle = '#fff';
+      c.lineWidth = 7 + v.power * 2.4;
+      c.stroke();
+      c.strokeStyle = '#000';
+      c.lineWidth = 3 + v.power * 1.6;
+      c.stroke();
+    }
+    // The mouth of it, and the air being torn off the rim.
+    const at = { x: base.x + ca * head, y: base.y + sa * head };
+    c.lineWidth = 3.4;
+    sk.sparkPath(at.x, at.y, 9, r1 * 0.5, r1 * 2.1, r1 * 0.34, 2.4, v.ang, 4321, 0.55);
+    c.fill();
+    c.stroke();
+    // And the throat of it in his hands, so the base is obviously his.
+    c.lineWidth = 2.6;
+    sk.sparkPath(base.x, base.y, 6, 8, 34 + v.power * 18, 12, TAU, 0, 4322, 0.7);
+    c.fill();
+    c.stroke();
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
@@ -805,14 +948,16 @@ export class ArcaneStaff extends Weapon {
     // Hung in an arc in front of the staff, and aimed where he was looking.
     const orbs = [];
     for (let i = 0; i < 4; i++) {
-      const spread = (i - 1.5) * 0.34;
-      const d = 62 + Math.abs(i - 1.5) * 8;
+      // Well apart, and at four different distances: four dots in a tight row
+      // read as one object, four spread across an arc read as four.
+      const spread = (i - 1.5) * 0.62;
+      const d = 76 + Math.abs(i - 1.5) * 26;
       orbs.push({
         x: from.x + Math.cos(base + spread) * d,
         y: from.y + Math.sin(base + spread) * d,
         target: {
-          x: ctx.aimPoint.x + rand(-90, 90),
-          y: ctx.aimPoint.y + rand(-80, 80),
+          x: ctx.aimPoint.x + rand(-110, 110),
+          y: ctx.aimPoint.y + rand(-100, 100),
         },
         gone: false,
       });
@@ -1330,7 +1475,7 @@ const VOLT_TAP = 0.3;
 /** How long the drawn arcs of a discharge stay on the paper. */
 const ARC_TIME = 0.36;
 /** How many ways the discharge goes at once. */
-const ARC_COUNT = 22;
+const ARC_COUNT = 16;
 
 /** One drawn arc of electricity, from the body out to whatever it earthed on. */
 interface Arc {
@@ -1396,7 +1541,9 @@ export class Thunderbolt extends Weapon {
         x: from.x, y: from.y,
         vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
         kind: 'bolt', gravity: 420, radius: 6, life: 2.4, blast: BLASTS.bolt,
-        bounces: 3,
+        // Every skip costs the masonry a little, so a discharge walking up the
+        // face leaves a line of bites behind it before the last one goes off.
+        bounces: 3, bounceBite: 11,
       }));
     }
     // The arc leaving his hand, so the shot starts as electricity rather than
@@ -1404,10 +1551,10 @@ export class Thunderbolt extends Weapon {
     for (let i = 0; i < 3; i++) {
       this.arcs.push({
         pts: Thunderbolt.bolt(
-          from, { x: from.x + Math.cos(base) * 90, y: from.y + Math.sin(base) * 90 },
-          5, 22, Math.floor(rand(0, 9999)),
+          from, { x: from.x + Math.cos(base) * 110, y: from.y + Math.sin(base) * 110 },
+          5, 26, Math.floor(rand(0, 9999)),
         ),
-        life: 0.12, max: 0.12, width: 3.4,
+        life: 0.16, max: 0.16, width: 3.4,
       });
     }
   }
@@ -1552,22 +1699,34 @@ export class Thunderbolt extends Weapon {
     for (const a of this.arcs) {
       const k = a.life / a.max;
       c.globalAlpha = clamp(k * 1.8, 0, 1);
-      // Thick white core with an ink edge either side of it, which is the only
-      // way a bolt reads over the paper and over the black wall at once.
+      // A white core with an ink edge, so the path stays legible over the
+      // black wall. The scratches growing off it are the rest of the look.
       c.strokeStyle = '#000';
-      c.lineWidth = a.width * (0.6 + k) + 5;
+      c.lineWidth = a.width * (0.4 + k * 0.7) + 3.6;
       strokePts(c, a.pts);
       c.strokeStyle = '#fff';
-      c.lineWidth = a.width * (0.6 + k) + 1;
+      c.lineWidth = a.width * (0.4 + k * 0.7);
       strokePts(c, a.pts);
-      // Forks, thrown off wherever it kinked.
+      // And the feathering, which is the actual look: at every kink a ragged
+      // fan of curved tapered slivers, mostly running along the bolt and a few
+      // thrown across it. Solid ink, clustered, uneven - the reference draws
+      // energy as a mess of brush strokes, not as a diagram of a spark.
+      c.fillStyle = '#000';
       c.strokeStyle = '#000';
-      c.lineWidth = 2.4;
-      for (let i = 1; i < a.pts.length - 1; i += 2) {
+      c.lineWidth = 1.2;
+      // Thin and long, and only at every other kink: the reference's strokes
+      // are scratches, and a hundred fat ones turn a bolt into a hedge.
+      for (let i = 0; i < a.pts.length - 1; i += 2) {
         const p = a.pts[i];
-        const fa = hashNoise(i * 13, sk.boil) * TAU;
-        const l = (14 + Math.abs(hashNoise(i * 17, sk.boil)) * 30) * k;
-        sk.scrawl(p, { x: p.x + Math.cos(fa) * l, y: p.y + Math.sin(fa) * l }, 2.4, 8, 2);
+        const q = a.pts[i + 1];
+        const along = Math.atan2(q.y - p.y, q.x - p.x);
+        const seg = Math.hypot(q.x - p.x, q.y - p.y);
+        const reach = (seg * 0.9 + 30) * (0.45 + k * 0.75);
+        sk.sparkPath(p.x, p.y, 3, reach * 0.14, reach, 3.4, 1.0, along, i * 37 + sk.boil, 0.4);
+        c.fill();
+        sk.sparkPath(p.x, p.y, 2, reach * 0.1, reach * 0.5, 2.4, 2.4,
+          along + Math.PI, i * 53 + sk.boil, 0.55);
+        c.fill();
       }
     }
     c.globalAlpha = 1;
@@ -1863,40 +2022,10 @@ export class Mecha extends Weapon {
       sk.burst(root.x, root.y + 6, 6, 10, 20 + sp * 38, 2.4, 1.5, back, 7001);
     }
     c.restore();
-  }
 
-  draw(sk: Sketch, ctx: WeaponCtx): void {
-    const c = sk.ctx;
-    const sm = ctx.sm;
-
-    // --- the forearm blade --------------------------------------------------
-    const ext = this.extend;
-    if (ext > 0.01) {
-      const h = sm.pose.handR;
-      const ba = this.bladeAngle(ctx);
-      const ca = Math.cos(ba), sa = Math.sin(ba);
-      const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
-      const L = MECHA_BLADE * ext;
-      c.strokeStyle = '#000';
-      c.fillStyle = '#fff';
-      const blade = [at(-14, -4), at(L * 0.8, -5), at(L, 0), at(L * 0.78, 4), at(-14, 4)];
-      sk.polyPath(blade, 0.8);
-      c.fill();
-      sk.poly(blade, 2.8, false, 0.8);
-      sk.line(at(-10, 0), at(L * 0.86, 0), 1.5, 2, 0.4);
-      // The housing it slides out of, clamped over the forearm.
-      sk.line(at(-18, -7), at(-18, 7), 3.4, 1, 0.5);
-      sk.line(at(-26, -5), at(-26, 5), 3, 1, 0.5);
-    }
-
-    // --- muzzle flash off the flying shots ----------------------------------
-    if (this.flashT > 0) {
-      const m = grip(ctx, 46);
-      c.strokeStyle = '#000';
-      this.muzzle(sk, m.x, m.y, 16, 7101);
-    }
-
-    // --- the rod array ------------------------------------------------------
+    // The array unfolds out of his *back*, so it belongs back here with the
+    // wings rather than in front of him. Only the beams it fires are drawn on
+    // top, because those have to be readable over everything.
     if (this.rods > 0.02) {
       const root = this.rodRoot(ctx);
       c.save();
@@ -1929,6 +2058,39 @@ export class Mecha extends Weapon {
         sk.burst(tip.x, tip.y, 6, r * 1.5, r * (2.4 + this.rodCharge * 1.6), 2.2, TAU, 0, 7200 + i);
       }
       c.restore();
+    }
+
+  }
+
+  draw(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+
+    // --- the forearm blade --------------------------------------------------
+    const ext = this.extend;
+    if (ext > 0.01) {
+      const h = sm.pose.handR;
+      const ba = this.bladeAngle(ctx);
+      const ca = Math.cos(ba), sa = Math.sin(ba);
+      const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
+      const L = MECHA_BLADE * ext;
+      c.strokeStyle = '#000';
+      c.fillStyle = '#fff';
+      const blade = [at(-14, -4), at(L * 0.8, -5), at(L, 0), at(L * 0.78, 4), at(-14, 4)];
+      sk.polyPath(blade, 0.8);
+      c.fill();
+      sk.poly(blade, 2.8, false, 0.8);
+      sk.line(at(-10, 0), at(L * 0.86, 0), 1.5, 2, 0.4);
+      // The housing it slides out of, clamped over the forearm.
+      sk.line(at(-18, -7), at(-18, 7), 3.4, 1, 0.5);
+      sk.line(at(-26, -5), at(-26, 5), 3, 1, 0.5);
+    }
+
+    // --- muzzle flash off the flying shots ----------------------------------
+    if (this.flashT > 0) {
+      const m = grip(ctx, 46);
+      c.strokeStyle = '#000';
+      this.muzzle(sk, m.x, m.y, 16, 7101);
     }
 
     // --- and the four beams converging on one point -------------------------

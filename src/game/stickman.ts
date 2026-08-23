@@ -282,6 +282,12 @@ export class Stickman {
    * any amount of blur.
    */
   armsHidden = false;
+  /** Set while a weapon is drawing its own head - one that opens, say. */
+  headHidden = false;
+  /** Set while a weapon has replaced the whole figure, as the titan does. */
+  bodyHidden = false;
+  /** Scales the head. A shout can swell it; nothing else touches it. */
+  headScale = 1;
 
   state: MoveState = 'idle';
   /** Set by game.ts when a landing should make noise. */
@@ -315,6 +321,9 @@ export class Stickman {
     this.ghosts.length = 0;
     this.ghostBurst = 0;
     this.armsHidden = false;
+    this.headHidden = false;
+    this.bodyHidden = false;
+    this.headScale = 1;
     this.sprintT = 0;
     this.gaitPower = 0;
   }
@@ -1148,6 +1157,8 @@ export class Stickman {
 
   draw(sk: Sketch): void {
     const c = sk.ctx;
+    // A weapon that has replaced him outright draws everything itself.
+    if (this.bodyHidden) return;
 
     // Afterimages first: thin, pale copies of where he just was.
     for (const g of this.ghosts) {
@@ -1222,7 +1233,10 @@ export class Stickman {
     if (!this.armsHidden) this.limb(sk, p.shR, p.elbowR, p.handR, LIMB);
 
     // Head, drawn as a rough polygon the way these figures always are.
-    sk.head(p.head.x, p.head.y, HEAD_R, p.aim * 0.12 + p.bodyAngle, 4.4 * weight, 10);
+    if (!this.headHidden) {
+      sk.head(p.head.x, p.head.y, HEAD_R * this.headScale,
+        p.aim * 0.12 + p.bodyAngle, 4.4 * weight, 10);
+    }
 
     // Hips and shoulders get a short bar so the joints do not look pinched.
     sk.line(p.hipL, p.hipR, BODY * 0.8, 1, 0.5);

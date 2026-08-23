@@ -6,6 +6,7 @@ import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee'
 import { applyBlast, BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
 import { grip, gripAt, mirror, Weapon, type WeaponCtx } from './weapon-base';
+import { Shout, SplitHead, Titan } from './weapons-forms';
 import { ArcaneStaff, Mecha, MissilePods, Shinobi, Thunderbolt, Wind } from './weapons-video';
 
 export { Weapon };
@@ -1436,6 +1437,7 @@ export function createArsenal(): Weapon[] {
     new Fists(), new Greatsword(), new Warhammer(), new Wind(),
     new Magnum(), new Rifle(), new Shotgun(), new Bazooka(), new MissilePods(),
     new ArcaneStaff(), new Shinobi(), new Thunderbolt(), new Mecha(), new EnergyBeam(),
+    new Shout(), new Titan(), new SplitHead(),
   ];
 }
 

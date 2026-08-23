@@ -213,6 +213,19 @@ export abstract class Weapon {
    */
   get hidesArms(): boolean { return false; }
 
+  /** True while the weapon is drawing its own head - one that opens, say. */
+  get hidesHead(): boolean { return false; }
+
+  /**
+   * True while the weapon has replaced the figure outright. The titan is a
+   * machine he is standing inside, so for as long as it is up he is simply not
+   * drawn and the weapon draws everything, posed off the same skeleton.
+   */
+  get hidesBody(): boolean { return false; }
+
+  /** How big the head should be drawn; a shout swells it. */
+  get headScale(): number { return 1; }
+
   onEquip(): void {
     this.charge = 0;
     this.anim = 0;

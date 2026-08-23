@@ -1,4 +1,4 @@
-import { hashNoise, type Vec2 } from './math';
+import { hashNoise, quadPoint, type Vec2 } from './math';
 
 /**
  * The whole game is drawn as black ink on white paper. Real frame-by-frame
@@ -173,6 +173,76 @@ export class Sketch {
       c.moveTo(base.x, base.y);
       c.quadraticCurveTo(e1.x, e1.y, tip.x, tip.y);
       c.quadraticCurveTo(e2.x, e2.y, base.x, base.y);
+    }
+  }
+
+  /**
+   * A curved tapered ribbon: a stroke with real width that swells along its
+   * length and comes to a point at both ends, bent through a control point.
+   *
+   * This is the shape fluid things are drawn with in the reference - wind,
+   * smoke, the curl of a slash - and it is why they read as brushed rather
+   * than ruled. `fat` moves the widest point along the curve, so a ribbon can
+   * be a leaf (0.5), a comma (0.25) or a tail (0.8). Traces only; the caller
+   * fills and strokes.
+   */
+  ribbonPath(a: Vec2, ctrl: Vec2, b: Vec2, width: number, fat = 0.5, taper = 0.7): void {
+    this.ctx.beginPath();
+    this.ribbonInto(a, ctrl, b, width, fat, taper);
+  }
+
+  /** The same, appended to a path already open - for fans of them. */
+  private ribbonInto(a: Vec2, ctrl: Vec2, b: Vec2, width: number, fat: number, taper: number): void {
+    const c = this.ctx;
+    const N = 14;
+    const top: Vec2[] = [], bot: Vec2[] = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      const p = quadPoint(a, ctrl, b, t);
+      const q = quadPoint(a, ctrl, b, Math.min(1, t + 0.03));
+      const dx = q.x - p.x, dy = q.y - p.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;
+      // Remapped so the widest point sits at `fat` rather than the middle.
+      const u = t < fat ? (t / Math.max(1e-3, fat)) * 0.5
+        : 0.5 + ((t - fat) / Math.max(1e-3, 1 - fat)) * 0.5;
+      const w = width * 0.5 * Math.pow(Math.sin(u * Math.PI), taper) + 0.35;
+      top.push({ x: p.x + nx * w, y: p.y + ny * w });
+      bot.push({ x: p.x - nx * w, y: p.y - ny * w });
+    }
+    c.moveTo(top[0].x, top[0].y);
+    for (const p of top) c.lineTo(p.x, p.y);
+    for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y);
+    c.closePath();
+  }
+
+  /**
+   * The feathered fan the reference draws raw energy with: tapered slivers
+   * that *curve* as they go, at wildly uneven lengths, clustered rather than
+   * evenly spaced. `blastPath` throws straight splinters; this one is the same
+   * idea with a bend in every stroke, which is what separates electricity and
+   * wind from shrapnel. Traces only.
+   */
+  sparkPath(
+    cx: number, cy: number, count: number, r0: number, r1: number, width: number,
+    spread = Math.PI * 2, dir = 0, seed = 0, curl = 0.42,
+  ): void {
+    const c = this.ctx;
+    const step = spread / Math.max(1, count);
+    c.beginPath();
+    for (let i = 0; i < count; i++) {
+      // Clustered: the jitter is a good fraction of the gap, so strokes crowd
+      // together in threes and fours and leave paper between the clusters.
+      const a = dir + (count === 1 ? 0 : (i / (count - 1) - 0.5) * spread)
+        + hashNoise(seed + i, this.boil) * step * 1.1;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const nx = -sa, ny = ca;
+      const l0 = r0 * (0.4 + Math.abs(hashNoise(seed + i * 3, this.boil)) * 1.1);
+      const l1 = l0 + (r1 - r0) * (0.2 + Math.abs(hashNoise(seed + i * 5, this.boil + 2)) * 1.6);
+      const w = width * (0.35 + Math.abs(hashNoise(seed + i * 7, this.boil + 4)) * 1.5);
+      const bend = hashNoise(seed + i * 11, this.boil + 6) * (l1 - l0) * curl;
+      const p = (d: number, o: number): Vec2 => ({ x: cx + ca * d + nx * o, y: cy + sa * d + ny * o });
+      this.ribbonInto(p(l0, 0), p((l0 + l1) * 0.5, bend), p(l1, bend * 0.35), w, 0.42, 0.75);
     }
   }
 
