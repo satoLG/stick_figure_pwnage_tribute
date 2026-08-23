@@ -466,24 +466,27 @@ export class Wind extends MeleeWeapon {
     const bend = g.curl * L * 0.45;
 
     c.globalAlpha = clamp(k * 1.7, 0, 1);
-    // Ink on paper, with a white halo under it so the stroke survives the
-    // black wall. The reference draws wind as *black* tapered strokes; my
-    // white ribbons with an outline were the wrong way round, and read as
-    // ribbons of paper rather than as moving air.
-    const stroke = (a0: Vec2, ctrl: Vec2, b0: Vec2, w: number): void => {
+    // A blade of wind in the reference is a long lens with the paper showing
+    // through the middle of it and a heavy rim drawn down one side and only
+    // half way up the other. The hairline strokes trailing it stay solid,
+    // because at that width the rim closes over the belly anyway.
+    const blade = (a0: Vec2, ctrl: Vec2, b0: Vec2, w: number, seed: number): void => {
+      sk.inked(() => sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8), 3.6, 0.5, seed);
+    };
+    const hair = (a0: Vec2, ctrl: Vec2, b0: Vec2, w: number): void => {
       c.fillStyle = '#fff';
-      sk.ribbonPath(a0, ctrl, b0, w + 5, 0.34, 0.8);
+      sk.ribbonPath(a0, ctrl, b0, w + 4, 0.34, 0.8);
       c.fill();
       c.fillStyle = '#000';
       sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8);
       c.fill();
     };
     // A comma: fat a third of the way along, hooking to a point at the tip.
-    stroke(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.28 + k * 0.34));
+    blade(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.28 + k * 0.34), g.seed);
     for (let i = 0; i < 2; i++) {
       const o = (i === 0 ? 1 : -1) * g.width * (0.7 + Math.abs(hashNoise(g.seed + i, sk.boil)) * 0.5);
       const l = L * (0.45 + Math.abs(hashNoise(g.seed + i * 7, sk.boil)) * 0.4);
-      stroke(at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
+      hair(at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
         g.width * 0.14 * (0.4 + k));
     }
   }
@@ -1118,12 +1121,12 @@ export class ArcaneStaff extends Weapon {
       }
       // And the ball itself, swelling into the gap between the horns.
       const core = 6 + k * 16;
-      c.fillStyle = '#000';
-      sk.polyPath(ring(head.x, head.y, core, 11, ctx.time * 2), 1.5);
-      c.fill();
-      c.fillStyle = '#fff';
+      // The reference's energy balls are paper with a rim round them, never
+      // solid: a heavy line that goes most of the way round and stops.
+      sk.inked(() => sk.polyPath(ring(head.x, head.y, core, 11, ctx.time * 2), 1.5), 4, 0.28, 6011);
+      sk.rim(2, 0.55, 6012);
       sk.polyPath(ring(head.x, head.y, core * 0.44, 9, -ctx.time * 3), 1.1);
-      c.fill();
+      sk.rim(2.2, 0.6, 6013);
       c.fillStyle = '#000';
       c.lineWidth = 2.4;
       sk.burst(head.x, head.y, 8, core * 1.5, core * 3, 2.4, TAU, 0, 6001);
@@ -1415,14 +1418,10 @@ export class Shinobi extends Weapon {
       const head = sm.pose.head;
       const a = sm.pose.aim;
       c.save();
-      c.fillStyle = '#fff';
-      c.strokeStyle = '#000';
-      c.lineWidth = 3;
-      // The plume still coming out of him, chasing the ball it just threw.
-      sk.blastPath(head.x + Math.cos(a) * 18, head.y + Math.sin(a) * 18,
-        9, 12, 60 + 120 * k, 26, 1.1, a, 8201);
-      c.fill();
-      c.stroke();
+      // The plume still coming out of him, chasing the ball it just threw:
+      // paper with a rim round part of it, the way the reference's fire is.
+      sk.inked(() => sk.blastPath(head.x + Math.cos(a) * 18, head.y + Math.sin(a) * 18,
+        9, 12, 60 + 120 * k, 26, 1.1, a, 8201), 3.4, 0.42, 8202);
       c.restore();
     }
 
@@ -2044,12 +2043,10 @@ export class Mecha extends Weapon {
         sk.poly(rod, 2.4, false, 0.8);
         // The ball on the end, which is where the light is being kept.
         const r = (4 + this.rodCharge * 8) * this.rods;
-        c.fillStyle = '#000';
-        sk.polyPath(ring(tip.x, tip.y, r, 10, ctx.time * 2 + i), 1.2);
-        c.fill();
-        c.fillStyle = '#fff';
+        sk.inked(() => sk.polyPath(ring(tip.x, tip.y, r, 10, ctx.time * 2 + i), 1.2), 3.6, 0.3, 7220 + i);
         sk.polyPath(ring(tip.x, tip.y, r * 0.42, 8, -ctx.time * 3), 0.9);
-        c.fill();
+        sk.rim(2, 0.55, 7240 + i);
+        c.strokeStyle = '#000';
         c.lineWidth = 2.2;
         sk.burst(tip.x, tip.y, 6, r * 1.5, r * (2.4 + this.rodCharge * 1.6), 2.2, TAU, 0, 7200 + i);
       }

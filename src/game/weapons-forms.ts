@@ -8,7 +8,8 @@
  * the same skeleton so the gait, the lean and the recoil still drive them.
  */
 import {
-  clamp, damp, easeOutCubic, hashNoise, lerp, rand, TAU, type Vec2,
+  angleDelta, clamp, damp, easeOutCubic, hashNoise, lerp, rand, TAU,
+  type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import { BLASTS, Projectile } from './projectiles';
@@ -246,22 +247,33 @@ export class Shout extends Weapon {
     return { x: h.x + f * HEAD_R * this.headScale * 0.9, y: h.y + 3 };
   }
 
-  /** Where the thing behind him stands. */
+  /** How tall and how wide the thing behind him gets, fully out of the floor. */
+  private static readonly BEAST_H = 350;
+  private static readonly BEAST_W = 152;
+
+  /**
+   * Where the thing behind him stands.
+   *
+   * Close in, not way off behind him: the reference's composition is the
+   * creature filling the back of the frame with the figure standing small
+   * right under its open jaw, and putting it a screen's width away meant it
+   * was mostly off the edge of the paper by the time it stood up.
+   */
   private beastBase(ctx: WeaponCtx): Vec2 {
     const f = ctx.sm.facing;
-    // Behind him, but never off the edge of the paper: it is 300 units tall
-    // and it should be all the way on screen when it arrives.
     return {
-      x: clamp(ctx.sm.pos.x - f * 150, 170, ctx.terrain.w - 170),
+      x: clamp(ctx.sm.pos.x - f * 118, 150, ctx.terrain.w - 150),
       y: ctx.sm.pos.y + 6,
     };
   }
 
+  /** The gap between the two jaws, which is where its beam leaves it. */
   private beastMaw(ctx: WeaponCtx): Vec2 {
     const b = this.beastBase(ctx);
     const f = ctx.sm.facing;
-    const H = 300 * easeOutCubic(this.rise);
-    return { x: b.x + f * 96, y: b.y - H * 0.72 };
+    const up = easeOutCubic(this.rise);
+    const W = Shout.BEAST_W * (0.5 + up * 0.5);
+    return { x: b.x + f * W * 0.72, y: b.y - Shout.BEAST_H * up * 0.52 };
   }
 
   hands(ctx: WeaponCtx): HandTargets | null {
@@ -332,97 +344,127 @@ export class Shout extends Weapon {
   }
 
   /**
-   * The thing under the floor. It is drawn solid black with white gouged out
-   * of it - the opposite treatment to everything else in the game, which is
-   * exactly why it reads as something that does not belong here.
+   * The thing under the floor.
+   *
+   * Copied off the frames rather than invented: it is a bulbous head-shaped
+   * mass that comes up out of the ground, and the reference does not draw it
+   * solid black - it *screens* it, in dots, with one heavy ragged outline
+   * round the whole thing. On top of that grey there are exactly two features
+   * and no others: a single round eye, dark with a white pupil in it, and a
+   * maw that takes up the whole front of the head, its two jaws crowded with
+   * long white teeth outlined in black. No horns, no second eye, no limbs.
    */
   private drawBeast(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const f = ctx.sm.facing;
     const b = this.beastBase(ctx);
     const up = easeOutCubic(this.rise);
-    const H = 300 * up;
-    const W = 150 * (0.5 + up * 0.5);
+    const H = Shout.BEAST_H * up;
+    const W = Shout.BEAST_W * (0.5 + up * 0.5);
     if (H < 6) return;
+    /** dx runs forward off its chest, dy runs up off the floor. */
+    const at = (dx: number, dy: number): Vec2 => ({ x: b.x + f * dx * W, y: b.y - dy * H });
 
-    const at = (dx: number, dy: number): Vec2 => ({ x: b.x + f * dx, y: b.y - dy });
-    // A hunched mass with horns, ragged along every edge.
-    const body: Vec2[] = [
-      at(-W, 0), at(-W * 0.86, H * 0.5), at(-W * 0.5, H * 0.82),
-      at(-W * 0.24, H * 1.02), at(0, H * 0.94),
-      at(W * 0.2, H * 1.05), at(W * 0.52, H * 0.86), at(W * 0.7, H * 0.6),
-      at(W * 0.86, H * 0.34), at(W * 0.72, 0),
+    // How far the jaws are apart. The mouth is not a shape laid over the head;
+    // it is a wedge cut *out* of the front of it, which is why the reference's
+    // creature reads as one mass with a bite taken out rather than as a head
+    // with a mouth drawn on.
+    const openK = this.roar > 0 ? 1 : clamp((up - 0.45) / 0.55, 0, 1);
+    const g = (0.5 + 0.34 * this.power) * openK;
+    const upperLip = at(0.96, 0.5 + 0.42 * g);
+    const throat = at(-0.3, 0.48);
+    const lowerLip = at(0.88, 0.5 - 0.36 * g);
+
+    const outline: Vec2[] = [
+      at(-1.04, 0), at(-1.14, 0.34), at(-1.02, 0.7), at(-0.72, 0.96),
+      at(-0.28, 1.1), at(0.2, 1.08), at(0.6, 0.94),
+      upperLip, throat, lowerLip,
+      at(0.72, 0.18), at(0.54, 0),
     ];
-    const rag = body.map((p, i) => ({
-      x: p.x + hashNoise(i * 5, sk.boil) * 9,
-      y: p.y + hashNoise(i * 9, sk.boil + 3) * 9,
+    const body = outline.map((q, i) => ({
+      x: q.x + hashNoise(i * 5, sk.boil) * 7,
+      y: q.y + hashNoise(i * 9, sk.boil + 3) * 7,
     }));
-    c.fillStyle = '#000';
-    sk.polyPath(rag, 2.4);
-    c.fill();
-
-    // Horns off the top, drawn as solid hooks.
-    for (const d of [-0.3, 0.16]) {
-      const root = at(W * d, H * 0.94);
-      const tip = at(W * (d - 0.42), H * 1.42);
+    const trace = (): void => {
       c.beginPath();
-      c.moveTo(root.x, root.y - 10);
-      c.quadraticCurveTo(root.x + f * 10, tip.y + 24, tip.x, tip.y);
-      c.quadraticCurveTo(root.x - f * 6, tip.y + 40, root.x, root.y + 10);
+      c.moveTo(body[0].x, body[0].y);
+      for (let i = 1; i < body.length; i++) c.lineTo(body[i].x, body[i].y);
       c.closePath();
-      c.fill();
-    }
+    };
 
-    // Eyes and the maw: white cut out of the black, which is the whole read.
+    c.save();
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
+    // Paper first so the tone reads over the black wall too, then screen tone
+    // poured into the same path, then one heavy ragged line round the lot.
+    trace();
     c.fillStyle = '#fff';
-    const eye = at(W * 0.44, H * 0.8);
-    sk.polyPath([
-      { x: eye.x - f * 30, y: eye.y - 6 }, { x: eye.x + f * 6, y: eye.y - 14 },
-      { x: eye.x + f * 4, y: eye.y + 6 },
-    ], 1.4);
     c.fill();
-    const eye2 = at(W * 0.12, H * 0.86);
-    sk.polyPath([
-      { x: eye2.x - f * 24, y: eye2.y - 5 }, { x: eye2.x + f * 4, y: eye2.y - 12 },
-      { x: eye2.x + f * 2, y: eye2.y + 5 },
-    ], 1.4);
+    c.fillStyle = sk.screenTone();
+    c.fill();
+    trace();
+    c.strokeStyle = '#000';
+    c.lineWidth = 5.5;
+    c.stroke();
+
+    // --- the eye: dark socket, white pupil, and nothing else on the face ----
+    const eye = at(0.12, 0.9);
+    const er = W * 0.17;
+    c.fillStyle = '#000';
+    sk.polyPath(ring(eye.x, eye.y, er, 11, 0.4), 1.4);
+    c.fill();
+    c.fillStyle = '#fff';
+    sk.polyPath(ring(eye.x + f * er * 0.22, eye.y - er * 0.1, er * 0.44, 9, 1.1), 0.9);
     c.fill();
 
-    // The mouth, open as far as the roar has it open.
-    const m = this.beastMaw(ctx);
-    const open = this.roar > 0 ? 1 : clamp((up - 0.55) / 0.45, 0, 1);
-    const jaw = (56 + 44 * this.power) * open;
-    if (jaw > 3) {
-      const mouth: Vec2[] = [
-        { x: m.x - f * 20, y: m.y - jaw * 0.9 },
-        { x: m.x + f * 26, y: m.y - jaw * 0.5 },
-        { x: m.x + f * 30, y: m.y + jaw * 0.5 },
-        { x: m.x - f * 20, y: m.y + jaw * 0.9 },
-      ];
-      c.fillStyle = '#fff';
-      sk.polyPath(mouth, 2);
-      c.fill();
-      // Teeth, cut back out of the white in black.
-      c.fillStyle = '#000';
-      for (let i = 0; i < 5; i++) {
-        const t = (i + 0.5) / 5;
-        const y0 = lerp(mouth[0].y, mouth[3].y, t);
-        const x0 = lerp(mouth[0].x, mouth[3].x, t);
-        c.beginPath();
-        c.moveTo(x0, y0 - jaw * 0.09);
-        c.lineTo(x0 + f * 20, y0);
-        c.lineTo(x0, y0 + jaw * 0.09);
-        c.closePath();
-        c.fill();
-      }
+    // --- teeth ---------------------------------------------------------------
+    //
+    // Long white spikes off both edges of the wedge, leaning back down the
+    // jaw, every one of them outlined. They are the only white left inside the
+    // grey and that contrast is the whole read of the thing.
+    if (g > 0.05) {
+      const centre = { x: (upperLip.x + lowerLip.x) * 0.5, y: (upperLip.y + lowerLip.y) * 0.5 };
+      const fangs = (from: Vec2, to: Vec2, seed: number): void => {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const l = Math.hypot(dx, dy) || 1;
+        // Into the mouth, whichever side of this edge that turns out to be.
+        let nx = -dy / l, ny = dx / l;
+        if ((centre.x - from.x) * nx + (centre.y - from.y) * ny < 0) { nx = -nx; ny = -ny; }
+        const n = 6;
+        for (let i = 0; i < n; i++) {
+          const t = (i + 0.5) / n;
+          const root = { x: from.x + dx * t, y: from.y + dy * t };
+          const half = (l / n) * 0.42;
+          // Longest at the hinge end, and every one a different length.
+          const len = H * 0.13 * (0.55 + (1 - t) * 0.7)
+            * (0.72 + Math.abs(hashNoise(seed + i * 7, sk.boil)) * 0.5);
+          const tip = {
+            x: root.x + nx * len + (dx / l) * len * 0.42,
+            y: root.y + ny * len + (dy / l) * len * 0.42,
+          };
+          c.beginPath();
+          c.moveTo(root.x - (dx / l) * half, root.y - (dy / l) * half);
+          c.lineTo(tip.x, tip.y);
+          c.lineTo(root.x + (dx / l) * half, root.y + (dy / l) * half);
+          c.closePath();
+          c.fillStyle = '#fff';
+          c.fill();
+          c.strokeStyle = '#000';
+          c.lineWidth = 3;
+          c.stroke();
+        }
+      };
+      fangs(upperLip, throat, 91);
+      fangs(lowerLip, throat, 137);
     }
-    // Chunks of floor still falling off it while it climbs.
+
+    // Chunks of floor still coming up with it while it climbs.
     if (up < 1) {
       c.fillStyle = '#000';
-      c.lineWidth = 2.4;
-      c.strokeStyle = '#000';
-      sk.burst(b.x, b.y, 9, W * 0.5, W * (0.8 + up), 2.4, 1.6, -Math.PI / 2, 9001);
+      sk.tuftPath(b.x, b.y, 11, W * 0.5, W * (0.7 + up * 0.6), 1.9, -Math.PI / 2, 9001, 0.08);
+      c.fill();
     }
+    c.restore();
   }
 
   draw(sk: Sketch, ctx: WeaponCtx): void {
@@ -470,15 +512,30 @@ export class Shout extends Weapon {
     if (this.roar > 0) {
       const k = this.roar / ROAR_TIME;
       const from = this.beastMaw(ctx);
-      const r = (60 + 44 * this.power) * (0.55 + k * 0.55);
+      const r = (34 + 26 * this.power) * (0.55 + k * 0.55);
       const ca = Math.cos(this.dir), sa = Math.sin(this.dir);
       const front = ctx.terrain.strikePoint(from.x, from.y, ca, sa, 1800, 6);
       const len = front ? Math.hypot(front.x - from.x, front.y - from.y) + r : 1800;
       c.save();
-      beamBand(sk, from, this.dir, Math.max(60, len), r, 0.7);
-      c.strokeStyle = '#000';
-      c.lineWidth = 4;
-      sk.burst(from.x, from.y, 12, r * 1.1, r * 2.6, 4, TAU, 0, 9102);
+      const L = Math.max(60, len);
+      beamBand(sk, from, this.dir, L, r, 0.7);
+      // What makes the reference's roar a roar and not a plank of light: the
+      // whole length of it is feathered with heavy ink spikes flicked off both
+      // edges, thinning as they go, and a torn clump at the mouth.
+      c.fillStyle = '#000';
+      for (let i = 0; i < 9; i++) {
+        const t = 0.04 + (i / 8) * 0.92;
+        const w = r * (0.7 + t * 0.9);
+        for (const side of [-1, 1]) {
+          const px = from.x + ca * L * t - sa * w * side;
+          const py = from.y + sa * L * t + ca * w * side;
+          sk.tuftPath(px, py, 5, 2, r * (0.9 - t * 0.4), 1.5,
+            this.dir + side * Math.PI * 0.5, 9110 + i * 7 + side, 0.075);
+          c.fill();
+        }
+      }
+      sk.tuftPath(from.x, from.y, 15, r * 0.8, r * 2.4, 3.0, this.dir, 9102, 0.08);
+      c.fill();
       c.restore();
     }
   }
@@ -762,10 +819,28 @@ export class Titan extends Weapon {
     }
   }
 
-  /** Two thin beams out of the head, into whatever the crosshair is on. */
+  /**
+   * Where the eyes are looking.
+   *
+   * Not simply "at the crosshair". The machine's head rides two and a half
+   * bodies up, far above where the pointer naturally sits, so taking the raw
+   * angle from there to the cursor sent the beams back over its own shoulder
+   * as soon as the crosshair was anywhere near his feet. A head that size
+   * turns to look: the aim only picks a direction *within the arc it can turn
+   * to*, which is a shallow cone the way it happens to be facing, and the wall
+   * is always inside that cone.
+   */
+  private beamAngle(ctx: WeaponCtx): number {
+    const head = this.big(ctx, ctx.sm.pose.head);
+    const forward = ctx.sm.facing > 0 ? 0 : Math.PI;
+    const raw = Math.atan2(ctx.aimPoint.y - head.y, ctx.aimPoint.x - head.x);
+    return forward + clamp(angleDelta(forward, raw), -0.42, 0.42);
+  }
+
+  /** Two thin beams out of the head, into whatever it has turned to look at. */
   private burnEyes(ctx: WeaponCtx): void {
     const head = this.big(ctx, ctx.sm.pose.head);
-    const a = Math.atan2(ctx.aimPoint.y - head.y, ctx.aimPoint.x - head.x);
+    const a = this.beamAngle(ctx);
     const ca = Math.cos(a), sa = Math.sin(a);
     const hit = ctx.terrain.strikePoint(head.x, head.y, ca, sa, 1400, 5);
     if (!hit) return;
@@ -806,35 +881,53 @@ export class Titan extends Weapon {
       const push = Math.sin(clamp(this.t / 0.45, 0, 1) * Math.PI);
       return { main: grip(ctx, 30 + push * 16, -3), off: grip(ctx, 26, 15) };
     }
-    return { main: grip(ctx, 30, 6), off: grip(ctx, 28, -10) };
+    // Standing, the machine's arms hang down and *out*, clear of the chest,
+    // the way a suit with a barrel for a torso has to hold them. Boxing them
+    // up in front put both mitts over its own visor.
+    return {
+      main: gripAt(ctx, Math.PI / 2, 40, -f * 16),
+      off: gripAt(ctx, Math.PI / 2, 38, f * 13),
+    };
   }
 
   // ---------------------------------------------------------------- drawing ---
 
-  /** One armour plate: a rough box, white with a heavy ink edge. */
-  private plate(sk: Sketch, a: Vec2, b: Vec2, w0: number, w1: number, seed: number): void {
+  /**
+   * One limb segment.
+   *
+   * The machine in the reference is not built out of angular plates - it is
+   * built out of *tubes*: rounded capsules stacked two and three deep down
+   * each arm and leg, like a diving suit, with a thin even line round each
+   * one and nothing filled in. Getting this wrong is what made the last pass
+   * read as a robot from a different film, so this draws the stadium the
+   * reference draws and nothing more elaborate.
+   */
+  private tube(sk: Sketch, a: Vec2, b: Vec2, r0: number, r1: number, line = 2.6): void {
     const c = sk.ctx;
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.hypot(dx, dy) || 1;
-    const nx = -dy / len, ny = dx / len;
-    const pts: Vec2[] = [
-      { x: a.x + nx * w0, y: a.y + ny * w0 },
-      { x: b.x + nx * w1, y: b.y + ny * w1 },
-      { x: b.x - nx * w1, y: b.y - ny * w1 },
-      { x: a.x - nx * w0, y: a.y - ny * w0 },
-    ];
+    const an = Math.atan2(dx / len, -dy / len);
+    const pts: Vec2[] = [];
+    const N = 9;
+    for (let i = 0; i <= N; i++) {
+      const t = an - Math.PI * (i / N);
+      pts.push({ x: b.x + Math.cos(t) * r1, y: b.y + Math.sin(t) * r1 });
+    }
+    for (let i = 0; i <= N; i++) {
+      const t = an - Math.PI - Math.PI * (i / N);
+      pts.push({ x: a.x + Math.cos(t) * r0, y: a.y + Math.sin(t) * r0 });
+    }
     c.fillStyle = '#fff';
-    sk.polyPath(pts, 1.1);
+    sk.polyPath(pts, 0.9);
     c.fill();
-    sk.poly(pts, 3.4, false, 1.1);
-    // A band across it, so a plate is plainly a plate.
-    const m = 0.62;
-    sk.line(
-      { x: lerp(a.x, b.x, m) + nx * lerp(w0, w1, m), y: lerp(a.y, b.y, m) + ny * lerp(w0, w1, m) },
-      { x: lerp(a.x, b.x, m) - nx * lerp(w0, w1, m), y: lerp(a.y, b.y, m) - ny * lerp(w0, w1, m) },
-      2.2, 1, 0.4,
-    );
-    void seed;
+    sk.poly(pts, line, false, 0.9);
+  }
+
+  /** A limb drawn as the reference draws one: two tubes with a mitt on the end. */
+  private limb(sk: Sketch, a: Vec2, b: Vec2, c2: Vec2, r: number, mitt: number): void {
+    this.tube(sk, a, b, r * 1.15, r * 0.9);
+    this.tube(sk, b, c2, r * 0.95, r * 0.8);
+    if (mitt > 0) this.tube(sk, c2, c2, mitt, mitt);
   }
 
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
@@ -846,91 +939,123 @@ export class Titan extends Weapon {
     const B = (v: Vec2): Vec2 => this.big(ctx, v);
     // Collapsing: everything squashes down towards the floor.
     const k = this.up;
-    const squash = (v: Vec2): Vec2 => {
-      const q = B(v);
-      return { x: q.x, y: sm.pos.y - (sm.pos.y - q.y) * k };
+    const q = (v: Vec2): Vec2 => {
+      const w = B(v);
+      return { x: w.x, y: sm.pos.y - (sm.pos.y - w.y) * k };
     };
 
     c.save();
     c.strokeStyle = '#000';
     c.lineJoin = 'round';
+    c.lineCap = 'round';
 
-    // Back arm and back leg first.
-    this.plate(sk, squash(p.hipL), squash(p.kneeL), 23, 19, 1);
-    this.plate(sk, squash(p.kneeL), squash(p.footL), 19, 23, 2);
-    this.plate(sk, squash(p.shL), squash(p.elbowL), 21, 17, 3);
-    this.plate(sk, squash(p.elbowL), squash(p.handL), 17, 20, 4);
+    // The machine's arms are longer than his are - they hang past the hip
+    // instead of folding up over the chest, which is what a barrel of a torso
+    // forces. Both joints are pushed out along the line of his own arm.
+    const REACH = 1.28;
+    const arm = (sh: Vec2, jt: Vec2): Vec2 => {
+      const a0 = q(sh), a1 = q(jt);
+      return { x: a0.x + (a1.x - a0.x) * REACH, y: a0.y + (a1.y - a0.y) * REACH };
+    };
 
-    // Torso: a slab of a chest over a narrower waist.
-    const chest = squash(p.chest), pelvis = squash(p.pelvis);
-    this.plate(sk, chest, pelvis, 46, 29, 5);
-    this.plate(sk, squash(p.neck), chest, 28, 44, 6);
-    // Shoulder pauldrons.
-    for (const sh of [p.shL, p.shR]) {
-      const s = squash(sh);
-      const pts = [
-        { x: s.x - f * 21, y: s.y - 26 }, { x: s.x + f * 29, y: s.y - 21 },
-        { x: s.x + f * 26, y: s.y + 18 }, { x: s.x - f * 21, y: s.y + 13 },
-      ];
-      c.fillStyle = '#fff';
-      sk.polyPath(pts, 1.2);
-      c.fill();
-      sk.poly(pts, 3.4, false, 1.2);
+    // Back limbs first, a shade thinner so the near side reads in front.
+    this.limb(sk, q(p.hipL), q(p.kneeL), q(p.footL), 20, 23);
+    this.limb(sk, q(p.shL), arm(p.shL, p.elbowL), arm(p.shL, p.handL), 17, 21);
+
+    // --- torso: a barrel with a ribbed panel down the front of it ----------
+    const chest = q(p.chest), pelvis = q(p.pelvis), neck = q(p.neck);
+    this.tube(sk, neck, chest, 38, 48, 3);
+    this.tube(sk, chest, pelvis, 46, 30, 3);
+    // The ribs. Five short bars stacked down the middle of the chest is the
+    // single most recognisable thing about this machine.
+    c.strokeStyle = '#000';
+    const ribs = 5;
+    for (let i = 0; i < ribs; i++) {
+      const t = 0.12 + (i / (ribs - 1)) * 0.72;
+      const cx = lerp(chest.x, pelvis.x, t) + f * 4;
+      const cy = lerp(chest.y, pelvis.y, t);
+      const w = 15 * (1 - t * 0.35);
+      sk.line({ x: cx - w, y: cy }, { x: cx + w, y: cy }, 2.4, 1, 0.5);
     }
 
-    // Front leg and front arm.
-    this.plate(sk, squash(p.hipR), squash(p.kneeR), 24, 20, 7);
-    this.plate(sk, squash(p.kneeR), squash(p.footR), 20, 24, 8);
+    // --- pauldrons: rounded caps sitting over the shoulders ----------------
+    for (const sh of [p.shL, p.shR]) {
+      const s2 = q(sh);
+      this.tube(sk, { x: s2.x - f * 8, y: s2.y - 12 }, { x: s2.x + f * 14, y: s2.y + 10 }, 26, 22, 3);
+    }
 
-    // The head: a blocky helm with a visor, and the eye beams' sockets.
-    const h = squash(p.head);
-    const R = HEAD_R * this.scale * 0.92 * (0.4 + k * 0.6);
-    const helm = [
-      { x: h.x - R * 0.9, y: h.y - R * 0.5 }, { x: h.x - R * 0.6, y: h.y - R },
-      { x: h.x + R * 0.7, y: h.y - R }, { x: h.x + R, y: h.y - R * 0.4 },
-      { x: h.x + R * 0.8, y: h.y + R * 0.85 }, { x: h.x - R * 0.75, y: h.y + R * 0.8 },
-    ];
+    // --- the near leg ------------------------------------------------------
+    this.limb(sk, q(p.hipR), q(p.kneeR), q(p.footR), 22, 25);
+
+    // --- the helmet --------------------------------------------------------
+    //
+    // Low and wide, sunk into the shoulders with no neck showing: a dome
+    // split by a seam down the middle, two bolts either side of it, a brim,
+    // and one solid black visor band under the brim. That band is the only
+    // filled shape on the whole machine.
+    const h = q(p.head);
+    const R = HEAD_R * this.scale * 1.42 * (0.4 + k * 0.6);
+    const dome: Vec2[] = [];
+    for (let i = 0; i <= 14; i++) {
+      const a = Math.PI + (i / 14) * Math.PI;
+      dome.push({ x: h.x + Math.cos(a) * R * 1.06, y: h.y + Math.sin(a) * R * 0.86 });
+    }
+    dome.push({ x: h.x + R * 1.02, y: h.y + R * 0.3 });
+    dome.push({ x: h.x - R * 1.02, y: h.y + R * 0.3 });
     c.fillStyle = '#fff';
-    sk.polyPath(helm, 1.2);
+    sk.polyPath(dome, 1);
     c.fill();
-    sk.poly(helm, 3.8, false, 1.2);
+    sk.poly(dome, 3, false, 1);
+    // Seam and bolts.
+    sk.line({ x: h.x + f * 2, y: h.y - R * 0.84 }, { x: h.x + f * 2, y: h.y - R * 0.1 }, 3, 1, 0.5);
+    for (const d of [-1, 1]) {
+      sk.polyPath(ring(h.x + d * R * 0.34 + f * 2, h.y - R * 0.44, R * 0.11, 8, 0), 0.5);
+      c.stroke();
+      sk.polyPath(ring(h.x + d * R * 0.34 + f * 2, h.y - R * 0.2, R * 0.11, 8, 0), 0.5);
+      c.stroke();
+    }
+    // Brim, then the visor band under it, then the jaw plate.
+    this.tube(sk, { x: h.x - R * 1.06, y: h.y + R * 0.04 }, { x: h.x + R * 1.06, y: h.y }, 6, 6, 2.6);
     c.fillStyle = '#000';
     sk.polyPath([
-      { x: h.x - R * 0.62, y: h.y - R * 0.16 }, { x: h.x + R * 0.8, y: h.y - R * 0.3 },
-      { x: h.x + R * 0.74, y: h.y + R * 0.16 }, { x: h.x - R * 0.6, y: h.y + R * 0.2 },
-    ], 1);
+      { x: h.x - R * 0.9, y: h.y + R * 0.2 }, { x: h.x + R * 0.9, y: h.y + R * 0.16 },
+      { x: h.x + R * 0.88, y: h.y + R * 0.56 }, { x: h.x - R * 0.88, y: h.y + R * 0.6 },
+    ], 0.8);
     c.fill();
+    this.tube(sk, { x: h.x - R * 0.72, y: h.y + R * 0.82 }, { x: h.x + R * 0.72, y: h.y + R * 0.8 }, 11, 11, 2.6);
 
-    // Arm in front, and whatever it is currently being.
-    this.plate(sk, squash(p.shR), squash(p.elbowR), 22, 18, 9);
+    // --- the near arm, and whatever it is currently being ------------------
     if (this.phase === 'aim' || this.phase === 'volley') {
-      // The forearm folded into a launcher.
-      const e = squash(p.elbowR), hd = squash(p.handR);
+      // The forearm folded into a launcher: the tubes stay, a squared muzzle
+      // block goes on the end of them.
+      const e = arm(p.shR, p.elbowR), hd = arm(p.shR, p.handR);
+      this.tube(sk, q(p.shR), e, 18, 15, 2.8);
       const dx = hd.x - e.x, dy = hd.y - e.y;
       const len = Math.hypot(dx, dy) || 1;
-      const tip = { x: hd.x + (dx / len) * 34, y: hd.y + (dy / len) * 34 };
-      this.plate(sk, e, tip, 21, 26, 10);
+      const tip = { x: hd.x + (dx / len) * 40, y: hd.y + (dy / len) * 40 };
+      this.tube(sk, e, tip, 16, 21, 2.8);
       const nx = -dy / len, ny = dx / len;
       for (let i = -1; i <= 1; i++) {
         sk.line(
           { x: tip.x + nx * i * 9, y: tip.y + ny * i * 9 },
-          { x: tip.x + (dx / len) * 8 + nx * i * 9, y: tip.y + (dy / len) * 8 + ny * i * 9 },
-          3.4, 1, 0.4,
+          { x: tip.x + (dx / len) * 9 + nx * i * 9, y: tip.y + (dy / len) * 9 + ny * i * 9 },
+          3.2, 1, 0.4,
         );
       }
       if (this.muzzleT > 0) {
-        c.strokeStyle = '#000';
-        c.lineWidth = 3;
-        sk.burst(tip.x, tip.y, 8, 10, 60, 3, 1.4, Math.atan2(dy, dx), 9201);
+        c.fillStyle = '#000';
+        sk.tuftPath(tip.x, tip.y, 9, 8, 58, 1.5, Math.atan2(dy, dx), 9201, 0.08);
+        c.fill();
       }
     } else {
-      this.plate(sk, squash(p.elbowR), squash(p.handR), 18, 23, 11);
-      // A fist, and the shock coming off it.
-      const hd = squash(p.handR);
+      this.limb(sk, q(p.shR), arm(p.shR, p.elbowR), arm(p.shR, p.handR), 19, 25);
+      // The shock coming off the mitt, as thin spikes and not as a starburst.
       if (this.punch > 0.02) {
-        c.strokeStyle = '#000';
-        c.lineWidth = 3.4;
-        sk.burst(hd.x, hd.y, 8, 16, 60 * this.punch, 3.4, 2.2, f > 0 ? 0 : Math.PI, 9202);
+        const hd = arm(p.shR, p.handR);
+        c.fillStyle = '#000';
+        sk.tuftPath(hd.x, hd.y, 9, 22, 22 + 58 * this.punch, 2.0,
+          f > 0 ? 0 : Math.PI, 9202, 0.075);
+        c.fill();
       }
     }
     c.restore();
@@ -943,36 +1068,35 @@ export class Titan extends Weapon {
     // --- eye beams ----------------------------------------------------------
     if (this.beam > 0 && this.up > 0.5) {
       const head = this.big(ctx, sm.pose.head);
-      const a = Math.atan2(ctx.aimPoint.y - head.y, ctx.aimPoint.x - head.x);
+      const a = this.beamAngle(ctx);
       const ca = Math.cos(a), sa = Math.sin(a);
-      const hit = ctx.terrain.strikePoint(head.x, head.y, ca, sa, 1400, 5);
-      const len = hit ? Math.hypot(hit.x - head.x, hit.y - head.y) : 1400;
+      const hit = ctx.terrain.strikePoint(head.x, head.y, ca, sa, 1600, 5);
+      const len = hit ? Math.hypot(hit.x - head.x, hit.y - head.y) : 1600;
+      const land = { x: head.x + ca * len, y: head.y + sa * len };
       c.save();
-      c.strokeStyle = '#000';
+      // The reference's mech does not fire a rope of light. It draws two hair
+      // lines from the two eyes that *converge* on one spot, and a small tuft
+      // of spikes where they meet the wall - and that is the whole effect.
       const nx = -sa, ny = ca;
-      for (const d of [-9, 9]) {
+      for (const d of [-11, 11]) {
         const from = { x: head.x + nx * d, y: head.y + ny * d };
-        c.lineWidth = 8;
         c.strokeStyle = '#fff';
+        c.lineWidth = 5;
         c.beginPath();
         c.moveTo(from.x, from.y);
-        c.lineTo(from.x + ca * len, from.y + sa * len);
+        c.lineTo(land.x, land.y);
         c.stroke();
-        c.lineWidth = 3.4;
         c.strokeStyle = '#000';
+        c.lineWidth = 1.8;
         c.beginPath();
         c.moveTo(from.x, from.y);
-        c.lineTo(from.x + ca * len, from.y + sa * len);
+        c.lineTo(land.x, land.y);
         c.stroke();
       }
       if (hit) {
-        c.fillStyle = '#fff';
-        sk.ragPath(hit.x, hit.y, 22, 11, 0.44, 9301);
+        c.fillStyle = '#000';
+        sk.tuftPath(land.x, land.y, 11, 5, 34, 2.6, a + Math.PI, 9301, 0.08);
         c.fill();
-        c.lineWidth = 3;
-        c.strokeStyle = '#000';
-        sk.ragPath(hit.x, hit.y, 22, 11, 0.44, 9301);
-        c.stroke();
       }
       c.restore();
     }

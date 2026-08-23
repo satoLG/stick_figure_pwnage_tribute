@@ -207,7 +207,7 @@ export class Fists extends MeleeWeapon {
     // The smears are the effect, and they come out far faster than the blows
     // do - forty a second, so a fifth of a second of them is twenty on the
     // paper at once, which is what the reference frames actually hold.
-    this.smearAcc += ctx.dt * 46;
+    this.smearAcc += ctx.dt * 58;
     while (this.smearAcc >= 1) {
       this.smearAcc -= 1;
       this.addSmear(ctx);
@@ -239,8 +239,8 @@ export class Fists extends MeleeWeapon {
     // Spread right out behind and around him. They are where his arms have
     // *been*, not where his shoulders are, so they cover a wide field - and
     // starting them all on his sternum blots one spot solid black.
-    const off = rand(-92, 56);
-    const fwd = rand(-190, 60);
+    const off = rand(-110, 70);
+    const fwd = rand(-230, 90);
     this.smears.push({
       x: c.x + f * fwd,
       y: c.y + off,
@@ -249,15 +249,15 @@ export class Fists extends MeleeWeapon {
       // Short and chunky. Drags that cross the whole paper read as spears;
       // the reference's longest is about a third of the frame and most are
       // half that again.
-      len: 80 + Math.pow(Math.random(), 1.8) * 300,
-      width: rand(6, 17),
+      len: 110 + Math.pow(Math.random(), 1.7) * 400,
+      width: rand(9, 26),
       bow: rand(-0.16, 0.16),
       hollow: Math.random() < 0.16,
       life: rand(0.14, 0.26),
       max: 0.26,
       seed: Math.floor(rand(0, 9999)),
     });
-    if (this.smears.length > 26) this.smears.shift();
+    if (this.smears.length > 34) this.smears.shift();
   }
 
   /**
@@ -431,13 +431,11 @@ export class Fists extends MeleeWeapon {
     for (const g of geom) {
       const { m, k, L, at } = g;
       c.globalAlpha = clamp(k * 2, 0, 1);
-      c.fillStyle = m.hollow ? '#fff' : '#000';
-      c.strokeStyle = '#000';
-      c.lineWidth = 2.4;
-      // Every drag is two to four separate strokes strung along one line with
-      // paper between them. Drawing one long ribbon and biting holes out of it
-      // gave polka dots; a brush running dry lifts off and comes back down,
-      // and that is what has to be on the page.
+      // Not a black blob: a white-bellied drag walled in by a heavy rim that
+      // is only drawn part of the way round it. Where the drag runs thin the
+      // two sides of the rim meet and it reads solid black, and where it runs
+      // fat the paper shows straight through the middle - which is precisely
+      // the mix the reference frames are made of, and why they look brushed.
       const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
       let d = 0;
       for (let sgi = 0; sgi < segs && d < L; sgi++) {
@@ -447,8 +445,9 @@ export class Fists extends MeleeWeapon {
         const t = d / L;
         const w = g.w * (1 - t * 0.45);
         const o0 = m.bow * d, o1 = m.bow * d1;
-        sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.22, 0.95);
-        if (m.hollow) c.stroke(); else c.fill();
+        const trace = (): void =>
+          sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.22, 0.95);
+        sk.inked(trace, 4.4, m.hollow ? 0.7 : 0.22, m.seed + sgi * 13);
         // The lift-off before the brush comes back down.
         d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
       }

@@ -107,9 +107,16 @@ export class ImpactFx {
       }
       c.fillStyle = inverted ? '#000' : '#fff';
       c.fill();
-      c.strokeStyle = '#000';
-      c.lineWidth = inverted ? 5 : 2.8;
-      c.stroke();
+      // The rim is walked with a pen that lifts: long runs of ink round some
+      // blades, nothing at all round others. A fan outlined all the way round
+      // reads as cut paper; one outlined in pieces reads as drawn.
+      if (inverted) {
+        c.strokeStyle = '#000';
+        c.lineWidth = 5;
+        c.stroke();
+      } else {
+        sk.rim(3.2, 0.45, h.seed + h.age * 17);
+      }
     }
     c.restore();
   }

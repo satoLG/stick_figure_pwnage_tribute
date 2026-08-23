@@ -304,6 +304,30 @@ export class Sketch {
   }
 
   /**
+   * The reference's only grey, as a fill you can pour into any shape.
+   *
+   * `halftone` below shades whatever is clipped, which is fine for a box but
+   * fragile for anything else; this hands back a tiled dot screen you set as
+   * `fillStyle` and then fill a path with, so the dots stop exactly at the
+   * outline with no clipping involved at all. Built once and kept.
+   */
+  private tone: CanvasPattern | null = null;
+  screenTone(): CanvasPattern | string {
+    if (this.tone) return this.tone;
+    const t = document.createElement('canvas');
+    t.width = 6; t.height = 6;
+    const g = t.getContext('2d');
+    if (!g) return '#000';
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, 6, 6);
+    g.fillStyle = '#000';
+    g.beginPath(); g.arc(1.5, 1.5, 1.45, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(4.5, 4.5, 1.45, 0, Math.PI * 2); g.fill();
+    this.tone = this.ctx.createPattern(t, 'repeat');
+    return this.tone ?? '#000';
+  }
+
+  /**
    * The reference's only grey, and it is not grey: it is a screen of dots.
    * Fills whatever region is currently clipped, so the caller clips to a shape
    * and calls this to shade it.
@@ -320,6 +344,60 @@ export class Sketch {
       }
     }
     c.fill();
+  }
+
+  /**
+   * The mark this whole film is drawn with.
+   *
+   * Nothing in the reference is a solid black blob. Every effect - a punch
+   * drag, a gout of flame, a blade of wind, the fan off an impact - is a
+   * *thick* shape with a WHITE belly and a black rim, and the rim is only ever
+   * drawn part of the way round. The pen goes down, follows an edge for a
+   * while, lifts, picks up again further along. That unclosed rim is the
+   * whole reason the reference reads as fast and hand-drawn rather than as
+   * shapes someone filled in: the eye completes the form itself.
+   *
+   * `trace` lays down the path (any of the *Path helpers below); this fills it
+   * white and then walks a broken pen round it. `broken` is how much of the
+   * rim is *missing* - 0 draws the full outline, 0.6 leaves well over half of
+   * it to the imagination.
+   */
+  inked(trace: () => void, rim = 2.4, broken = 0.5, seed = 0): void {
+    const c = this.ctx;
+    trace();
+    c.fillStyle = '#fff';
+    c.fill();
+    if (rim <= 0) return;
+    c.strokeStyle = '#000';
+    this.brokenPen(rim, broken, seed);
+    c.stroke();
+    c.setLineDash([]);
+  }
+
+  /**
+   * Set the pen up to draw only part of whatever is stroked next: long
+   * confident runs of ink with paper between them, starting at a different
+   * point of the outline every drawing so the gaps never sit still.
+   */
+  brokenPen(width: number, broken = 0.5, seed = 0): void {
+    const c = this.ctx;
+    c.lineWidth = width;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    if (broken <= 0) { c.setLineDash([]); return; }
+    const on = 22 + Math.abs(hashNoise(seed, this.boil)) * 90;
+    c.setLineDash([on, on * (broken * 1.6)]);
+    // Where the pen happens to be down when it meets the shape.
+    c.lineDashOffset = hashNoise(seed + 977, this.boil) * 120;
+  }
+
+  /** Rim an already-traced path without refilling it. */
+  rim(width: number, broken = 0.5, seed = 0): void {
+    const c = this.ctx;
+    c.strokeStyle = '#000';
+    this.brokenPen(width, broken, seed);
+    c.stroke();
+    c.setLineDash([]);
   }
 
   /** Short radiating impact / speed lines, the signature "hit" punctuation. */
