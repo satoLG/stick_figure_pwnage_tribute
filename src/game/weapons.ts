@@ -30,10 +30,34 @@ const BARRAGE_RATE = 0.075;
 /** How far in front of his chest the barrage can find a wall to hit. */
 const BARRAGE_REACH = 235;
 
-/** One blow of the barrage, for the fraction of a second it is on the paper. */
+/** One blow of the barrage: where it landed, for the ink it leaves there. */
 interface BigPunch {
   x: number; y: number;
   ang: number; size: number;
+  life: number; max: number;
+  seed: number;
+}
+
+/**
+ * One smear of the barrage, and the whole look of it.
+ *
+ * In the reference this is not a fist and it is not a starburst: it is a long
+ * tapered drag of ink thrown backwards off him, blunt and hooked at the end
+ * nearest his shoulder and drawn out to a point behind it, with the paper
+ * showing through in nicks along its length the way a brush run dry does. At
+ * any moment there are twenty of them at wildly different lengths and slightly
+ * different angles, layered over each other and over him, and his arms are
+ * simply not there any more.
+ */
+interface Smear {
+  x: number; y: number;
+  ang: number;
+  len: number;
+  width: number;
+  /** How far it bows off its own axis. */
+  bow: number;
+  /** A few of them are drawn as open outlines instead of solid. */
+  hollow: boolean;
   life: number; max: number;
   seed: number;
 }
@@ -99,10 +123,18 @@ export class Fists extends MeleeWeapon {
   /** Rate limiter for the blows themselves. */
   private punchT = 0;
   private punches: BigPunch[] = [];
+  private smears: Smear[] = [];
+  /** Fractional smear budget, so the rate is per second and not per frame. */
+  private smearAcc = 0;
 
   constructor() { super(); this.animLen = 0.18; this.cooldown = 0.16; }
 
-  override onEquip(): void { super.onEquip(); this.endBarrage(); this.punches.length = 0; }
+  override onEquip(): void {
+    super.onEquip();
+    this.endBarrage();
+    this.punches.length = 0;
+    this.smears.length = 0;
+  }
   override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.endBarrage(); }
 
   private endBarrage(): void {
@@ -144,6 +176,10 @@ export class Fists extends MeleeWeapon {
       this.punches[i].life -= ctx.dt;
       if (this.punches[i].life <= 0) this.punches.splice(i, 1);
     }
+    for (let i = this.smears.length - 1; i >= 0; i--) {
+      this.smears[i].life -= ctx.dt;
+      if (this.smears[i].life <= 0) this.smears.splice(i, 1);
+    }
 
     if (!held || this.heldFor <= BARRAGE_HOLD) {
       if (this.barrageT > 0 || this.spent) this.endBarrage();
@@ -168,10 +204,60 @@ export class Fists extends MeleeWeapon {
     ctx.sm.addGhostBurst(0.12);
     ctx.shake(2.5);
 
+    // The smears are the effect, and they come out far faster than the blows
+    // do - forty a second, so a fifth of a second of them is twenty on the
+    // paper at once, which is what the reference frames actually hold.
+    this.smearAcc += ctx.dt * 46;
+    while (this.smearAcc >= 1) {
+      this.smearAcc -= 1;
+      this.addSmear(ctx);
+    }
+
     this.punchT -= ctx.dt;
     if (this.punchT > 0) return;
     this.punchT = BARRAGE_RATE;
     this.throwPunch(ctx);
+  }
+
+  /**
+   * One drag of ink. It is anchored on his shoulders and thrown *backwards* -
+   * these are the arms smearing, not the punches landing - fanned a little
+   * either side of the line he is punching along.
+   */
+  private addSmear(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    const c = sm.pose.chest;
+    const f = sm.facing;
+    // Backwards along the *facing*, not along the aim. In the reference the
+    // drags lie roughly level however he is pointing - they are his arms
+    // smearing sideways, and a fan radiating out of one point at whatever the
+    // crosshair happens to be reads as a firework instead.
+    // Level-ish, but not ruled: the reference has a few running steeply across
+    // the others, and a field of exactly parallel drags reads as hatching.
+    const back = (f > 0 ? Math.PI : 0)
+      + (Math.random() < 0.22 ? rand(-0.9, 0.9) : rand(-0.3, 0.3));
+    // Spread right out behind and around him. They are where his arms have
+    // *been*, not where his shoulders are, so they cover a wide field - and
+    // starting them all on his sternum blots one spot solid black.
+    const off = rand(-92, 56);
+    const fwd = rand(-190, 60);
+    this.smears.push({
+      x: c.x + f * fwd,
+      y: c.y + off,
+      ang: back,
+      // Lengths spread over five to one: a few reach right across the paper.
+      // Short and chunky. Drags that cross the whole paper read as spears;
+      // the reference's longest is about a third of the frame and most are
+      // half that again.
+      len: 80 + Math.pow(Math.random(), 1.8) * 300,
+      width: rand(6, 17),
+      bow: rand(-0.16, 0.16),
+      hollow: Math.random() < 0.16,
+      life: rand(0.14, 0.26),
+      max: 0.26,
+      seed: Math.floor(rand(0, 9999)),
+    });
+    if (this.smears.length > 26) this.smears.shift();
   }
 
   /**
@@ -287,99 +373,101 @@ export class Fists extends MeleeWeapon {
    * is the difference between "a hand touched the wall" and the frantic mess
    * the reference actually draws.
    */
+  /**
+   * The barrage, which is the whole weapon and which I had wrong twice.
+   *
+   * It is not a fist and it is not an explosion. Watched frame by frame it is
+   * a field of long tapered drags of ink thrown backwards off his shoulders,
+   * blunt and hooked at the near end and drawn out to a point behind them, at
+   * five different lengths and slightly different angles, layered over each
+   * other and over him. The paper shows through in nicks along every one of
+   * them, the way a brush run dry does. His arms are not drawn at all - the
+   * smears are where his arms went.
+   */
   private drawPunches(sk: Sketch): void {
     const c = sk.ctx;
     c.save();
     c.lineJoin = 'round';
     c.lineCap = 'round';
-    // Only the newest blow gets a hand drawn on it. The reference never has
-    // two of these on the paper at once - what the older ones leave behind is
-    // their ink and their speed lines, and five overlapping mittens read as a
-    // bunch of grapes rather than as a fist.
-    const newest = this.punches.length - 1;
-    for (let pi = 0; pi < this.punches.length; pi++) {
-      const p = this.punches[pi];
-      const k = p.life / p.max;                    // 1 -> 0
-      const open = 1 - k;
-      const s = p.size * (0.8 + open * 0.4);
-      const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+
+    // Two passes, and it has to be two: every drag is knocked back in white
+    // so it survives the black wall, and if each one paints its own halo just
+    // before its own ink then the next one along wipes the last one out. All
+    // the paper first, then all the ink on top of it.
+    const geom = this.smears.map((m) => {
+      const k = clamp(m.life / m.max, 0, 1);
+      const ca = Math.cos(m.ang), sa = Math.sin(m.ang);
+      const nx = -sa, ny = ca;
+      const L = m.len * (0.8 + (1 - k) * 0.3);
       const at = (d: number, o: number): Vec2 =>
-        ({ x: p.x + ca * d - sa * o, y: p.y + sa * d + ca * o });
-      c.globalAlpha = clamp(k * 1.7, 0, 1);
-
-      // The fist, which the reference draws as a cloud of overlapping rounded
-      // knuckles in *outline* - no fill, no heavy edge, every stroke the same
-      // weight as the stick figure's own. It is several times the size of his
-      // actual hand, which is the whole joke, and it is left open so the wall
-      // shows through it.
-      c.strokeStyle = '#000';
-      // Three times his own height, which is what the reference draws. A fist
-      // the size of a fist is just a fist; the joke is the scale.
-      const F = s * 2.8;
-      // Knuckles are ovals, squashed across the line of the punch; balls read
-      // as fruit. Everything below is drawn in that squashed frame.
-      const oval = (dx: number, dy: number, r: number, n: number): Vec2[] => {
-        const q = at(dx, dy);
-        const pts: Vec2[] = [];
-        for (let i2 = 0; i2 < n; i2++) {
-          const a2 = (i2 / n) * TAU;
-          const ex = Math.cos(a2) * r * 0.82, ey = Math.sin(a2) * r * 1.08;
-          pts.push({ x: q.x + ca * ex - sa * ey, y: q.y + sa * ex + ca * ey });
-        }
-        return pts;
+        ({ x: m.x + ca * d + nx * o, y: m.y + sa * d + ny * o });
+      return {
+        m, k, L, at,
+        head: at(0, 0),
+        ctrl: at(L * 0.5, m.bow * L * 0.35),
+        tail: at(L, m.bow * L),
+        w: m.width * (0.5 + k * 0.7),
       };
-      // A mitten: one big mass for the back of the hand and a row of knuckles
-      // along the leading edge.
-      const lobes: Array<[number, number, number]> = [
-        [-F * 0.5, F * 0.02, F * 0.5],
-        [-F * 0.02, -F * 0.3, F * 0.34],
-        [F * 0.16, F * 0.02, F * 0.33],
-        [F * 0.1, F * 0.34, F * 0.3],
-        [-F * 0.2, F * 0.5, F * 0.26],
-      ];
-      // Knocked back once behind the whole hand so it reads over the black
-      // wall, then outlined - never filled per lobe, or it turns into a bunch
-      // of grapes instead of a hand.
-      if (pi === newest) {
-        c.fillStyle = '#fff';
-        for (const [dx, dy, r] of lobes) {
-          sk.polyPath(oval(dx, dy, r, 15), 1.4);
-          c.fill();
-        }
-        c.lineWidth = 2.8;
-        for (const [dx, dy, r] of lobes) {
-          sk.polyPath(oval(dx, dy, r, 15), 1.4);
-          c.stroke();
-        }
-      }
-      // The creases between the knuckles, and one fingernail.
-      if (pi === newest) {
-        c.lineWidth = 2.4;
-        for (let i2 = 0; i2 < 2; i2++) {
-          sk.line(at(-F * 0.16, -F * 0.16 + i2 * F * 0.34),
-            at(F * 0.16, -F * 0.1 + i2 * F * 0.34), 2.4, 1, 0.7);
-        }
-        sk.polyPath(oval(F * 0.04, -F * 0.36, F * 0.1, 9), 0.9);
-        c.stroke();
-      }
+    });
 
-      // Long thin speed slivers raining past it on the line it came in on -
-      // solid black, sharply pointed, scattered well clear of the hand rather
-      // than through it. Half of what sells the speed is these.
-      c.fillStyle = '#000';
-      for (let i2 = 0; i2 < 9; i2++) {
-        const o = hashNoise(p.seed + i2 * 5, sk.boil) * F * 1.9;
-        const back = F * (0.9 + Math.abs(hashNoise(p.seed + i2 * 9, sk.boil)) * 2.2);
-        const l = F * (0.28 + Math.abs(hashNoise(p.seed + i2 * 3, sk.boil)) * 0.55);
-        const q = at(-back, o);
-        sk.tuftPath(q.x, q.y, 1, 0, l, 0.1, p.ang + Math.PI, p.seed + i2, 0.04);
+    c.fillStyle = '#fff';
+    for (const g of geom) {
+      c.globalAlpha = clamp(g.k * 2, 0, 1);
+      const { m, L, at } = g;
+      const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
+      let d = 0;
+      for (let sgi = 0; sgi < segs && d < L; sgi++) {
+        const run = L * (0.32 + Math.abs(hashNoise(m.seed + sgi * 5, sk.boil)) * 0.5);
+        const d1 = Math.min(L, d + run);
+        const t = d / L;
+        const w = g.w * (1 - t * 0.45) + 2.6;
+        const o0 = m.bow * d, o1 = m.bow * d1;
+        sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.22, 0.95);
+        c.fill();
+        d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
+      }
+    }
+
+    for (const g of geom) {
+      const { m, k, L, at } = g;
+      c.globalAlpha = clamp(k * 2, 0, 1);
+      c.fillStyle = m.hollow ? '#fff' : '#000';
+      c.strokeStyle = '#000';
+      c.lineWidth = 2.4;
+      // Every drag is two to four separate strokes strung along one line with
+      // paper between them. Drawing one long ribbon and biting holes out of it
+      // gave polka dots; a brush running dry lifts off and comes back down,
+      // and that is what has to be on the page.
+      const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
+      let d = 0;
+      for (let sgi = 0; sgi < segs && d < L; sgi++) {
+        const run = L * (0.32 + Math.abs(hashNoise(m.seed + sgi * 5, sk.boil)) * 0.5);
+        const d1 = Math.min(L, d + run);
+        // Fat near the front of each stroke, drawn out to a point behind it.
+        const t = d / L;
+        const w = g.w * (1 - t * 0.45);
+        const o0 = m.bow * d, o1 = m.bow * d1;
+        sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.22, 0.95);
+        if (m.hollow) c.stroke(); else c.fill();
+        // The lift-off before the brush comes back down.
+        d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
+      }
+      // A hooked tick off the blunt end, the way the reference finishes them.
+      if (!m.hollow && k > 0.4) {
+        c.fillStyle = '#000';
+        sk.tuftPath(g.head.x, g.head.y, 2, 0, g.w * 2.4, 1.1, m.ang + Math.PI, m.seed + 41, 0.09);
         c.fill();
       }
-      // And a small clump of ink at the contact point itself. Small: the
-      // reference marks a hit, it does not stab the drawing with it.
-      const bite = at(F * 0.42, 0);
-      sk.tuftPath(bite.x, bite.y, 16, s * 0.06, s * (0.8 + open * 0.5), 2.8,
-        p.ang + Math.PI, p.seed + 51, 0.05);
+    }
+
+    // And the ink where the blows are actually landing: small dense clumps of
+    // hair-thin spikes on the face of the wall, nothing more.
+    c.fillStyle = '#000';
+    for (const p of this.punches) {
+      const k = clamp(p.life / p.max, 0, 1);
+      c.globalAlpha = clamp(k * 1.8, 0, 1);
+      sk.tuftPath(p.x, p.y, 14, p.size * 0.06, p.size * (0.7 + (1 - k) * 0.5),
+        2.9, p.ang + Math.PI, p.seed, 0.05);
       c.fill();
     }
     c.globalAlpha = 1;
