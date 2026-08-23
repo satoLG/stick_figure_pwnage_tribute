@@ -116,6 +116,81 @@ export class Sketch {
     this.poly(pts, width, false, 0.5);
   }
 
+  /**
+   * A loose, fast, scrawled stroke. Where `line` keeps close to the straight
+   * path between its ends, this one lets the middle wander a long way off it,
+   * so the mark reads as thrown down at speed rather than measured out. It is
+   * what the reference's wilder frames are made of.
+   */
+  scrawl(a: Vec2, b: Vec2, width: number, wobble = 5, segments = 4): void {
+    const c = this.ctx;
+    const id = ++this.strokeId * 61;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    c.lineWidth = width;
+    c.beginPath();
+    c.moveTo(a.x, a.y);
+    for (let i = 1; i <= segments; i++) {
+      const t = i / segments;
+      // Off the axis, not just jittered around the point: a scrawl bows.
+      const off = i === segments ? 0 : hashNoise(id + i, this.boil) * wobble * Math.sin(t * Math.PI);
+      c.lineTo(a.x + dx * t + nx * off, a.y + dy * t + ny * off);
+    }
+    c.stroke();
+  }
+
+  /**
+   * The explosive fan. Traces (but does not paint) a set of long tapered
+   * slivers radiating from a point: wildly uneven lengths, each bowed off its
+   * own axis, so nothing about the shape is regular. `burst` draws neat rays
+   * for small punctuation; this is for when something has actually gone off,
+   * and the caller fills and strokes it - white with an ink edge is what reads
+   * over the paper and over the black wall alike.
+   */
+  blastPath(
+    cx: number, cy: number, count: number, r0: number, r1: number, width: number,
+    spread = Math.PI * 2, dir = 0, seed = 0,
+  ): void {
+    const c = this.ctx;
+    const step = spread / Math.max(1, count);
+    c.beginPath();
+    for (let i = 0; i < count; i++) {
+      const a = dir + (count === 1 ? 0 : (i / (count - 1) - 0.5) * spread)
+        + hashNoise(seed + i, this.boil) * step * 0.75;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const nx = -sa, ny = ca;
+      const l0 = r0 * (0.45 + Math.abs(hashNoise(seed + i * 3, this.boil)) * 0.9);
+      const l1 = l0 + (r1 - r0) * (0.22 + Math.abs(hashNoise(seed + i * 5, this.boil + 2)) * 1.5);
+      const w = width * (0.4 + Math.abs(hashNoise(seed + i * 7, this.boil + 4)) * 1.4);
+      const bow = hashNoise(seed + i * 11, this.boil + 6) * (l1 - l0) * 0.24;
+      const p = (d: number, o: number): Vec2 => ({ x: cx + ca * d + nx * o, y: cy + sa * d + ny * o });
+      const base = p(l0, 0);
+      const tip = p(l1, bow);
+      const mid = l0 + (l1 - l0) * 0.38;
+      const e1 = p(mid, w * 0.5 + bow * 0.4);
+      const e2 = p(mid, -w * 0.5 + bow * 0.4);
+      c.moveTo(base.x, base.y);
+      c.quadraticCurveTo(e1.x, e1.y, tip.x, tip.y);
+      c.quadraticCurveTo(e2.x, e2.y, base.x, base.y);
+    }
+  }
+
+  /**
+   * A ragged closed blob - the white hole an explosion punches in the picture.
+   * Alternating radii, so it is spiky rather than round.
+   */
+  ragPath(cx: number, cy: number, r: number, points = 13, rough = 0.5, seed = 0): void {
+    const pts: Vec2[] = [];
+    for (let i = 0; i < points; i++) {
+      const a = (i / points) * Math.PI * 2;
+      const spike = i % 2 === 0 ? 1 : 1 - rough;
+      const rr = r * spike * (1 + hashNoise(seed + i, this.boil) * 0.28);
+      pts.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr });
+    }
+    this.polyPath(pts, 1.2);
+  }
+
   /** Short radiating impact / speed lines, the signature "hit" punctuation. */
   burst(cx: number, cy: number, count: number, r0: number, r1: number, width: number, spread = Math.PI * 2, dir = 0, seed = 0): void {
     const c = this.ctx;

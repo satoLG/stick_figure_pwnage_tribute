@@ -206,6 +206,13 @@ export abstract class Weapon {
   /** Melee weapons report their running combo here; everything else is silent. */
   get comboLabel(): string | null { return null; }
 
+  /**
+   * True while this weapon's own effect has taken over the arms entirely - the
+   * fist barrage, where what you should be looking at is the storm of impacts
+   * in front of him, not two limbs vibrating.
+   */
+  get hidesArms(): boolean { return false; }
+
   onEquip(): void {
     this.charge = 0;
     this.anim = 0;

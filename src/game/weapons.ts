@@ -6,7 +6,7 @@ import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee'
 import { applyBlast, BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
 import { grip, gripAt, mirror, Weapon, type WeaponCtx } from './weapon-base';
-import { ArcaneStaff, Claws, Mecha, MissilePods } from './weapons-video';
+import { ArcaneStaff, Mecha, MissilePods, Shinobi, Thunderbolt, Wind } from './weapons-video';
 
 export { Weapon };
 export type { WeaponCtx };
@@ -29,7 +29,7 @@ const BARRAGE_RATE = 0.075;
 /** How far in front of his chest the barrage can find a wall to hit. */
 const BARRAGE_REACH = 235;
 
-/** One giant fist landing on the wall, for the fraction of a second it is there. */
+/** One blow of the barrage, for the fraction of a second it is on the paper. */
 interface BigPunch {
   x: number; y: number;
   ang: number; size: number;
@@ -110,6 +110,14 @@ export class Fists extends MeleeWeapon {
     this.punchT = 0;
   }
 
+  /**
+   * Once the barrage is up, the arms come off the drawing entirely. They are
+   * moving faster than fifteen frames a second can say anything about, and two
+   * limbs vibrating in place read as a mistake; the storm of impacts in front
+   * of his chest is the whole action, and it should be the only thing there.
+   */
+  override get hidesArms(): boolean { return this.barrageT > 0.08; }
+
   override get comboLabel(): string | null {
     if (this.barrageT > 0) {
       // Counting down what is left of it, because five seconds of this is a
@@ -174,27 +182,27 @@ export class Fists extends MeleeWeapon {
   private throwPunch(ctx: WeaponCtx): void {
     const sm = ctx.sm;
     const c = sm.pose.chest;
-    const a = sm.pose.aim + rand(-0.26, 0.26);
+    const a = sm.pose.aim + rand(-0.34, 0.34);
     const ca = Math.cos(a), sa = Math.sin(a);
     const hit = ctx.terrain.strikePoint(c.x, c.y, ca, sa, BARRAGE_REACH, 3);
     const at = hit ?? { x: c.x + ca * 150, y: c.y + sa * 150 };
     // Every fifth or so lands properly, so the flurry has a beat in it instead
     // of being one continuous noise.
-    const big = Math.random() < 0.22;
-    const size = (big ? 58 : 40) * rand(0.9, 1.15);
+    const big = Math.random() < 0.28;
+    const size = (big ? 74 : 48) * rand(0.85, 1.25);
 
     if (hit) {
-      ctx.terrain.carveBlob(at.x, at.y, size * 0.8, 0.34, 16, size * 0.6);
-      ctx.particles.debris(at.x, at.y, big ? 4 : 2, 250, a + Math.PI, 2.2);
-      if (big) ctx.particles.streaks(at.x, at.y, 4, a + Math.PI, 1.4, 60);
+      ctx.terrain.carveBlob(at.x, at.y, size * 0.62, 0.42, 16, size * 0.48);
+      ctx.particles.debris(at.x, at.y, big ? 4 : 2, 260, a + Math.PI, 2.4);
+      ctx.particles.streaks(at.x, at.y, big ? 6 : 3, a + Math.PI, 1.9, 40 + size);
     }
-    // They outlive the gap between blows on purpose: three or four of them
+    // They outlive the gap between blows on purpose: four or five of them
     // overlapping at once is what makes it a flurry rather than a metronome.
     this.punches.push({
       x: at.x, y: at.y, ang: a, size,
-      life: 0.23, max: 0.23, seed: Math.floor(rand(0, 9999)),
+      life: 0.26, max: 0.26, seed: Math.floor(rand(0, 9999)),
     });
-    if (this.punches.length > 7) this.punches.shift();
+    if (this.punches.length > 9) this.punches.shift();
 
     ctx.sfx('punch', (big ? 0.68 : 1) * rand(0.9, 1.2));
     ctx.shake(big ? 8 : 3.5);
@@ -222,17 +230,9 @@ export class Fists extends MeleeWeapon {
   override hands(ctx: WeaponCtx): HandTargets | null {
     const t = this.t;
     const f = ctx.sm.facing;
-    if (this.barrageT > 0) {
-      // Both arms pistoning flat out, out of phase with each other. The speed
-      // is the point: at this rate the arms read as a blur of their own.
-      const p = ctx.time * 30;
-      const r = Math.sin(p) * 0.5 + 0.5;
-      const l = Math.sin(p + Math.PI) * 0.5 + 0.5;
-      return {
-        main: grip(ctx, 29 + r * 19, -5 + r * 2),
-        off: grip(ctx, 29 + l * 19, 13 - l * 2),
-      };
-    }
+    // Through the barrage the arms are not drawn at all, so there is nothing
+    // to place: the pose is the lean, and the effect does the rest.
+    if (this.barrageT > 0) return null;
     // Between punches the arms are released back to the gait, so running with
     // bare hands swings them instead of carrying a frozen guard around.
     if (this.anim <= 0 && Math.abs(ctx.sm.vel.x) > 45) return null;
@@ -272,38 +272,59 @@ export class Fists extends MeleeWeapon {
   }
 
   /**
-   * The barrage itself: blocky fists two or three times the size of his own,
-   * knocked out in white with a heavy ink edge so they read against the black
-   * wall they are landing on, each one opening out as it fades.
+   * The barrage itself, and the whole point of the weapon.
+   *
+   * Not a tidy fist: a blow going off. Each one is a ragged white hole punched
+   * in the picture with a heavy ink edge, a wild fan of tapered slivers thrown
+   * out of it in every direction, and a handful of long loose scrawls dragging
+   * back down the line it came in on. Nothing in it is even, nothing is
+   * measured, and each one keeps opening out as it fades - which between them
+   * is the difference between "a hand touched the wall" and the frantic mess
+   * the reference actually draws.
    */
   private drawPunches(sk: Sketch): void {
     const c = sk.ctx;
     c.save();
     c.lineJoin = 'round';
+    c.lineCap = 'round';
     for (const p of this.punches) {
       const k = p.life / p.max;                    // 1 -> 0
-      const s = p.size * (0.78 + (1 - k) * 0.45);
-      const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
-      const at = (d: number, o: number): Vec2 =>
-        ({ x: p.x + ca * d - sa * o, y: p.y + sa * d + ca * o });
-      // A fist seen from behind: four knuckles at the leading face, the back
-      // of the hand behind them, and a wrist trailing out of it.
-      const pts = [
-        at(s * 0.3, -s * 0.6), at(s * 0.46, -s * 0.3), at(s * 0.5, 0), at(s * 0.46, s * 0.3),
-        at(s * 0.3, s * 0.6), at(-s * 0.7, s * 0.5), at(-s * 0.95, 0), at(-s * 0.7, -s * 0.5),
-      ];
-      c.globalAlpha = clamp(k * 1.7, 0, 1);
+      const open = 1 - k;                          // it keeps expanding as it goes
+      const s = p.size * (0.7 + open * 0.85);
+      c.globalAlpha = clamp(k * 1.6, 0, 1);
+
+      // The fan first, so the core sits on top of its own explosion. It is
+      // thrown wide - most of it back down the punch line, but with enough
+      // going the other way that the shape has no obvious direction.
       c.fillStyle = '#fff';
-      sk.polyPath(pts, 1.5);
-      c.fill();
       c.strokeStyle = '#000';
-      sk.poly(pts, 4.2, false, 1.5);
-      for (let i = -1; i <= 1; i++) {
-        sk.line(at(s * 0.14, i * s * 0.3), at(s * 0.42, i * s * 0.31), 2.4, 1, 0.5);
+      c.lineWidth = 2.6;
+      sk.blastPath(p.x, p.y, 13, s * 0.5, s * 2.3, s * 0.34, 3.5, p.ang + Math.PI, p.seed);
+      c.fill();
+      c.stroke();
+      sk.blastPath(p.x, p.y, 7, s * 0.4, s * 1.5, s * 0.26, TAU, 0, p.seed + 51);
+      c.fill();
+      c.stroke();
+
+      // The core: a torn white hole, not a fist.
+      c.fillStyle = '#fff';
+      sk.ragPath(p.x, p.y, s * 0.62, 13, 0.46, p.seed + 7);
+      c.fill();
+      c.lineWidth = 4.4;
+      sk.ragPath(p.x, p.y, s * 0.62, 13, 0.46, p.seed + 7);
+      c.stroke();
+
+      // And the loose scrawls trailing back off it, thrown down fast.
+      c.lineWidth = 3.4;
+      for (let i = 0; i < 5; i++) {
+        const a = p.ang + Math.PI + hashNoise(p.seed + i * 13, sk.boil) * 1.5;
+        const l = s * (1.4 + Math.abs(hashNoise(p.seed + i * 17, sk.boil)) * 2.4);
+        sk.scrawl(
+          { x: p.x + Math.cos(a) * s * 0.5, y: p.y + Math.sin(a) * s * 0.5 },
+          { x: p.x + Math.cos(a) * l, y: p.y + Math.sin(a) * l },
+          3.4 - i * 0.4, s * 0.3, 4,
+        );
       }
-      // Speed lines dragging back off it, along the line it came in on.
-      c.lineWidth = 3.2;
-      sk.burst(p.x, p.y, 6, s * 1, s * 2.7, 3.2, 1.3, p.ang + Math.PI, p.seed);
     }
     c.globalAlpha = 1;
     c.restore();
@@ -1000,7 +1021,7 @@ export class Bazooka extends Weapon {
 }
 
 // ---------------------------------------------------------------------------
-// 12. ENERGY BEAM
+// 14. ENERGY BEAM
 // ---------------------------------------------------------------------------
 /** How far down the firing line the beam is capable of reaching at all. */
 const BEAM_RANGE = 1600;
@@ -1012,7 +1033,7 @@ const BEAM_RANGE = 1600;
 const BEAM_BORE = 340;
 
 export class EnergyBeam extends Weapon {
-  readonly id = 12;
+  readonly id = 14;
   readonly name = 'PWNAGE BEAM';
   readonly tagline = 'gather everything, then let go';
   override cooldown = 1.5;
@@ -1412,9 +1433,9 @@ export function createArsenal(): Weapon[] {
   // stop being weapons and start being weather. The order is the order of the
   // number keys, so it also has to climb: slot 12 must feel like slot 12.
   return [
-    new Fists(), new Greatsword(), new Warhammer(), new Claws(),
+    new Fists(), new Greatsword(), new Warhammer(), new Wind(),
     new Magnum(), new Rifle(), new Shotgun(), new Bazooka(), new MissilePods(),
-    new ArcaneStaff(), new Mecha(), new EnergyBeam(),
+    new ArcaneStaff(), new Shinobi(), new Thunderbolt(), new Mecha(), new EnergyBeam(),
   ];
 }
 

@@ -1,7 +1,7 @@
 # Stick Figure Pwnage — Tribute
 
 A playable tribute to the early-2000s stick figure fight animations: one stick
-figure, twelve weapons, and a very destructible black wall.
+figure, fourteen weapons, and a very destructible black wall.
 
 Everything on screen is drawn from code. There are no sprites, no textures and
 no audio files anywhere in this repository — the figure, the weapons, the
@@ -46,7 +46,7 @@ npx vercel --prod
 | Attack while running / in the air | Its own chain again — four per melee weapon |
 | `Space` / `S` with the mecha | With the wings out jump is a throttle, not a jump: hold it to climb, crouch to dive, let go of both to sink |
 | Hold `Tab` | Weapon wheel — time slows, pick with the mouse or the number keys |
-| `1`–`0`, `-`, `=` | Quick-swap without opening the wheel |
+| `1`–`0`, `-`, `=`, `[`, `]` | Quick-swap without opening the wheel |
 | Mouse wheel | Cycle weapons |
 | `Esc` | Settings — and on the win screen, back to the main menu |
 | `R` | Restart, on the win screen |
@@ -193,18 +193,20 @@ assets are cached on first use.
 
 | # | Key | Weapon | Behaviour |
 | --- | --- | --- | --- |
-| 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of fists several times the size of his own hammering the wall, and then he is out of it |
+| 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of blows going off against the wall faster than the drawing can follow, at which point his arms stop being drawn at all |
 | 2 | `2` | Greatsword | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front |
 | 3 | `3` | Warhammer | A head about as tall as he is on a haft he can barely hold. Ploughs along behind him, then craters instead of cutting, and every landing throws a sheet of speed lines across a third of the screen |
-| 4 | `4` | Claws | Three parallel gouges a pass, with masonry left standing between them; hold it down for a flurry and one opening finisher |
+| 4 | `4` | Wind | Nothing in his hands: every swing throws three claws of air a long way out in front, and what they leave is three scores with wall still standing between them. Hold it and he pulls the air in around himself, then lets a tempest go that cuts the whole face at a dozen points |
 | 5 | `5` | Magnum | One hand, one round at a time, and a hole out of all proportion to it; the recoil throws the barrel up and shoves him back |
 | 6 | `6` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
 | 7 | `7` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
 | 8 | `8` | Bazooka | One warhead, one very large hole, and a backblast out of the open end |
 | 9 | `9` | Missile pods | A rack of tubes round his shoulders: three rounds one after another out of the front mouths, or hold it down and dump ten off the back tubes at once |
-| 10 | `0` | Arcane staff | Tap for four bolts in a fan; hold for two rings, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
-| 11 | `-` | Mecha | Wings out: jump climbs, crouch dives. Grounded he cuts with a blade that slides out of his forearm; airborne it is quick little rounds; hold it and four rods unfold out of his back and burn one point |
-| 12 | `=` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
+| 10 | `0` | Arcane staff | Tap to summon four orbs that simply hang there for a second, then go in one at a time around where you were pointing — cast again and another set stacks beside the first. Hold for hoops sliding up the shaft, two more round the head, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
+| 11 | `-` | Shinobi | Two kunai thrown roughly where you are looking. Hold it and he sinks into a crouch making seals — shown as an inset panel zoomed on his hands — then folds forward, puts a hand to his mouth and breathes a fireball bigger than he is |
+| 12 | `=` | Thunderbolt | Discharges that skip off the ground and walk their way to the wall; hold it and the charge crawls all over him, then goes off in twenty-two directions at once |
+| 13 | `[` | Mecha | Wings out: jump climbs, crouch dives. Grounded he cuts with a blade that slides out of his forearm; airborne it is quick little rounds; hold it and four rods unfold out of his back and burn one point |
+| 14 | `]` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
@@ -415,21 +417,46 @@ or walking, the point is down — and the warhammer ploughs along behind him the
 moment he moves. Dragging one along the ground throws sparks and grit; the
 running attack rips it straight back up out of the floor.
 
+### Drawing something going off (`src/core/sketch.ts`)
+
+The reference's violent frames are not neat. They are thrown down: strokes that
+bow a long way off their own axis, fans of tapered slivers at wildly uneven
+lengths, torn holes rather than shapes. Three helpers on `Sketch` carry that,
+and everything explosive in the game is built out of them:
+
+- `scrawl` — a stroke whose middle wanders off the straight line, so a mark
+  reads as drawn at speed rather than measured out.
+- `blastPath` — the explosive fan. Long tapered slivers radiating from a point,
+  each bowed off its own axis and none the same length as its neighbour. It
+  traces without painting, so the caller fills white and strokes black, which
+  is the only treatment that reads over the paper *and* over the black wall.
+- `ragPath` — a torn closed blob, for the hole an impact punches in the picture.
+
+`burst` is still there for small punctuation. Anything that has actually gone
+off uses these instead.
+
 ### Making a cut read as a cut (`src/game/weapon-base.ts`)
 
 Every edged weapon feeds a shared `SlashFx`: the crescent it just swung through
 stays hanging in the air for a fraction of a second, filled white with a heavy
 ink edge, opening and thinning as it fades. It is drawn *behind* the figure, so
 a swing that takes half the screen never hides the person who threw it. The
-claws feed it three at once at three different radii, which is how a rake ends
-up reading as a rake.
+wind feeds it three at once at three different radii and sets them to keep
+opening outwards as they fade, which is what turns a crescent into a gust: it
+does not sit where it was cut, it travels.
 
-Bare hands have nothing to feed it with, so the barrage draws its own: blocky
-fists two or three times the size of his, knocked out in white with a heavy ink
-edge and a fan of speed lines dragging back along the line each one came in on.
-They outlive the gap between blows deliberately — three or four of them
-overlapping is what separates a flurry from a metronome — and his arms piston
-out of phase behind them, leaving afterimages the whole time.
+Bare hands have nothing to feed it with, so the barrage draws its own. Each
+blow is a torn white hole in the picture, a wild fan of slivers thrown out of it
+in every direction and a handful of long loose scrawls dragging back down the
+line it came in on — all of it built from `blastPath`, `ragPath` and `scrawl`,
+and all of it still opening as it fades. They outlive the gap between blows
+deliberately: four or five overlapping at once is what separates a flurry from
+a metronome.
+
+And while it runs, his arms are not drawn. `Stickman.armsHidden` takes them off
+the figure entirely, because two limbs vibrating in place at fifteen frames a
+second read as a mistake, while a body leaning into a storm of impacts with no
+arms visible reads as exactly what the reference draws.
 
 The blades themselves hang off the swing rather than the aim. `gripAt` places
 the hands around the *blade* angle, so the arms lead the sword around and the
@@ -543,10 +570,12 @@ src/
     stickman.ts        procedural skeleton, gaits, stances and afterimages
     weapon-base.ts     the Weapon contract, grips, slash crescents, hitscan
     melee.ts           the melee combo framework (four chains per weapon)
-    weapons.ts         eight of the twelve weapons, and the arsenal order
-    weapons-video.ts   the four lifted straight out of the source animation:
-                       claws, missile pods, arcane staff, mecha
-    projectiles.ts     rockets, shells, guided missiles, bolts, blasts
+    weapons.ts         eight of the fourteen weapons, and the arsenal order
+    weapons-video.ts   the six lifted straight out of the source animation:
+                       wind, missile pods, arcane staff, shinobi,
+                       thunderbolt, mecha
+    projectiles.ts     rockets, shells, guided missiles, kunai, bouncing
+                       lightning, orbs, a very large fireball, blasts
     particles.ts       debris, sparks, smoke, flames, shockwaves, tracers
   ui/
     ui.ts              inked text, buttons, progress meter, weapon wheel

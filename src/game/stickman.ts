@@ -275,6 +275,14 @@ export class Stickman {
   /** Seconds of forced afterimages; weapons bump this on their big swings. */
   private ghostBurst = 0;
 
+  /**
+   * Set while an attack is moving the arms faster than a drawing can follow.
+   * The reference simply stops drawing them at that point and lets the effect
+   * in front of the body carry the whole action, which reads far better than
+   * any amount of blur.
+   */
+  armsHidden = false;
+
   state: MoveState = 'idle';
   /** Set by game.ts when a landing should make noise. */
   justLanded = false;
@@ -306,6 +314,7 @@ export class Stickman {
     this.stallT = 0;
     this.ghosts.length = 0;
     this.ghostBurst = 0;
+    this.armsHidden = false;
     this.sprintT = 0;
     this.gaitPower = 0;
   }
@@ -1202,7 +1211,7 @@ export class Stickman {
 
     sk.begin(LIMB, color);
     this.limb(sk, bl.hip, bl.knee, bl.foot, LIMB * 0.92);
-    this.limb(sk, p.shL, p.elbowL, p.handL, LIMB * 0.9);
+    if (!this.armsHidden) this.limb(sk, p.shL, p.elbowL, p.handL, LIMB * 0.9);
 
     // Torso, drawn as two segments so the curl in the back actually shows.
     sk.line(p.pelvis, p.mid, BODY, 1, 0.7);
@@ -1210,7 +1219,7 @@ export class Stickman {
     sk.line(p.chest, p.neck, BODY * 0.85, 1, 0.7);
 
     this.limb(sk, fl.hip, fl.knee, fl.foot, LIMB);
-    this.limb(sk, p.shR, p.elbowR, p.handR, LIMB);
+    if (!this.armsHidden) this.limb(sk, p.shR, p.elbowR, p.handR, LIMB);
 
     // Head, drawn as a rough polygon the way these figures always are.
     sk.head(p.head.x, p.head.y, HEAD_R, p.aim * 0.12 + p.bodyAngle, 4.4 * weight, 10);

@@ -1,4 +1,4 @@
-import { angleDelta, clamp, rand, TAU, type Vec2 } from '../core/math';
+import { angleDelta, clamp, hashNoise, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Terrain } from './terrain';
 
@@ -12,7 +12,8 @@ export interface Blast {
   bites: number;
 }
 
-export type ProjectileKind = 'rocket' | 'shell' | 'missile' | 'orb' | 'fireball' | 'pellet';
+export type ProjectileKind =
+  | 'rocket' | 'shell' | 'missile' | 'orb' | 'fireball' | 'kunai' | 'bolt' | 'pellet';
 
 export class Projectile {
   x: number; y: number;
@@ -44,12 +45,21 @@ export class Projectile {
   /** How hard the flight path snakes; a missile does not fly a ruled line. */
   private weave = 0;
   private weavePhase = rand(TAU);
+  /**
+   * How many times it may glance off the scenery before it goes off. A round
+   * with bounces left reflects about the surface it hit and carries on, which
+   * is what makes a discharge skip along the floor towards the wall instead of
+   * dying in the dirt at his feet.
+   */
+  private bounces = 0;
+  /** Points it has actually bounced at, for anything that wants to draw them. */
+  readonly hops: Vec2[] = [];
 
   constructor(opts: {
     x: number; y: number; vx: number; vy: number;
     kind: ProjectileKind; gravity?: number; radius?: number; life?: number; blast: Blast;
     target?: Vec2 | null; turn?: number; accel?: number; topSpeed?: number;
-    arm?: number; weave?: number;
+    arm?: number; weave?: number; bounces?: number;
   }) {
     this.x = opts.x; this.y = opts.y;
     this.vx = opts.vx; this.vy = opts.vy;
@@ -64,6 +74,7 @@ export class Projectile {
     this.topSpeed = opts.topSpeed ?? Infinity;
     this.armT = opts.arm ?? 0;
     this.weave = opts.weave ?? 0;
+    this.bounces = opts.bounces ?? 0;
     this.angle = Math.atan2(this.vy, this.vx);
   }
 
@@ -83,6 +94,7 @@ export class Projectile {
 
     const hit = terrain.raycast(px, py, nx - px, ny - py, Math.hypot(nx - px, ny - py) + 1, 2);
     if (hit) {
+      if (this.bounces > 0) { this.bounce(hit, terrain); return; }
       this.x = hit.x; this.y = hit.y;
       this.dead = true;
       this.hitAt = { x: hit.x, y: hit.y };
@@ -117,6 +129,40 @@ export class Projectile {
     const s = Math.min(this.topSpeed, speed + this.accel * dt);
     this.vx = Math.cos(a) * s;
     this.vy = Math.sin(a) * s;
+  }
+
+  /**
+   * Glance off whatever it just hit. The surface normal is estimated by asking
+   * the terrain which way the empty space lies from the point of contact - a
+   * ring of samples, averaged - which is cheap, needs nothing stored on the
+   * terrain, and is quite accurate enough for something that is going to hit
+   * the wall a moment later anyway.
+   */
+  private bounce(at: Vec2, terrain: Terrain): void {
+    this.bounces--;
+    this.hops.push({ x: at.x, y: at.y });
+    let nx = 0, ny = 0;
+    const probe = Math.max(4, this.radius * 1.6);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * TAU;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      if (!terrain.solidAt(at.x + ca * probe, at.y + sa * probe)) { nx += ca; ny += sa; }
+    }
+    const len = Math.hypot(nx, ny);
+    if (len < 1e-4) {
+      // Buried: nothing to reflect off, so it simply goes off where it is.
+      this.dead = true;
+      this.hitAt = { x: at.x, y: at.y };
+      return;
+    }
+    nx /= len; ny /= len;
+    const dot = this.vx * nx + this.vy * ny;
+    this.vx = (this.vx - 2 * dot * nx) * 0.88;
+    this.vy = (this.vy - 2 * dot * ny) * 0.88;
+    // Step clear of the surface, or the next frame finds the same pixel again.
+    this.x = at.x + nx * (probe + 1);
+    this.y = at.y + ny * (probe + 1);
+    this.angle = Math.atan2(this.vy, this.vx);
   }
 
   draw(sk: Sketch): void {
@@ -182,12 +228,84 @@ export class Projectile {
         sk.burst(0, 0, 8, r * 1.25, r * 2.5, 2.2, TAU, 0, 4401);
         break;
       }
-      case 'fireball': {
+      case 'kunai': {
+        // A little throwing blade, end over end: leaf point, wrapped grip and
+        // a ring on the butt.
         const r = this.radius;
-        c.lineWidth = 2.4;
-        sk.polyPath(ring(r * 1.05, 9, this.spin), 2.2);
+        c.rotate(-this.angle + this.spin);
+        sk.poly([
+          { x: r * 2.6, y: 0 }, { x: r * 0.6, y: -r * 0.75 }, { x: -r * 0.4, y: -r * 0.5 },
+          { x: -r * 0.4, y: r * 0.5 }, { x: r * 0.6, y: r * 0.75 },
+        ], 2.2, false, 0.4);
+        sk.line({ x: -r * 0.4, y: 0 }, { x: -r * 2.2, y: 0 }, 2.8, 1, 0.4);
+        sk.polyPath(ring(r * 0.55, 7, this.spin), 0.8);
         c.stroke();
-        sk.burst(0, 0, 7, r * 1.1, r * 2.4, 2, TAU, 0, 4201);
+        break;
+      }
+      case 'bolt': {
+        // Electricity, so it is never a shape - it is a jag with forks off it.
+        const r = this.radius;
+        c.rotate(-this.angle);
+        c.lineWidth = 3.4;
+        const a = this.angle;
+        const seed = Math.floor(this.spin * 3);
+        const jag: Vec2[] = [];
+        for (let i = 0; i <= 5; i++) {
+          const t = i / 5;
+          const d = (t - 0.7) * r * 8;
+          jag.push({
+            x: Math.cos(a) * d - Math.sin(a) * hashNoise(seed + i, i) * r * 1.5,
+            y: Math.sin(a) * d + Math.cos(a) * hashNoise(seed + i * 3, i + 2) * r * 1.5,
+          });
+        }
+        c.beginPath();
+        for (let i = 0; i < jag.length; i++) {
+          if (i === 0) c.moveTo(jag[i].x, jag[i].y); else c.lineTo(jag[i].x, jag[i].y);
+        }
+        c.stroke();
+        // A couple of forks thrown off the middle of it.
+        c.lineWidth = 2.2;
+        for (let i = 1; i < 4; i++) {
+          const p = jag[i];
+          const fa = a + hashNoise(seed + i * 7, 5) * 2.2;
+          c.beginPath();
+          c.moveTo(p.x, p.y);
+          c.lineTo(p.x + Math.cos(fa) * r * 2.4, p.y + Math.sin(fa) * r * 2.4);
+          c.stroke();
+        }
+        break;
+      }
+      case 'fireball': {
+        // Big enough to be the whole shot rather than a detail on it. Local
+        // space already points +x along the flight, so the tail simply hangs
+        // off the back of it - no re-rotating, which is what had the tongues
+        // sitting at the wrong angle to their own ball.
+        const r = this.radius;
+        c.fillStyle = '#fff';
+        c.strokeStyle = '#000';
+        c.lineWidth = 3;
+        // The trail of flame streaming off the back.
+        sk.blastPath(-r * 0.5, 0, 9, r * 0.7, r * 2.3, r * 0.5, 1.9, Math.PI, 4203);
+        c.fill();
+        c.stroke();
+        // Tongues round the rim, kept close to the ball so the silhouette
+        // stays a ball rather than a star.
+        sk.blastPath(0, 0, 19, r * 0.86, r * 1.26, r * 0.22, TAU, 0, 4201);
+        c.fill();
+        c.stroke();
+        sk.blastPath(0, 0, 6, r * 0.9, r * 1.75, r * 0.3, TAU, 0, 4204);
+        c.fill();
+        c.stroke();
+        // The ball itself.
+        sk.ragPath(0, 0, r * 0.9, 15, 0.24, 4202);
+        c.fill();
+        c.lineWidth = 4.4;
+        sk.ragPath(0, 0, r * 0.9, 15, 0.24, 4202);
+        c.stroke();
+        // One curl inside it, so it has some turn to it.
+        c.lineWidth = 2.6;
+        sk.polyPath(ring(r * 0.46, 9, this.spin * 0.5), r * 0.09);
+        c.stroke();
         break;
       }
       case 'pellet': {
@@ -202,7 +320,7 @@ export class Projectile {
     c.restore();
 
     // Motion trail: a thinning ribbon behind the projectile.
-    if (this.kind !== 'pellet' && this.trail.length > 2) {
+    if (this.kind !== 'pellet' && this.kind !== 'fireball' && this.trail.length > 2) {
       c.beginPath();
       for (let i = 0; i < this.trail.length; i++) {
         const p = this.trail[i];
@@ -252,6 +370,12 @@ export const BLASTS: Record<string, Blast> = {
   missile: { radius: 34, shake: 9, flash: 0.24, debris: 20, sfx: 'explosion', bites: 6 },
   /** A bolt off the staff - a bite of light rather than a charge going off. */
   orb: { radius: 31, shake: 7, flash: 0.2, debris: 16, sfx: 'explosion', bites: 5 },
+  /** A thrown blade: barely a mark, but there are always two of them. */
+  kunai: { radius: 15, shake: 4, flash: 0.08, debris: 7, sfx: 'explosion', bites: 3 },
+  /** One discharge earthing itself into the masonry. */
+  bolt: { radius: 27, shake: 8, flash: 0.26, debris: 13, sfx: 'explosion', bites: 5 },
+  /** The fireball, which is most of a doorway on its own. */
+  fireball: { radius: 104, shake: 30, flash: 0.85, debris: 70, sfx: 'explosion', bites: 12 },
   /** The warhammer does not explode, but it craters exactly like something did. */
   maul: { radius: 94, shake: 32, flash: 0.5, debris: 68, sfx: 'explosion', bites: 13 },
 };
