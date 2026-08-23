@@ -248,10 +248,14 @@ export class Particles {
           break;
         }
         case 'smoke': {
+          // A puff, not a hoop. Three wobbly rings stacked on a muzzle read as
+          // someone scribbling over the gun; the reference draws smoke as a
+          // little cloud of paper with a light line round part of it, which is
+          // also the only treatment that survives the black wall.
           const r = p.size * (1.6 - t);
-          c.lineWidth = 1.5 * t + 0.4;
-          sk.polyPath(ringPts(p.x, p.y, r, p.rot), 1.6);
-          c.stroke();
+          sk.inked(() => sk.polyPath(ringPts(p.x, p.y, r, p.rot), 1.6),
+            1.4 * t + 0.5, 0.55, (p.x * 3 + p.y) | 0);
+          c.fillStyle = '#000';
           break;
         }
         case 'flame': {

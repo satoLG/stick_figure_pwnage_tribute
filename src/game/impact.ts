@@ -115,7 +115,7 @@ export class ImpactFx {
         c.lineWidth = 5;
         c.stroke();
       } else {
-        sk.rim(3.2, 0.45, h.seed + h.age * 17);
+        sk.rim(3.4, 0.16, h.seed + h.age * 17);
       }
     }
     c.restore();

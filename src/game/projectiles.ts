@@ -272,21 +272,15 @@ export class Projectile {
         // halftone with sharp licks flicked off it - not a hoop of petals.
         const r = this.radius;
         c.rotate(-this.angle);
-        // Halftone bed, clipped to a ragged blob a little wider than the ball.
-        c.save();
+        // Halftone bed: poured into the blob as a pattern, so the dots stop on
+        // its torn edge instead of on a clipping box.
         sk.ragPath(0, 0, r * 1.25, 15, 0.34, 4205);
-        c.clip();
-        c.fillStyle = '#000';
-        sk.halftone(-r * 1.4, -r * 1.4, r * 1.4, r * 1.4, 6, 1.5);
-        c.restore();
-        // The body of it.
         c.fillStyle = '#fff';
-        c.strokeStyle = '#000';
-        sk.ragPath(0, 0, r * 0.92, 15, 0.26, 4202);
         c.fill();
-        c.lineWidth = 4.4;
-        sk.ragPath(0, 0, r * 0.92, 15, 0.26, 4202);
-        c.stroke();
+        c.fillStyle = sk.screenTone();
+        c.fill();
+        // The body of it: paper, rimmed with a pen that lifts.
+        sk.inked(() => sk.ragPath(0, 0, r * 0.92, 15, 0.26, 4202), 4.4, 0.4, 4206);
         // Licks off the rim and a tail dragging behind it, all thin and sharp.
         c.fillStyle = '#000';
         sk.tuftPath(0, 0, 20, r * 0.85, r * 1.85, TAU, 0, 4201, 0.085);

@@ -420,7 +420,35 @@ or walking, the point is down — and the warhammer ploughs along behind him the
 moment he moves. Dragging one along the ground throws sparks and grit; the
 running attack rips it straight back up out of the floor.
 
-### Drawing something going off (`src/core/sketch.ts`)
+### The stroke everything is drawn with (`src/core/sketch.ts`)
+
+Nothing in the reference film is a solid black blob. Every effect in it — a
+punch drag, a gout of flame, a blade of wind, the fan off an impact, a muzzle
+flash — is a *thick* shape with a **white belly and a black rim**, and the rim
+is only ever drawn part of the way round. The pen goes down, follows an edge
+for a while, lifts, picks up again further along, and the eye completes the
+form. That unclosed rim is the entire reason the source reads as fast and
+hand-drawn rather than as shapes someone filled in.
+
+- `inked(trace, rim, broken, seed)` — that stroke. It lays down a path, fills
+  it white, then walks a broken pen round the outline, with the gaps landing
+  somewhere different every drawing. `broken` is how much of the rim is
+  *missing*: 0 draws the whole outline, 0.6 leaves well over half of it out.
+- `rim(width, broken, seed)` — the same pen on a path that is already traced,
+  for callers that fill it themselves.
+- `screenTone()` — the reference's only grey, and it is not grey: it is a
+  screen of dots. Handed back as a tiled pattern you set as `fillStyle`, so it
+  stops exactly on an outline with no clipping involved. (`halftone` still
+  shades a clipped box, which is fine for a rectangle and fragile for anything
+  else.)
+
+Where a stroke runs thin the two sides of the rim meet and it still reads
+solid black; where it runs fat the paper shows straight through the middle.
+That mix is what the source's frames are actually made of, and it is why the
+barrage, the wind, the impact fan, the staff's charge ball and every muzzle
+flash all go through `inked` rather than `fill`.
+
+### Drawing something going off
 
 The reference's violent frames are not neat. They are thrown down: strokes that
 bow a long way off their own axis, fans of tapered slivers at wildly uneven

@@ -369,14 +369,17 @@ export class Wind extends MeleeWeapon {
     const curl = Math.sign(mv.to - mv.from) * f * 0.55;
     for (let i = 0; i < n; i++) {
       const t = n === 1 ? 0.5 : i / (n - 1) - 0.5;
+      // Thrown a long way out in front of him and well apart, so what lands
+      // is three separate curved blades of air with paper between them. Short
+      // marks bunched at his hand read as a scribble, which is what they were.
       this.gusts.push({
-        x: h.x + Math.cos(a) * 26, y: h.y + Math.sin(a) * 26,
-        ang: a + t * 0.34 * f,
-        len: reach * (0.8 + Math.abs(t) * 0.3),
-        curl: curl * (0.7 + Math.abs(t) * 0.9),
-        off: t * (18 + (mv.thick ?? 26) * 0.4),
-        width: 16 + (mv.thick ?? 26) * 0.42,
-        life: 0.3, max: 0.3, seed: Math.floor(rand(0, 9999)),
+        x: h.x + Math.cos(a) * 54, y: h.y + Math.sin(a) * 54,
+        ang: a + t * 0.42 * f,
+        len: reach * (1.7 + Math.abs(t) * 0.55),
+        curl: curl * (0.85 + Math.abs(t) * 1.1),
+        off: t * (44 + (mv.thick ?? 26) * 0.5),
+        width: 20 + (mv.thick ?? 26) * 0.5,
+        life: 0.34, max: 0.34, seed: Math.floor(rand(0, 9999)),
       });
     }
     if (this.gusts.length > 22) this.gusts.splice(0, this.gusts.length - 22);
@@ -465,13 +468,13 @@ export class Wind extends MeleeWeapon {
     const L = g.len * (0.75 + run * 0.35);
     const bend = g.curl * L * 0.45;
 
-    c.globalAlpha = clamp(k * 1.7, 0, 1);
+    c.globalAlpha = clamp(k * 2.6, 0, 1);
     // A blade of wind in the reference is a long lens with the paper showing
     // through the middle of it and a heavy rim drawn down one side and only
     // half way up the other. The hairline strokes trailing it stay solid,
     // because at that width the rim closes over the belly anyway.
     const blade = (a0: Vec2, ctrl: Vec2, b0: Vec2, w: number, seed: number): void => {
-      sk.inked(() => sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8), 3.6, 0.5, seed);
+      sk.inked(() => sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8), 3.6, 0.26, seed);
     };
     const hair = (a0: Vec2, ctrl: Vec2, b0: Vec2, w: number): void => {
       c.fillStyle = '#fff';
@@ -1694,7 +1697,7 @@ export class Thunderbolt extends Weapon {
       // A white core with a thin ink edge, so the path stays legible over the
       // black wall without becoming a rope.
       c.strokeStyle = '#000';
-      c.lineWidth = a.width * (0.3 + k * 0.5) + 2.6;
+      c.lineWidth = a.width * (0.3 + k * 0.5) + 1.7;
       strokePts(c, a.pts);
       c.strokeStyle = '#fff';
       c.lineWidth = a.width * (0.3 + k * 0.5);
@@ -1713,15 +1716,24 @@ export class Thunderbolt extends Weapon {
         const p = a.pts[i];
         const q = a.pts[i + 1];
         const along = Math.atan2(q.y - p.y, q.x - p.x);
-        const reach = (26 + Math.abs(hashNoise(i, sk.boil)) * 26) * (0.4 + k * 0.8);
-        sk.tuftPath(p.x, p.y, 4, reach * 0.1, reach, 2.0, along, i * 37 + sk.boil, 0.1);
+        // Not a chevron on a wire. Four identical fans pointing down the bolt
+        // turned it into a row of arrowheads; the reference's discharge is
+        // clumps of hair-thin spikes thrown off it at every angle and at
+        // wildly different lengths, crowding where it kinks hardest.
+        // Hair thin is the whole thing: in the reference a spike is twenty
+        // times as long as it is wide, and the moment they fatten up the
+        // discharge turns into a row of black arrowheads.
+        const n = 5 + Math.floor(Math.abs(hashNoise(i * 3, sk.boil)) * 6);
+        const reach = (11 + Math.abs(hashNoise(i, sk.boil)) * 26) * (0.35 + k * 0.9);
+        const dir = along + hashNoise(i * 5, sk.boil) * 1.7;
+        sk.tuftPath(p.x, p.y, n, reach * 0.05, reach, 3.4, dir, i * 37 + sk.boil, 0.032);
         c.fill();
       }
       // And a proper tuft where it earthed itself.
       const end = a.pts[a.pts.length - 1];
       const prev = a.pts[a.pts.length - 2];
-      sk.tuftPath(end.x, end.y, 11, 4, (34 + a.width * 6) * (0.4 + k * 0.9), 2.7,
-        Math.atan2(prev.y - end.y, prev.x - end.x), 771, 0.1);
+      sk.tuftPath(end.x, end.y, 17, 3, (26 + a.width * 5) * (0.4 + k * 0.9), 2.7,
+        Math.atan2(prev.y - end.y, prev.x - end.x), 771, 0.038);
       c.fill();
     }
     c.globalAlpha = 1;

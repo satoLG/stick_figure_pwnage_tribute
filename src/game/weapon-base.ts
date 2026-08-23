@@ -350,11 +350,12 @@ export abstract class Weapon {
   /** Shared: muzzle flash drawn as a star of ink at the barrel tip. */
   protected muzzle(sk: Sketch, x: number, y: number, size: number, seed: number): void {
     const c = sk.ctx;
-    c.lineWidth = 2.6;
-    sk.burst(x, y, 7, size * 0.25, size, 2.6, TAU, 0, seed);
-    sk.poly([
-      { x: x + size * 0.9, y }, { x: x + size * 0.15, y: y - size * 0.5 },
-      { x: x - size * 0.2, y }, { x: x + size * 0.15, y: y + size * 0.5 },
-    ], 2.2, true, 0.8);
+    // A flash in the reference is a torn puff of *paper* with a line round
+    // part of it, not a solid diamond: white is what a light source is on a
+    // white page, and the ink is only there to say where it stops.
+    sk.inked(() => sk.ragPath(x, y, size * 0.62, 11, 0.44, seed), 4.2, 0.15, seed + 5);
+    c.fillStyle = '#000';
+    sk.tuftPath(x, y, 9, size * 0.55, size * 1.7, TAU, 0, seed, 0.05);
+    c.fill();
   }
 }
