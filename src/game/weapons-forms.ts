@@ -884,9 +884,12 @@ export class Titan extends Weapon {
     // Standing, the machine's arms hang down and *out*, clear of the chest,
     // the way a suit with a barrel for a torso has to hold them. Boxing them
     // up in front put both mitts over its own visor.
+    // Wide, not just down. The drawn shoulders sit out at the edge of a barrel
+    // of a torso, so hand targets near his spine dragged both arms diagonally
+    // back across the chest and buried the ribbed panel behind them.
     return {
-      main: gripAt(ctx, Math.PI / 2, 40, -f * 16),
-      off: gripAt(ctx, Math.PI / 2, 38, f * 13),
+      main: gripAt(ctx, Math.PI / 2, 38, -f * 40),
+      off: gripAt(ctx, Math.PI / 2, 36, f * 34),
     };
   }
 
@@ -923,11 +926,33 @@ export class Titan extends Weapon {
     sk.poly(pts, line, false, 0.9);
   }
 
-  /** A limb drawn as the reference draws one: two tubes with a mitt on the end. */
-  private limb(sk: Sketch, a: Vec2, b: Vec2, c2: Vec2, r: number, mitt: number): void {
-    this.tube(sk, a, b, r * 1.15, r * 0.9);
-    this.tube(sk, b, c2, r * 0.95, r * 0.8);
-    if (mitt > 0) this.tube(sk, c2, c2, mitt, mitt);
+  /**
+   * A limb the way the reference builds one: two *fat* segments and a block on
+   * the end of them.
+   *
+   * The two things that were wrong before are both here. The segments were
+   * thin - in the source a forearm is very nearly as thick as it is long, and
+   * the whole machine reads as chunky because of it. And the ends were balls:
+   * a circle at the wrist and a circle at the ankle, which is exactly what a
+   * mech does *not* have. What goes on the end is a rounded block carrying on
+   * in the direction the limb was already going - a fist, or a boot.
+   *
+   * `endDir`, when given, turns that block a different way: a foot points
+   * forward off the shin rather than carrying straight on down it.
+   */
+  private limb(
+    sk: Sketch, a: Vec2, b: Vec2, c2: Vec2, r: number, mitt: number, endDir?: Vec2,
+  ): void {
+    this.tube(sk, a, b, r * 1.16, r * 0.98);
+    this.tube(sk, b, c2, r * 1.02, r * 0.92);
+    if (mitt <= 0) return;
+    // Which way the block on the end runs.
+    let dx = endDir ? endDir.x : c2.x - b.x;
+    let dy = endDir ? endDir.y : c2.y - b.y;
+    const l = Math.hypot(dx, dy) || 1;
+    dx /= l; dy /= l;
+    const tip = { x: c2.x + dx * mitt * 0.9, y: c2.y + dy * mitt * 0.9 };
+    this.tube(sk, c2, tip, mitt, mitt * 0.92);
   }
 
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
@@ -953,19 +978,28 @@ export class Titan extends Weapon {
     // instead of folding up over the chest, which is what a barrel of a torso
     // forces. Both joints are pushed out along the line of his own arm.
     const REACH = 1.28;
-    const arm = (sh: Vec2, jt: Vec2): Vec2 => {
-      const a0 = q(sh), a1 = q(jt);
+    // His shoulders sit a few units either side of his spine. The machine's
+    // torso is a barrel five times that wide, so the arms have to be hung off
+    // the *edge* of it - hanging them off his skeleton's shoulders ran both
+    // limbs straight down the front of the chest and buried the whole torso.
+    const SPAN = 30;
+    const shoulder = (sh: Vec2, out: number): Vec2 => {
+      const p0 = q(sh);
+      return { x: p0.x + f * out * SPAN, y: p0.y - 4 };
+    };
+    const arm = (sh: Vec2, jt: Vec2, out: number): Vec2 => {
+      const a0 = shoulder(sh, out), a1 = q(jt);
       return { x: a0.x + (a1.x - a0.x) * REACH, y: a0.y + (a1.y - a0.y) * REACH };
     };
 
     // Back limbs first, a shade thinner so the near side reads in front.
-    this.limb(sk, q(p.hipL), q(p.kneeL), q(p.footL), 20, 23);
-    this.limb(sk, q(p.shL), arm(p.shL, p.elbowL), arm(p.shL, p.handL), 17, 21);
+    this.limb(sk, q(p.hipL), q(p.kneeL), q(p.footL), 27, 25, { x: f * 1, y: 0.12 });
+    this.limb(sk, shoulder(p.shL, -0.9), arm(p.shL, p.elbowL, -0.9), arm(p.shL, p.handL, -0.9), 23, 23);
 
     // --- torso: a barrel with a ribbed panel down the front of it ----------
     const chest = q(p.chest), pelvis = q(p.pelvis), neck = q(p.neck);
-    this.tube(sk, neck, chest, 38, 48, 3);
-    this.tube(sk, chest, pelvis, 46, 30, 3);
+    this.tube(sk, neck, chest, 42, 54, 3);
+    this.tube(sk, chest, pelvis, 52, 34, 3);
     // The ribs. Five short bars stacked down the middle of the chest is the
     // single most recognisable thing about this machine.
     c.strokeStyle = '#000';
@@ -979,13 +1013,13 @@ export class Titan extends Weapon {
     }
 
     // --- pauldrons: rounded caps sitting over the shoulders ----------------
-    for (const sh of [p.shL, p.shR]) {
-      const s2 = q(sh);
-      this.tube(sk, { x: s2.x - f * 8, y: s2.y - 12 }, { x: s2.x + f * 14, y: s2.y + 10 }, 26, 22, 3);
+    for (const [sh, out] of [[p.shL, -0.9], [p.shR, 0.85]] as const) {
+      const s2 = shoulder(sh, out);
+      this.tube(sk, { x: s2.x - f * 8, y: s2.y - 12 }, { x: s2.x + f * 12, y: s2.y + 12 }, 30, 26, 3);
     }
 
     // --- the near leg ------------------------------------------------------
-    this.limb(sk, q(p.hipR), q(p.kneeR), q(p.footR), 22, 25);
+    this.limb(sk, q(p.hipR), q(p.kneeR), q(p.footR), 30, 28, { x: f * 1, y: 0.12 });
 
     // --- the helmet --------------------------------------------------------
     //
@@ -1028,12 +1062,12 @@ export class Titan extends Weapon {
     if (this.phase === 'aim' || this.phase === 'volley') {
       // The forearm folded into a launcher: the tubes stay, a squared muzzle
       // block goes on the end of them.
-      const e = arm(p.shR, p.elbowR), hd = arm(p.shR, p.handR);
-      this.tube(sk, q(p.shR), e, 18, 15, 2.8);
+      const e = arm(p.shR, p.elbowR, 0.85), hd = arm(p.shR, p.handR, 0.85);
+      this.tube(sk, shoulder(p.shR, 0.85), e, 25, 21, 2.8);
       const dx = hd.x - e.x, dy = hd.y - e.y;
       const len = Math.hypot(dx, dy) || 1;
       const tip = { x: hd.x + (dx / len) * 40, y: hd.y + (dy / len) * 40 };
-      this.tube(sk, e, tip, 16, 21, 2.8);
+      this.tube(sk, e, tip, 22, 25, 2.8);
       const nx = -dy / len, ny = dx / len;
       for (let i = -1; i <= 1; i++) {
         sk.line(
@@ -1048,10 +1082,10 @@ export class Titan extends Weapon {
         c.fill();
       }
     } else {
-      this.limb(sk, q(p.shR), arm(p.shR, p.elbowR), arm(p.shR, p.handR), 19, 25);
+      this.limb(sk, shoulder(p.shR, 0.85), arm(p.shR, p.elbowR, 0.85), arm(p.shR, p.handR, 0.85), 25, 26);
       // The shock coming off the mitt, as thin spikes and not as a starburst.
       if (this.punch > 0.02) {
-        const hd = arm(p.shR, p.handR);
+        const hd = arm(p.shR, p.handR, 0.85);
         c.fillStyle = '#000';
         sk.tuftPath(hd.x, hd.y, 9, 22, 22 + 58 * this.punch, 2.0,
           f > 0 ? 0 : Math.PI, 9202, 0.075);
