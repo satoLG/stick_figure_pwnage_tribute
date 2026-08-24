@@ -1,7 +1,7 @@
 # Stick Figure Pwnage — Tribute
 
 A playable tribute to the early-2000s stick figure fight animations: one stick
-figure, seventeen weapons, and a very destructible black wall.
+figure, fourteen powers, and a very destructible black wall.
 
 Everything on screen is drawn from code. There are no sprites, no textures and
 no audio files anywhere in this repository — the figure, the weapons, the
@@ -191,25 +191,34 @@ assets are cached on first use.
 
 ## The arsenal
 
-| # | Key | Weapon | Behaviour |
+Fourteen slots in two groups. **Main** is the set the source film actually
+shows him using; **extra** is everything built on top of it. The wheel leaves a
+blank seat in the ring where the two meet, and the HUD says which group the
+thing in his hands came out of.
+
+### Main
+
+| # | Key | Power | Behaviour |
 | --- | --- | --- | --- |
-| 1 | `1` | Bare hands | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of blows going off against the wall faster than the drawing can follow, at which point his arms stop being drawn at all |
-| 2 | `2` | Greatsword | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front |
-| 3 | `3` | Warhammer | A head about as tall as he is on a haft he can barely hold. Ploughs along behind him, then craters instead of cutting, and every landing throws a sheet of speed lines across a third of the screen |
-| 4 | `4` | Wind | Nothing in his hands: every swing throws three curls of air a long way out in front, and what they leave is three scores with wall still standing between them. Hold it and he pulls the air in around himself; letting go throws a whirlwind whose base stays in his hands and whose mouth runs out along the aim, cutting as it goes |
-| 5 | `5` | Magnum | One hand, one round at a time, and a hole out of all proportion to it; the recoil throws the barrel up and shoves him back |
-| 6 | `6` | Assault rifle | Full auto; accuracy degrades as it heats up, tracers show you where it walked |
-| 7 | `7` | Shotgun | Eleven pellets in a cone, eleven tracers, heavy self-knockback, pump action |
-| 8 | `8` | Bazooka | One warhead, one very large hole, and a backblast out of the open end |
-| 9 | `9` | Missile pods | A rack of tubes round his shoulders: three rounds one after another out of the front mouths, or hold it down and dump ten off the back tubes at once |
-| 10 | `0` | Arcane staff | Tap to summon four orbs, well apart, that simply hang there for a second and then go in one at a time on thick white trails around where you were pointing — cast again and another set stacks beside the first. Hold for hoops sliding up the shaft, two more round the head, a ball between the horns, and a beam twice the width of the pwnage beam that barely scratches the paint |
-| 11 | `-` | Shinobi | Two kunai thrown roughly where you are looking. Hold it and he sinks into a crouch making seals — shown as an inset panel zoomed on his hands — then folds forward, puts a hand to his mouth and breathes a fireball bigger than he is |
-| 12 | `=` | Thunderbolt | Discharges that skip off the ground and take a bite out of everything they touch on the way to the wall; hold it and the charge crawls all over him, then earths itself in sixteen directions at once |
-| 13 | `[` | Mecha | Wings out: jump climbs, crouch dives. Grounded he cuts with a blade that slides out of his forearm; airborne it is quick little rounds; hold it and four rods unfold out of his back and burn one point |
-| 14 | `]` | Pwnage beam | Gather an aura, then lean a pillar of light on the wall and push it in — in mid-air it holds him up while he fires |
-| 15 | `;` | The shout | A cape, and a mouth that opens wider than a head should. Tap and he shouts a beam out of it; hold and something comes up out of the floor behind him and answers with one four times the size. Neither of them aims — they go straight out along his facing |
-| 16 | `'` | Titan | He climbs inside a machine several times his size and stops being drawn at all. It punches holes in the wall and cuts with its eyes; hold it and the arm folds into a launcher, puts five guided rounds downrange, catches fire, drops him out of the top, folds itself into a slab, and he throws the slab through the wall |
-| 17 | `\\` | Split head | His skull comes apart across the middle. What is behind it is a lens that cuts thin slots wherever you point; hold it and the halves swing right out and four very unfriendly rounds leave the rack |
+| 1 | `1` | Brawler | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of blows going off against the wall faster than the drawing can follow, at which point his arms stop being drawn at all |
+| 2 | `2` | Swordsman | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front. Hold it and he throws himself the width of a room forward turning over twice, lands on the wall and puts three full-weight cuts through it |
+| 3 | `3` | Smasher | The source's mallet: a smooth barrel as tall as he is with a stick out of the back and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
+| 4 | `4` | Windslash | Nothing in his hands: every swing throws curved blades of air four hundred units out in front, and what they leave is separate scores with wall still standing between them. There is weather round him whether or not the trigger is down, and the air carries him half again as high as anyone else jumps. Hold it and he pulls the storm in; letting go throws a whirlwind whose base stays in his hands |
+| 5 | `5` | Gunslinger | Four guns and he chooses. The three he is not holding ride on his back where you can see them; the one in his hands is whatever the range calls for — the revolver out past 250 units, the shotgun inside it. Hold the trigger and the tube comes off his back: three grenades lobbed down one line, then the rifle comes off after them and shoots every one of them out of the air |
+| 6 | `6` | Missile pods | One short screened block on his shoulder with three ports in the face, and four long thin rails fanned out behind him. Three rounds one after another out of the front, or hold it down and dump ten off the back |
+| 7 | `7` | Mage | Staff standing up in his fist and a pointed hat. Tap to summon four orbs, well apart, that hang for a second and then go in one at a time on thick white trails. Hold for hoops sliding up the shaft, two more round the head, a ball between the horns, and a very wide beam that barely scratches the paint |
+| 8 | `8` | Shinobi | Kunai thrown flat and point first, and every third throw a big shuriken that takes a proper hole out of the wall. Hold it and he sinks into a crouch making seals — shown as an inset panel zoomed on his hands, drawn as hands — then folds forward and breathes a fireball bigger than he is. Wears the headband |
+| 9 | `9` | Thunderbolt | Discharges that skip off the ground and take a bite out of everything they touch on the way to the wall; hold it and the charge crawls all over him, then earths itself in sixteen directions at once |
+| 10 | `0` | Mecha | Wings out: jump climbs, crouch dives. The forearm blade comes out whenever there is masonry inside its reach, on the floor or off it; at range a stub of cannon telescopes out of his palm. Hold it and four rods unfold out of his back and burn one point |
+| 11 | `-` | Split head | A press hinges his face apart on the seam across the middle and four very unfriendly rounds leave the rack. Hold it and the skull comes apart the other way — straight down the middle — and what stands in the doorway pours a cutting beam until he lets go |
+| 12 | `=` | Giant robot | He climbs inside a machine several times his size and stops being drawn at all: rounded tube limbs, a ribbed chest and a visored helmet. It punches holes in the wall and cuts with its eyes; hold it and the arm folds into a launcher, puts five guided rounds downrange, catches fire, drops him out of the top, folds itself into a slab, and he throws the slab through the wall |
+| 13 | `[` | Monster tamer | A cape, and a mouth that opens wider than a head should. Tap and he shouts a beam out of it; hold and something hauls itself up out of the floor beside him — a screened mass with a toothed maw and two clawed forelimbs — and answers with one four times the size. If he walks off it goes back under and comes up again behind him. Neither of them aims |
+
+### Extra
+
+| # | Key | Power | Behaviour |
+| --- | --- | --- | --- |
+| 14 | `]` | Sayajeans | Spiked hair and a light aura. A tap is a ball of light out of one hand and the next out of the other, with no screen shake at all — and throwing keeps him up, so he can hang there doing it. Hold it and gather everything, then lean a pillar of light on the wall and push it in |
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
@@ -420,6 +429,24 @@ or walking, the point is down — and the warhammer ploughs along behind him the
 moment he moves. Dragging one along the ground throws sparks and grit; the
 running attack rips it straight back up out of the floor.
 
+### Two groups, and one slot that is four weapons
+
+`Weapon.group` is `'main'` or `'extra'`, and the wheel seats the slots with one
+blank position where the two meet - no boxes, no second ring, just a gap where
+a slot would otherwise be, plus the group's name set small under the highlighted
+weapon. It is the cheapest divider that reads, and it costs nothing on a phone
+fan or a gamepad ring either.
+
+The gunslinger is one slot carrying four guns. The magnum, the shotgun, the
+rifle and the bazooka used to be four slots doing one job at four ranges; now
+*he* chooses. The three he is not holding are drawn on his back as silhouettes -
+not the same drawings as the one in his hands, which at that size piled into a
+single black scribble, but simplified profiles with the one feature that names
+each: a cylinder, a pump, a magazine, a flared tube. Which one is in his hands
+comes from a wall probe down the aim line, and holding the trigger runs the
+sequence: three grenades lobbed on one line at three speeds so they string out,
+then a swap to the rifle and a round through each of them in turn.
+
 ### The stroke everything is drawn with (`src/core/sketch.ts`)
 
 Nothing in the reference film is a solid black blob. Every effect in it — a
@@ -483,7 +510,7 @@ wind feeds it three at once at three different radii and sets them to keep
 opening outwards as they fade, which is what turns a crescent into a gust: it
 does not sit where it was cut, it travels.
 
-Bare hands have nothing to feed it with, so the barrage draws its own. Each
+The brawler has nothing to feed it with, so the barrage draws its own. Each
 blow is a torn white hole in the picture, a wild fan of slivers thrown out of it
 in every direction and a handful of long loose scrawls dragging back down the
 line it came in on — all of it built from `blastPath`, `ragPath` and `scrawl`,
@@ -619,7 +646,7 @@ src/
     stickman.ts        procedural skeleton, gaits, stances and afterimages
     weapon-base.ts     the Weapon contract, grips, slash crescents, hitscan
     melee.ts           the melee combo framework (four chains per weapon)
-    weapons.ts         eight of the seventeen weapons, and the arsenal order
+    weapons.ts         the hands, the edges, the gunslinger, and the arsenal order
     weapons-video.ts   the six lifted straight out of the source animation:
                        wind, missile pods, arcane staff, shinobi,
                        thunderbolt, mecha
