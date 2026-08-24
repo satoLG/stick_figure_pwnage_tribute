@@ -1162,6 +1162,8 @@ export class Titan extends Weapon {
 // ---------------------------------------------------------------------------
 /** Seconds of held trigger before the skull opens all the way. */
 const SPLIT_HOLD = 0.5;
+/** Half-width of the cutting beam. It is meant to be seen from across the room. */
+const BEAM_HALF = 17;
 
 /**
  * His head opens down the middle. What is inside is a machine: a lens that
@@ -1171,15 +1173,22 @@ const SPLIT_HOLD = 0.5;
 export class SplitHead extends Weapon {
   readonly id = 17;
   readonly name = 'SPLIT HEAD';
-  readonly tagline = 'a lens behind the face, and four in the rack';
+  readonly tagline = 'four in the rack, and a torch behind them';
   override auto = true;
-  override cooldown = 0.13;
+  override cooldown = 1.5;
 
   /** 0..1 how far the skull is open. */
   private open = 0;
   private lens = 0;
   private volley = 0;
   private lensT = 0;
+  /** 0..1 how far the split has turned from the hatch into the full opening. */
+  private wide = 0;
+  /** Seconds of beam still running, and where it is pointing. */
+  private beamT = 0;
+  private beamAngle = 0;
+  private beamLen = 0;
+  private sfxT = 0;
 
   override onEquip(): void { super.onEquip(); this.open = 0; this.lens = 0; }
   override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.open = 0; }
@@ -1188,40 +1197,21 @@ export class SplitHead extends Weapon {
   override get hidesHead(): boolean { return this.open > 0.02; }
 
   override get comboLabel(): string | null {
-    return this.open > 0.7 && this.heldFor > SPLIT_HOLD ? 'RACK OPEN' : null;
+    if (this.beamT > 0) return 'CUTTING';
+    return this.volley > 0 ? 'RACK OPEN' : null;
   }
 
-  /** The lens: a thin line, and it cuts a thin line. */
+  /**
+   * A press is the rack: the face hinges apart on the seam across the middle
+   * and four of them leave the hole. This used to be the held move and the
+   * lasers were the tap, which had it exactly backwards - what you reach for
+   * on a click should be the thing the slot is *for*.
+   */
   protected release(ctx: WeaponCtx): void {
-    this.cooldown = 0.13;
+    this.volley = 0.8;
+    this.cooldown = 1.5;
     this.timer = this.cooldown;
-    this.startAnim(0.12);
-    this.lens = 1;
-    this.lensT = 0.1;
-    const from = this.core(ctx);
-    const a = this.aimFrom(ctx, from);
-    const ca = Math.cos(a), sa = Math.sin(a);
-    const hit = ctx.terrain.strikePoint(from.x, from.y, ca, sa, 1500, 4);
-    ctx.sfx('beam', rand(1.5, 1.75));
-    ctx.shake(2);
-    ctx.sm.applyRecoil(0.14, a, 0);
-    if (!hit) return;
-    // A slot rather than a hole: it is a cutting beam, and it should read as
-    // one against everything else in the arsenal that punches.
-    ctx.terrain.carveCapsule(hit.x, hit.y, hit.x + ca * 46, hit.y + sa * 46, 6, 0.3, 34);
-    ctx.particles.sparks(hit.x, hit.y, 3, 380, a + Math.PI, 2.2);
-    ctx.particles.debris(hit.x, hit.y, 1, 200, a + Math.PI, 2);
-  }
-
-  protected override suppressFire(): boolean {
-    return this.heldFor > SPLIT_HOLD;
-  }
-
-  protected override onLetGo(ctx: WeaponCtx): void {
-    if (this.heldFor <= SPLIT_HOLD || this.open < 0.6) return;
-    this.volley = 0.5;
-    this.cooldown = 2.2;
-    this.timer = this.cooldown;
+    this.startAnim(0.5);
     ctx.sfx('launch', 0.7);
     ctx.shake(12);
     ctx.flash(0.2);
@@ -1247,33 +1237,60 @@ export class SplitHead extends Weapon {
     }
   }
 
+  protected override suppressFire(): boolean {
+    return this.heldFor > SPLIT_HOLD || this.beamT > 0;
+  }
+
+  /**
+   * Held, the skull comes apart the *other* way - straight down the middle,
+   * both halves swinging out sideways - and what stands in the gap pours a
+   * cutting beam out until he lets go. Same machine, a different door, and a
+   * beam thick enough to be worth opening the whole face for.
+   */
+  private runBeam(ctx: WeaponCtx): void {
+    const from = this.core(ctx);
+    const a = this.aimFrom(ctx, from);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    this.beamAngle = a;
+    const hit = ctx.terrain.strikePoint(from.x, from.y, ca, sa, 1600, 4);
+    this.beamLen = hit ? Math.hypot(hit.x - from.x, hit.y - from.y) : 1600;
+    ctx.shake(2.6);
+    this.sfxT -= ctx.dt;
+    if (this.sfxT <= 0) { ctx.sfx('beam', rand(0.85, 1)); this.sfxT = 0.22; }
+    if (!hit) return;
+    // A slot rather than a hole: it is a cutting beam, and it reads as one
+    // against everything else in the arsenal that punches.
+    ctx.terrain.carveCapsule(hit.x, hit.y, hit.x + ca * 70, hit.y + sa * 70,
+      BEAM_HALF, 0.34, 320 * ctx.dt);
+    ctx.particles.sparks(hit.x, hit.y, 2, 380, a + Math.PI, 2.2);
+    if (Math.random() < 0.4) ctx.particles.debris(hit.x, hit.y, 1, 220, a + Math.PI, 2);
+  }
+
   protected override tick(ctx: WeaponCtx, held: boolean): void {
     this.lens = Math.max(0, this.lens - ctx.dt * 5);
     this.lensT = Math.max(0, this.lensT - ctx.dt);
     this.volley = Math.max(0, this.volley - ctx.dt);
-    // Cracked open just enough for the lens while firing; right open while the
-    // rack is loading, and shut again the moment nothing is happening.
-    const want = this.volley > 0 ? 1
-      : held && this.heldFor > SPLIT_HOLD ? 1
-        : held || this.anim > 0 || this.timer > 0 ? 0.35
+    this.beamT = Math.max(0, this.beamT - ctx.dt);
+
+    const cutting = held && this.heldFor > SPLIT_HOLD;
+    if (cutting) { this.beamT = 0.09; this.runBeam(ctx); }
+
+    // Cracked open for a salvo, and right open the other way for the beam.
+    const want = this.beamT > 0 ? 1
+      : this.volley > 0 ? 1
+        : held || this.anim > 0 || this.timer > 0 ? 0.4
           : 0;
     this.open = damp(this.open, want, want > this.open ? 14 : 7, ctx.dt);
-    if (held && this.heldFor > SPLIT_HOLD && this.open > 0.6) {
-      ctx.shake(1.6);
-      if (Math.random() < 0.3) {
-        const p = this.core(ctx);
-        ctx.particles.sparks(p.x, p.y, 1, 90, ctx.sm.pose.aim, 2);
-      }
-    }
+    // Which door: the seam across the middle, or the split down it.
+    this.wide = damp(this.wide, this.beamT > 0 ? 1 : 0, 12, ctx.dt);
   }
 
   /**
    * Half a skull: a dome from one side of the split round to the other, drawn
    * at `rot` about its own centre so it can swing open.
    */
-  private halfHead(sk: Sketch, cx: number, cy: number, rot: number, top: boolean): void {
+  private halfHead(sk: Sketch, cx: number, cy: number, rot: number, top: boolean, R = HEAD_R): void {
     const c = sk.ctx;
-    const R = HEAD_R;
     const from = top ? Math.PI : 0;
     const pts: Vec2[] = [];
     for (let i = 0; i <= 10; i++) {
@@ -1327,32 +1344,60 @@ export class SplitHead extends Weapon {
     c.strokeStyle = '#000';
     c.lineJoin = 'round';
 
-    // The skull comes apart across the middle: the lid hinges up and back and
-    // the jaw drops, which is the drawing in the reference and also the only
-    // split that leaves the machine between them visible from the side.
-    const lift = this.open * HEAD_R * 2.05;
-    // The dark of the inside, drawn first and left showing between the halves.
-    // Without it the two domes close up into one slightly odd head.
-    if (this.open > 0.08) {
+    // Two doors, and which one is open says what is about to come out.
+    //
+    // For a salvo the skull hinges apart on the seam across the middle: the
+    // lid tips up and back, the jaw drops, and the rack shows between them.
+    // For the beam it comes apart the other way entirely - straight down the
+    // middle, both halves swinging out sideways - so the machine is standing
+    // in a doorway rather than peering out of a slot.
+    const w = this.wide;
+    // The skull swells as it comes apart. A head this size split down the
+    // middle is four pixels of daylight; letting it grow while it opens is
+    // what makes the machinery inside legible at all.
+    const R = HEAD_R * (1 + this.open * 0.45);
+    c.fillStyle = '#000';
+    if (w < 0.5) {
+      // The seam across the middle. The dark of the inside goes down first and
+      // is left showing between the halves; without it the two domes close up
+      // into one slightly odd head.
+      const lift = this.open * R * 2.05;
       const g = lift * 0.78;
-      c.fillStyle = '#000';
-      sk.polyPath([
-        { x: h.x - HEAD_R * 0.86, y: h.y - g },
-        { x: h.x + HEAD_R * 0.86, y: h.y - g * 0.8 },
-        { x: h.x + HEAD_R * 0.8, y: h.y + g * 0.8 },
-        { x: h.x - HEAD_R * 0.8, y: h.y + g },
-      ], 1.2);
-      c.fill();
+      if (this.open > 0.08) {
+        sk.polyPath([
+          { x: h.x - R * 0.86, y: h.y - g },
+          { x: h.x + R * 0.86, y: h.y - g * 0.8 },
+          { x: h.x + R * 0.8, y: h.y + g * 0.8 },
+          { x: h.x - R * 0.8, y: h.y + g },
+        ], 1.2);
+        c.fill();
+      }
+      this.halfHead(sk, h.x - f * this.open * 8, h.y - lift, -f * this.open * 1.15, true, R);
+      this.halfHead(sk, h.x + f * this.open * 4, h.y + lift * 0.5, f * this.open * 0.5, false, R);
+    } else {
+      // Straight down the middle: both halves swing out sideways and turn
+      // their cut faces to us, and what stands in the gap is a doorway rather
+      // than a slot.
+      const part = this.open * R * 1.45;
+      if (this.open > 0.08) {
+        sk.polyPath([
+          { x: h.x - part * 0.72, y: h.y - R * 0.94 },
+          { x: h.x + part * 0.72, y: h.y - R * 0.9 },
+          { x: h.x + part * 0.72, y: h.y + R * 0.9 },
+          { x: h.x - part * 0.72, y: h.y + R * 0.94 },
+        ], 1.2);
+        c.fill();
+      }
+      this.halfHead(sk, h.x - part, h.y, -Math.PI / 2 - this.open * 0.34, true, R);
+      this.halfHead(sk, h.x + part, h.y, Math.PI / 2 + this.open * 0.34, true, R);
     }
-    this.halfHead(sk, h.x - f * this.open * 8, h.y - lift, -f * this.open * 1.15, true);
-    this.halfHead(sk, h.x + f * this.open * 4, h.y + lift * 0.5, f * this.open * 0.5, false);
 
     // The machine between them.
     const core = this.core(ctx);
     const k = this.open;
     c.fillStyle = '#fff';
     const box: Vec2[] = [];
-    const bw = 8 + k * 4, bh = (3 + k * 7);
+    const bw = 9 + k * 6, bh = (3 + k * 10);
     for (const [dx, dy] of [[-bw, -bh], [bw, -bh * 0.7], [bw, bh * 0.7], [-bw, bh]] as const) {
       box.push({ x: core.x + Math.cos(a) * dx - Math.sin(a) * dy, y: core.y + Math.sin(a) * dx + Math.cos(a) * dy });
     }
@@ -1379,30 +1424,31 @@ export class SplitHead extends Weapon {
       );
     }
 
-    // The shot, while it is going.
-    if (this.lensT > 0) {
-      const ca = Math.cos(a), sa = Math.sin(a);
-      const hit = ctx.terrain.strikePoint(core.x, core.y, ca, sa, 1500, 4);
-      const len = hit ? Math.hypot(hit.x - core.x, hit.y - core.y) : 1500;
-      c.lineWidth = 6;
-      c.strokeStyle = '#fff';
-      c.beginPath();
-      c.moveTo(core.x, core.y);
-      c.lineTo(core.x + ca * len, core.y + sa * len);
-      c.stroke();
-      c.lineWidth = 2.4;
+    // The beam. Not the hairline it was: a band you could put your arm in,
+    // with a torn mouth on it and the wall coming apart where it lands.
+    if (this.beamT > 0) {
+      const ba = this.beamAngle;
+      const ca = Math.cos(ba), sa = Math.sin(ba);
+      const end = { x: core.x + ca * this.beamLen, y: core.y + sa * this.beamLen };
+      beamBand(sk, core, ba, this.beamLen, BEAM_HALF, 0.6);
+      // Chevrons running down it, so it plainly has something travelling in it.
       c.strokeStyle = '#000';
-      c.beginPath();
-      c.moveTo(core.x, core.y);
-      c.lineTo(core.x + ca * len, core.y + sa * len);
-      c.stroke();
-      if (hit) {
-        c.lineWidth = 2.6;
-        sk.burst(hit.x, hit.y, 7, 7, 34, 2.6, 2.2, a + Math.PI, 9401);
+      for (let i = 0; i < 5; i++) {
+        const d = (ctx.time * 1100 + i * 240) % Math.max(1, this.beamLen);
+        const p = (dd: number, o: number): Vec2 =>
+          ({ x: core.x + ca * dd - sa * o, y: core.y + sa * dd + ca * o });
+        sk.line(p(d, -BEAM_HALF * 0.7), p(d + BEAM_HALF * 0.7, 0), 2.2, 1, 1);
+        sk.line(p(d + BEAM_HALF * 0.7, 0), p(d, BEAM_HALF * 0.7), 2.2, 1, 1);
       }
+      c.fillStyle = '#000';
+      sk.tuftPath(end.x, end.y, 13, BEAM_HALF * 0.6, BEAM_HALF * 3.4, 2.7,
+        ba + Math.PI, 9401, 0.055);
+      c.fill();
+      sk.tuftPath(core.x, core.y, 9, BEAM_HALF * 0.8, BEAM_HALF * 2, TAU, 0, 9402, 0.07);
+      c.fill();
     }
-    // Loading tell while the rack is open.
-    if (this.open > 0.7 && this.heldFor > SPLIT_HOLD) {
+    // Loading tell while the rack is coming open.
+    if (this.volley > 0) {
       c.strokeStyle = '#000';
       c.lineWidth = 2;
       for (let i = 0; i < 2; i++) {
