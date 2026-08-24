@@ -690,40 +690,51 @@ export class MissilePods extends Weapon {
 
   // --------------------------------------------------------- the geometry ---
   //
-  // The rig is a bundle of long square tubes strapped round his shoulders: a
-  // bank of three running forward along the aim, ending in open mouths, and a
-  // bank of four swept back behind him. Front bank fires the singles, back
-  // bank dumps the salvo - which is also the only shape that reads at a
-  // glance, because a mouth pointing at the wall is obviously where a missile
-  // comes out of.
+  // Straight off the frames the source actually shows this thing in: the two
+  // halves of the rig do not look remotely alike. What sits on his shoulder is
+  // one *short solid block*, dark, with the ports in the face of it - that is
+  // the end a round comes out of. What runs off behind him is a fan of long
+  // thin *rails*, spread wide and drawn as bare outline, and the salvo comes
+  // off those. Front is heavy and dark and stubby, back is light and long, and
+  // that contrast is how you read at a glance which end is which.
 
-  /** Perpendicular offset of front barrel `i`, biased below the aim line. */
-  private frontOffset(i: number): number { return (i - 1) * 15 + 8; }
+  /** How long the shoulder block is, and how deep it stands. */
+  private readonly blockLen = 42;
+  private readonly blockHalf = 17;
 
-  /** The mouth of front barrel `i`. */
+  /** Perpendicular offset of front port `i` on the face of the block. */
+  private frontOffset(i: number): number { return (i - 1) * 8 + 3; }
+
+  /** The mouth of front port `i`, on the face of the block. */
   private frontMouth(ctx: WeaponCtx, i: number): Vec2 {
     const a = ctx.sm.pose.aim;
     const r = this.root(ctx);
-    const d = 12 + 58 * this.open;
+    const d = 16 + this.blockLen * (0.92 + this.launch * 0.12);
     const o = this.frontOffset(i);
     return { x: r.x + Math.cos(a) * d - Math.sin(a) * o, y: r.y + Math.sin(a) * d + Math.cos(a) * o };
   }
 
   /**
-   * Which way back tube `i` of four sweeps: a fan from below the shoulder line
-   * round to just above it, so the bank spreads behind him rather than over him.
+   * Which way back rail `i` of four sweeps: a wide fan from below the shoulder
+   * line up past it, so the bank spreads out behind him like a bundle of poles
+   * rather than stacking into one shape.
    */
   private backAxis(ctx: WeaponCtx, i: number): number {
     const f = ctx.sm.facing;
     const back = f > 0 ? Math.PI : 0;
-    return back + f * (-0.34 + i * 0.27) * (0.85 + 0.2 * this.open);
+    return back + f * (-0.5 + i * 0.29) * (0.85 + 0.2 * this.open);
   }
 
-  /** The mouth of back tube `i`. */
+  /** How long back rail `i` runs. They are long, and no two are the same. */
+  private backLen(i: number): number {
+    return (96 + (i % 2) * 26 - i * 6) * this.open;
+  }
+
+  /** The mouth of back rail `i`. */
   private backPod(ctx: WeaponCtx, i: number): Vec2 {
     const a = this.backAxis(ctx, i);
     const r = this.root(ctx);
-    const d = (24 + (i % 2) * 14) + 38 * this.open;
+    const d = 6 + this.backLen(i);
     return { x: r.x + Math.cos(a) * d, y: r.y + Math.sin(a) * d };
   }
 
@@ -826,30 +837,12 @@ export class MissilePods extends Weapon {
     return { main: grip(ctx, 36 - k * 4, 14 + k * 3), off: null };
   }
 
-  /** One square tube, knocked out in white with a heavy ink edge. */
-  private tube(sk: Sketch, from: Vec2, ang: number, len: number, half: number, mouth: boolean): void {
-    const c = sk.ctx;
-    const ca = Math.cos(ang), sa = Math.sin(ang);
-    const at = (d: number, o: number): Vec2 => ({ x: from.x + ca * d - sa * o, y: from.y + sa * d + ca * o });
-    const box = [at(0, -half), at(len, -half), at(len, half), at(0, half)];
-    c.fillStyle = '#fff';
-    sk.polyPath(box, 1);
-    c.fill();
-    sk.poly(box, 2.8, false, 1);
-    // A band or two down it, which is what stops a long white box reading as a
-    // blank slab.
-    sk.line(at(len * 0.34, -half), at(len * 0.34, half), 2, 1, 0.4);
-    sk.line(at(len * 0.66, -half), at(len * 0.66, half), 2, 1, 0.4);
-    // The open mouth at the far end: a darker lip, so you can see it is a hole.
-    if (mouth) {
-      sk.line(at(len - 5, -half), at(len - 5, half), 3.2, 1, 0.5);
-      c.fillStyle = '#000';
-      sk.polyPath([at(len - 4, -half * 0.72), at(len, -half * 0.72), at(len, half * 0.72), at(len - 4, half * 0.72)], 0.6);
-      c.fill();
-    }
-  }
-
-  /** The back bank, behind the figure: four tubes swept out over his shoulder. */
+  /**
+   * The back bank: four long thin rails fanned out behind him.
+   *
+   * Bare outline, no bands, no dark mouths - they are rails, not barrels, and
+   * the whole point is that they look nothing like the block on the front.
+   */
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const root = this.root(ctx);
@@ -857,16 +850,26 @@ export class MissilePods extends Weapon {
     c.strokeStyle = '#000';
     for (let i = 0; i < 4; i++) {
       const a = this.backAxis(ctx, i);
-      const len = (46 + (i % 2) * 14) * this.open;
-      const start = { x: root.x + Math.cos(a) * 5, y: root.y + Math.sin(a) * 5 };
-      this.tube(sk, start, a, len, 7 - (i % 2) * 1.2, true);
+      const len = this.backLen(i);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const half = 4.4 - (i % 2) * 0.9;
+      const at = (d: number, o: number): Vec2 =>
+        ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
+      const rail = [at(4, -half), at(len, -half * 0.72), at(len, half * 0.72), at(4, half)];
+      c.fillStyle = '#fff';
+      sk.polyPath(rail, 0.9);
+      c.fill();
+      sk.poly(rail, 2.6, false, 0.9);
+      // One line down the length of it and a cap on the far end.
+      sk.line(at(10, 0), at(len - 4, 0), 1.5, 2, 0.5);
+      sk.line(at(len, -half * 0.9), at(len, half * 0.9), 2.6, 1, 0.4);
     }
     // The yoke it is all hung off, across his back.
     const a0 = this.backAxis(ctx, 0), a3 = this.backAxis(ctx, 3);
     sk.line(
-      { x: root.x + Math.cos(a0) * 18, y: root.y + Math.sin(a0) * 18 },
-      { x: root.x + Math.cos(a3) * 18, y: root.y + Math.sin(a3) * 18 },
-      3.4, 2, 0.6,
+      { x: root.x + Math.cos(a0) * 16, y: root.y + Math.sin(a0) * 16 },
+      { x: root.x + Math.cos(a3) * 16, y: root.y + Math.sin(a3) * 16 },
+      3.8, 2, 0.6,
     );
     c.restore();
   }
@@ -880,35 +883,52 @@ export class MissilePods extends Weapon {
     const c = sk.ctx;
     const a = ctx.sm.pose.aim;
     const root = this.root(ctx);
-    const len = 58 * this.open;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const at = (d: number, o: number): Vec2 =>
+      ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
+    const L = this.blockLen * (0.92 + this.launch * 0.12);
+    const H = this.blockHalf;
     c.save();
     c.strokeStyle = '#000';
-    const seat = (o: number): Vec2 => ({
-      x: root.x + Math.cos(a) * 12 - Math.sin(a) * o,
-      y: root.y + Math.sin(a) * 12 + Math.cos(a) * o,
-    });
+    // The block: short, deep and *screened*, so it reads solid against the
+    // bare rails behind him. The one shape in the rig with any weight to it.
+    const block = [at(14, -H), at(14 + L, -H * 0.86), at(14 + L, H * 0.86), at(14, H)];
+    c.fillStyle = '#fff';
+    sk.polyPath(block, 0.9);
+    c.fill();
+    c.fillStyle = sk.screenTone();
+    c.fill();
+    sk.poly(block, 3.4, false, 0.9);
+    // Three ports across its face, each a black slot: this is the end a
+    // missile actually leaves by, and it has to be obvious which end that is.
+    c.fillStyle = '#000';
     for (let i = 0; i < 3; i++) {
-      this.tube(sk, seat(this.frontOffset(i)), a, len * (i === 1 ? 1 : 0.86), 7, true);
+      const o = this.frontOffset(i);
+      sk.polyPath([at(14 + L - 9, o - 3.6), at(14 + L + 3, o - 3.6),
+        at(14 + L + 3, o + 3.6), at(14 + L - 9, o + 3.6)], 0.5);
+      c.fill();
     }
-    // The block they are all socketed into, across the near ends.
-    sk.line(seat(this.frontOffset(0) - 8), seat(this.frontOffset(2) + 8), 4, 2, 0.6);
+    // A rib across the top of it and the strap over his shoulder.
+    sk.line(at(14 + L * 0.4, -H), at(14 + L * 0.4, H), 2.4, 1, 0.5);
+    sk.line(at(12, -H * 0.9), at(-8, -H * 0.2), 3.2, 1, 0.6);
 
     if (this.launch > 0.02) {
       const m = this.frontMouth(ctx, (this.barrel + 2) % 3);
-      c.lineWidth = 2.8;
-      sk.burst(m.x, m.y, 7, 6, 42 * this.launch, 2.8, 1.5, a, 5100);
+      c.fillStyle = '#000';
+      sk.tuftPath(m.x, m.y, 9, 6, 44 * this.launch, 1.5, a, 5100, 0.06);
+      c.fill();
     }
     // Loading tell: rings closing on the back tubes, so ten rounds arriving is
     // never a surprise.
     if (this.load > 0.03) {
       c.lineWidth = 1.8 + this.load * 1.6;
-      for (const i of [0, 3]) {
+      // Rings closing on every rail mouth, small enough to read as loading
+      // rather than as lollipops on the ends of the poles.
+      for (let i = 0; i < 4; i++) {
         const p = this.backPod(ctx, i);
-        for (let r = 0; r < 2; r++) {
-          const phase = (ctx.time * 2.4 + r / 2) % 1;
-          sk.polyPath(ring(p.x, p.y, (1 - phase) * 34 * this.load + 5, 10, ctx.time * 2), 1.4);
-          c.stroke();
-        }
+        const phase = (ctx.time * 2.6 + i * 0.25) % 1;
+        sk.polyPath(ring(p.x, p.y, (1 - phase) * 15 * this.load + 3, 9, ctx.time * 2), 1.1);
+        c.stroke();
       }
     }
     c.restore();
