@@ -8,7 +8,7 @@
  * the same skeleton so the gait, the lean and the recoil still drive them.
  */
 import {
-  angleDelta, clamp, damp, easeOutCubic, hashNoise, lerp, rand, TAU,
+  angleDelta, clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU,
   type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
@@ -129,6 +129,10 @@ export class Shout extends Weapon {
   /** 0..1 how far the thing behind him is out of the ground. */
   private rise = 0;
   private roar = 0;
+  /** Where it currently is, which chases where it wants to be. */
+  private beastX = 0;
+  /** 0..1 how far it has ducked back under the floor to move. */
+  private burrow = 0;
   private summoned = false;
   private power = 1;
   /** Latched at the moment of firing: neither beam turns once it is out. */
@@ -181,6 +185,8 @@ export class Shout extends Weapon {
     this.power = 0.6 + power * 0.4;
     this.summoned = true;
     this.rise = 0;
+    this.burrow = 0;
+    this.beastX = this.beastGoal(ctx);
     ctx.sfx('slam', 0.4);
     ctx.shake(16);
     ctx.invert(0.06);
@@ -205,6 +211,24 @@ export class Shout extends Weapon {
     }
 
     if (!this.summoned) return;
+
+    // It follows him. If he walks off, it drops back under the floor, moves,
+    // and comes up again behind wherever he has got to - which is the whole
+    // reason for summoning something that lives in the ground. The dip is what
+    // sells it: the head sinks, travels, and breaks the surface again.
+    const goal = this.beastGoal(ctx);
+    const gap = goal - this.beastX;
+    if (Math.abs(gap) > 40) {
+      this.burrow = Math.min(1, this.burrow + ctx.dt * 2.4);
+      this.beastX += clamp(gap, -520 * ctx.dt, 520 * ctx.dt) * this.burrow;
+      if (this.burrow > 0.5 && Math.random() < 0.6) {
+        ctx.particles.updraft(this.beastX + rand(-60, 60), ctx.sm.pos.y, 1, 30, 170);
+      }
+    } else {
+      this.beastX += gap * Math.min(1, ctx.dt * 3);
+      this.burrow = Math.max(0, this.burrow - ctx.dt * 2.2);
+    }
+
     this.rise = Math.min(1, this.rise + ctx.dt / RISE_TIME);
     if (this.rise < 1) {
       ctx.shake(2 + this.rise * 5);
@@ -252,19 +276,23 @@ export class Shout extends Weapon {
   private static readonly BEAST_W = 152;
 
   /**
-   * Where the thing behind him stands.
+   * Where the thing is standing.
    *
-   * Close in, not way off behind him: the reference's composition is the
-   * creature filling the back of the frame with the figure standing small
-   * right under its open jaw, and putting it a screen's width away meant it
-   * was mostly off the edge of the paper by the time it stood up.
+   * It follows him. Not by teleporting to wherever he happens to be this
+   * frame - it goes back under the floor and comes up again behind wherever he
+   * has got to, so walking away from it buys you a second and then it is there
+   * again. The composition the reference draws is the creature filling the
+   * back of the frame with the figure small under its jaw, so it wants to be
+   * close in, and the clamp keeps it on the paper.
    */
   private beastBase(ctx: WeaponCtx): Vec2 {
+    return { x: this.beastX, y: ctx.sm.pos.y + 6 };
+  }
+
+  /** Where it is trying to get to: just behind him, and never off the paper. */
+  private beastGoal(ctx: WeaponCtx): number {
     const f = ctx.sm.facing;
-    return {
-      x: clamp(ctx.sm.pos.x - f * 118, 150, ctx.terrain.w - 150),
-      y: ctx.sm.pos.y + 6,
-    };
+    return clamp(ctx.sm.pos.x - f * 96, 130, ctx.terrain.w - 130);
   }
 
   /** The gap between the two jaws, which is where its beam leaves it. */
@@ -358,7 +386,9 @@ export class Shout extends Weapon {
     const c = sk.ctx;
     const f = ctx.sm.facing;
     const b = this.beastBase(ctx);
-    const up = easeOutCubic(this.rise);
+    // Ducking under to travel: the whole thing sinks, so what you see is the
+    // head going down, moving, and breaking the surface again somewhere else.
+    const up = easeOutCubic(this.rise) * (1 - this.burrow * 0.86);
     const H = Shout.BEAST_H * up;
     const W = Shout.BEAST_W * (0.5 + up * 0.5);
     if (H < 6) return;
@@ -395,6 +425,60 @@ export class Shout extends Weapon {
     c.save();
     c.lineJoin = 'round';
     c.lineCap = 'round';
+
+    // --- the body ------------------------------------------------------------
+    //
+    // It is not a head on a stick. Under the skull there is a neck, a pair of
+    // shoulders and two clawed forelimbs hauling the rest of it up out of the
+    // hole, and the further it climbs the more of that you see. Drawn first
+    // and in the same tone, so the head sits on top of a mass rather than
+    // floating over one.
+    // Two of them: one hauling on the lip of the hole out in front, one
+    // braced behind. Each is a tapered band bent through an elbow, in the same
+    // tone as the mass, with three claws dug in at the end.
+    const limbs: readonly (readonly [number, number, number, number, number, number, number])[] = [
+      // rootX rootY elbowX elbowY clawX clawY thickness
+      [0.6, 0.4, 1.55, 0.66, 2.05, 0.04, 0.27],
+      [-0.74, 0.4, -1.32, 0.5, -1.6, 0.03, 0.22],
+    ];
+    for (const [rx, ry, ex, ey, cx2, cy2, th] of limbs) {
+      const root = at(rx, ry), elbow = at(ex, ey), claw = at(cx2, cy2);
+      const N = 12;
+      const top: Vec2[] = [], bot: Vec2[] = [];
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const p0 = quadPoint(root, elbow, claw, t);
+        const p1 = quadPoint(root, elbow, claw, Math.min(1, t + 0.05));
+        const dx = p1.x - p0.x, dy = p1.y - p0.y;
+        const l = Math.hypot(dx, dy) || 1;
+        const wdt = W * th * (1 - t * 0.42);
+        top.push({ x: p0.x - (dy / l) * wdt, y: p0.y + (dx / l) * wdt });
+        bot.push({ x: p0.x + (dy / l) * wdt, y: p0.y - (dx / l) * wdt });
+      }
+      c.beginPath();
+      c.moveTo(top[0].x, top[0].y);
+      for (const p0 of top) c.lineTo(p0.x, p0.y);
+      for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y);
+      c.closePath();
+      c.fillStyle = '#fff';
+      c.fill();
+      c.fillStyle = sk.screenTone();
+      c.fill();
+      c.strokeStyle = '#000';
+      c.lineWidth = 4.6;
+      c.stroke();
+      // Claws, dug into the lip of the hole and pointing the way it is pulling.
+      const back = { x: claw.x - elbow.x, y: claw.y - elbow.y };
+      const bl = Math.hypot(back.x, back.y) || 1;
+      for (let i = -1; i <= 1; i++) {
+        const o = i * W * th * 0.6;
+        const from = { x: claw.x - (back.y / bl) * o, y: claw.y + (back.x / bl) * o };
+        sk.line(from,
+          { x: from.x + (back.x / bl) * W * 0.4, y: from.y + (back.y / bl) * W * 0.4 },
+          3.4, 2, 0.8);
+      }
+    }
+
     // Paper first so the tone reads over the black wall too, then screen tone
     // poured into the same path, then one heavy ragged line round the lot.
     trace();
@@ -406,6 +490,10 @@ export class Shout extends Weapon {
     c.strokeStyle = '#000';
     c.lineWidth = 5.5;
     c.stroke();
+
+    // The seam where the skull sits on the shoulders, so the two read as two.
+    c.strokeStyle = '#000';
+    sk.curve(at(-1.0, 0.4), at(-0.1, 0.28), at(0.62, 0.36), 4, 1.4);
 
     // --- the eye: dark socket, white pupil, and nothing else on the face ----
     const eye = at(0.12, 0.9);
