@@ -37,7 +37,6 @@ const NUMBER_KEYS = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0',
   'Minus', 'Equal', 'BracketLeft', 'BracketRight',
-  'Semicolon', 'Quote', 'Backslash',
 ];
 
 /** Everything the player is asking for this frame, whatever device said it. */
@@ -680,7 +679,7 @@ export class Game {
     const wasOpen = this.wheel.open > 0.01;
     const changed = this.wheel.update(
       rawDt, intent.wheelOpen, intent.wheelPointer, this.wheelLayout(),
-      this.weapons.length, intent.numberKey,
+      this.weapons, intent.numberKey,
     );
     if (changed) audio.play('wheel', 0.9 + this.wheel.hovered * 0.05);
     if (intent.wheelOpen && !wasOpen) audio.play('wheel', 0.7);
@@ -980,6 +979,10 @@ export class Game {
     const nameSize = clamp(w * 0.02, 15, 24);
     inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85, color: ink });
     inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left', color: ink });
+    // Which half of the arsenal this came out of, set small after the name.
+    inkText(sk, w2.group === 'extra' ? 'EXTRA' : 'MAIN',
+      left + nameSize * 1.35 + measureText(sk, w2.name, nameSize) + 12, baseY + 1,
+      nameSize * 0.5, { align: 'left', alpha: 0.4, color: ink });
     if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55, color: ink });
 
     const barX = left + nameSize * 1.35;
@@ -1135,7 +1138,7 @@ export class Game {
 
     inkText(sk, 'A PLAYABLE TRIBUTE', w / 2, h * 0.4, clamp(w * 0.022, 14, 19),
       { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.72, wobble: 0.6 });
-    inkText(sk, 'ONE STICK FIGURE, SEVENTEEN WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
+    inkText(sk, 'ONE STICK FIGURE, FOURTEEN POWERS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
       clamp(w * 0.019, 12, 17), { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.55, wobble: 0.5 });
 
     const press = this.input.pointer;

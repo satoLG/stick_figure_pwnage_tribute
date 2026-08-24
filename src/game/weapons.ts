@@ -111,7 +111,7 @@ const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 
 export class Fists extends MeleeWeapon {
   readonly id = 1;
-  readonly name = 'BARE HANDS';
+  readonly name = 'BRAWLER';
   readonly tagline = 'four punches, then hold on';
   protected readonly len = 74;
   protected readonly sets = FIST_SETS;
@@ -544,7 +544,7 @@ const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 
 export class Greatsword extends MeleeWeapon {
   readonly id = 2;
-  readonly name = 'GREATSWORD';
+  readonly name = 'SWORDSMAN';
   readonly tagline = 'drags on the floor, lands like a truck';
   protected readonly len = 158;
   protected readonly sets = GREATSWORD_SETS;
@@ -708,7 +708,7 @@ const HAMMER_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 
 export class Warhammer extends MeleeWeapon {
   readonly id = 3;
-  readonly name = 'WARHAMMER';
+  readonly name = 'SMASHER';
   readonly tagline = 'the head is bigger than he is';
   protected readonly len = 168;
   protected readonly sets = HAMMER_SETS;
@@ -821,31 +821,94 @@ export class Warhammer extends MeleeWeapon {
 }
 
 // ---------------------------------------------------------------------------
-// 5. MAGNUM
+// 5. GUNSLINGER
 // ---------------------------------------------------------------------------
 /**
- * One hand, one hammer, and a hole out of all proportion to the thing that
- * made it. It is slow, it kicks the arm straight up, and every round takes a
- * proper bite out of the wall - the opposite trade to the rifle in every way.
+ * Four guns, one man, and no reason to pick between them.
+ *
+ * The magnum, the shotgun, the rifle and the bazooka used to be four slots on
+ * the wheel that did the same job at four ranges. They are one slot now, and
+ * *he* chooses: the three he is not holding ride on his back where you can see
+ * them, and the one in his hands is whichever the distance to the wall calls
+ * for. Far out it is the revolver, one hole at a time. Up against the masonry
+ * it is the shotgun.
+ *
+ * Holding the trigger shoulders the tube instead, and letting go runs the
+ * whole trick: three grenades lobbed down one line, then the rifle comes off
+ * his back and shoots every one of them out of the air.
  */
-export class Magnum extends Weapon {
-  readonly id = 5;
-  readonly name = 'MAGNUM';
-  readonly tagline = 'one hand, one hole, one at a time';
-  override cooldown = 0.42;
-  private flashT = 0;
-  /** How far the barrel is still thrown up by the last round. */
-  private kick = 0;
+type Gun = 'magnum' | 'shotgun' | 'rifle' | 'bazooka';
 
-  constructor() { super(); this.animLen = 0.34; }
+/** Inside this much wall the revolver is the wrong tool and he knows it. */
+const CLOSE_RANGE = 250;
+/** Seconds of held trigger before the bazooka comes off his back. */
+const SLING_HOLD = 0.42;
+/** How long the grenades hang before the rifle starts working on them. */
+const FUSE = 0.34;
+
+export class Gunslinger extends Weapon {
+  readonly id = 5;
+  readonly name = 'GUNSLINGER';
+  readonly tagline = 'four on his back, one in his hands';
+  override cooldown = 0.42;
+
+  /** What is in his hands right now. */
+  private gun: Gun = 'magnum';
+  private flashT = 0;
+  /** How far the revolver's barrel is still thrown up by the last round. */
+  private kick = 0;
+  /** Bazooka backblast clock. */
+  private fireT = 0;
+  private heat = 0;
+  /** The finisher, once it is running. */
+  private volley = 0;
+  /** Grenades in the air that the rifle still owes a bullet to. */
+  private live: Projectile[] = [];
+  /** How far through the swap the hands are, so a gun does not teleport. */
+  private swapT = 0;
+
+  override onEquip(): void {
+    super.onEquip();
+    this.gun = 'magnum';
+    this.volley = 0;
+    this.live.length = 0;
+  }
+
+  override get comboLabel(): string | null {
+    if (this.volley > 0) return 'FUSILLADE';
+    if (this.heldFor > SLING_HOLD) return 'TUBE UP';
+    return this.gun === 'shotgun' ? 'CLOSE' : null;
+  }
+
+  /** How far the wall is down the line he is pointing, or Infinity. */
+  private wallRange(ctx: WeaponCtx, from: Vec2): number {
+    const a = this.aimFrom(ctx, from);
+    const hit = ctx.terrain.strikePoint(from.x, from.y, Math.cos(a), Math.sin(a), 1600, 4);
+    return hit ? Math.hypot(hit.x - from.x, hit.y - from.y) : Infinity;
+  }
+
+  protected override suppressFire(_ctx: WeaponCtx): boolean {
+    return this.volley > 0 || this.heldFor > SLING_HOLD;
+  }
 
   protected release(ctx: WeaponCtx): void {
+    // Which gun the shot wants. The swap is instant in his hands and takes a
+    // beat on the page, which is the whole appeal of carrying four.
+    const probe = grip(ctx, 52);
+    const near = this.wallRange(ctx, probe) < CLOSE_RANGE;
+    const want: Gun = near ? 'shotgun' : 'magnum';
+    if (want !== this.gun) { this.gun = want; this.swapT = 1; ctx.sfx('ui', 1.4); }
+    this.cooldown = near ? 0.66 : 0.42;
+    this.animLen = near ? 0.5 : 0.34;
+    if (near) this.fireShotgun(ctx); else this.fireMagnum(ctx);
+  }
+
+  private fireMagnum(ctx: WeaponCtx): void {
     const muzzle = grip(ctx, 52);
     const a = this.aimFrom(ctx, muzzle) + rand(-0.008, 0.008);
     this.flashT = 0.085;
     this.kick = 1;
     ctx.sfx('pistol', rand(0.6, 0.68));
-    // Fired one-handed, so it throws the whole arm up and shoves him back.
     ctx.sm.applyRecoil(1.15, a, 85);
     ctx.shake(9);
     ctx.flash(0.12);
@@ -854,162 +917,7 @@ export class Magnum extends Weapon {
     this.hitscan(ctx, muzzle, a, 1600, 17);
   }
 
-  protected override tick(ctx: WeaponCtx): void {
-    this.flashT = Math.max(0, this.flashT - ctx.dt);
-    this.kick = Math.max(0, this.kick - ctx.dt * 3.4);
-  }
-
-  /**
-   * One hand on it and nothing on the other: the off arm is left out of the
-   * targets entirely, so it swings with the gait instead of coming up to a
-   * support grip that is not there.
-   */
-  hands(ctx: WeaponCtx): HandTargets {
-    return { main: grip(ctx, 38 - this.kick * 5, 1 - this.kick * 7), off: null };
-  }
-
-  draw(sk: Sketch, ctx: WeaponCtx): void {
-    const c = sk.ctx;
-    const h = ctx.sm.pose.handR;
-    // The barrel is thrown up off the aim by the recoil and settles back down.
-    const a = ctx.sm.pose.aim - ctx.sm.facing * this.kick * 0.5;
-    c.save();
-    c.translate(h.x, h.y);
-    c.rotate(a);
-    if (Math.cos(a) < 0) c.scale(1, -1);
-    c.strokeStyle = '#000';
-    // A long-barrelled revolver: frame, heavy vented barrel, and a fat
-    // cylinder sitting proud of it - which is the whole silhouette.
-    sk.poly([
-      { x: -7, y: -7 }, { x: 6, y: -8 }, { x: 30, y: -8 }, { x: 30, y: -2 },
-      { x: 4, y: -1 }, { x: 2, y: 12 }, { x: -7, y: 13 },
-    ], 3.2, false, 0.5);
-    sk.poly([{ x: 5, y: -7 }, { x: 15, y: -7 }, { x: 15, y: 4 }, { x: 5, y: 4 }], 2.8, false, 0.45);
-    sk.line({ x: 8, y: -7 }, { x: 8, y: 4 }, 1.8, 1, 0.3);        // cylinder flute
-    sk.line({ x: 12, y: -7 }, { x: 12, y: 4 }, 1.8, 1, 0.3);
-    sk.line({ x: 20, y: -11 }, { x: 20, y: -8 }, 2, 1, 0.3);      // rib and sight
-    sk.line({ x: 18, y: -11 }, { x: 30, y: -11 }, 2.2, 1, 0.4);
-    sk.line({ x: -5, y: -9 }, { x: 3, y: -9 }, 2.2, 1, 0.4);      // hammer spur
-    if (this.flashT > 0) {
-      this.muzzle(sk, 34, -5, 28, 101);
-      c.lineWidth = 2.4;
-      sk.burst(34, -5, 7, 8, 40, 2.4, 1.1, 0, 102);
-    }
-    c.restore();
-  }
-
-  icon(sk: Sketch, x: number, y: number, s: number): void {
-    sk.poly([
-      { x: x - s * 0.3, y: y - s * 0.22 }, { x: x + s * 0.44, y: y - s * 0.24 },
-      { x: x + s * 0.44, y: y - s * 0.08 }, { x: x - s * 0.02, y: y - s * 0.04 },
-      { x: x - s * 0.08, y: y + s * 0.36 }, { x: x - s * 0.3, y: y + s * 0.38 },
-    ], 2.2, false, 0.5);
-    // The cylinder: the one part that says revolver and not pistol.
-    sk.poly([
-      { x: x - s * 0.12, y: y - s * 0.22 }, { x: x + s * 0.1, y: y - s * 0.22 },
-      { x: x + s * 0.1, y: y + s * 0.02 }, { x: x - s * 0.12, y: y + s * 0.02 },
-    ], 2, false, 0.4);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 6. ASSAULT RIFLE
-// ---------------------------------------------------------------------------
-export class Rifle extends Weapon {
-  readonly id = 6;
-  readonly name = 'ASSAULT RIFLE';
-  readonly tagline = 'hold it down, watch it crumble';
-  override cooldown = 0.072;
-  override auto = true;
-  private flashT = 0;
-  private heat = 0;
-
-  protected release(ctx: WeaponCtx): void {
-    this.heat = Math.min(1, this.heat + 0.16);
-    const muzzle = grip(ctx, 90);
-    const a = this.aimFrom(ctx, muzzle) + rand(-1, 1) * (0.008 + this.heat * 0.055);
-    this.flashT = 0.045;
-    ctx.sfx('rifle', rand(0.94, 1.06));
-    ctx.sm.applyRecoil(0.34, a, 12);
-    ctx.shake(2.6);
-    // Ejected brass.
-    ctx.particles.sparks(muzzle.x - Math.cos(a) * 34, muzzle.y - Math.sin(a) * 34, 1, 150, -Math.PI / 2 + rand(-0.5, 0.5), 0.6);
-    this.hitscan(ctx, muzzle, a, 1500, 5.6);
-  }
-
-  protected override tick(ctx: WeaponCtx, held: boolean): void {
-    this.flashT = Math.max(0, this.flashT - ctx.dt);
-    if (!held) this.heat = Math.max(0, this.heat - ctx.dt * 1.6);
-  }
-
-  hands(ctx: WeaponCtx): HandTargets {
-    return { main: grip(ctx, 31, 3), off: grip(ctx, 45, 4) };
-  }
-
-  draw(sk: Sketch, ctx: WeaponCtx): void {
-    const c = sk.ctx;
-    const h = ctx.sm.pose.handR;
-    const a = ctx.sm.pose.aim;
-    c.save();
-    c.translate(h.x, h.y);
-    c.rotate(a);
-    if (Math.cos(a) < 0) c.scale(1, -1);
-    // Receiver + stock + barrel + handguard, all one continuous outline.
-    sk.poly([
-      { x: -30, y: -3 }, { x: -22, y: -8 }, { x: 6, y: -8 }, { x: 10, y: -11 },
-      { x: 34, y: -10 }, { x: 34, y: -6 }, { x: 44, y: -6 }, { x: 44, y: -2 },
-      { x: 10, y: -1 }, { x: 8, y: 8 }, { x: 1, y: 9 }, { x: 0, y: -1 },
-      { x: -22, y: -1 }, { x: -30, y: 2 },
-    ], 2.8, false, 0.55);
-    sk.line({ x: 12, y: -13 }, { x: 26, y: -13 }, 2, 1, 0.4);   // rail
-    sk.poly([{ x: 14, y: -1 }, { x: 22, y: -1 }, { x: 20, y: 12 }, { x: 15, y: 12 }], 2.4, false, 0.5); // magazine
-    sk.line({ x: 44, y: -4 }, { x: 58, y: -4 }, 3.2, 1, 0.4);   // barrel
-    if (this.flashT > 0) this.muzzle(sk, 60, -4, 20 + this.heat * 8, 202);
-    c.restore();
-  }
-
-  /**
-   * The emblem is the weapon in miniature rather than a generic gun outline:
-   * shouldered stock, receiver, pistol grip, the curved magazine hanging out
-   * of the middle of it, handguard, barrel, and the sight on top. The magazine
-   * is the part that actually reads as "assault rifle" at this size, so it is
-   * drawn as its own shape and given room.
-   */
-  icon(sk: Sketch, x: number, y: number, s: number): void {
-    // Stock through receiver to muzzle, in one outline.
-    sk.poly([
-      { x: x - s * 0.46, y: y - s * 0.02 }, { x: x - s * 0.32, y: y - s * 0.14 },
-      { x: x + s * 0.06, y: y - s * 0.14 }, { x: x + s * 0.1, y: y - s * 0.2 },
-      { x: x + s * 0.34, y: y - s * 0.2 }, { x: x + s * 0.34, y: y - s * 0.12 },
-      { x: x + s * 0.5, y: y - s * 0.12 }, { x: x + s * 0.5, y: y - s * 0.05 },
-      { x: x + s * 0.08, y: y - s * 0.03 }, { x: x + s * 0.05, y: y + s * 0.22 },
-      { x: x - s * 0.04, y: y + s * 0.22 }, { x: x - s * 0.06, y: y - s * 0.03 },
-      { x: x - s * 0.32, y: y - s * 0.03 }, { x: x - s * 0.46, y: y + s * 0.06 },
-    ], 2.1, false, 0.45);
-    // Curved magazine.
-    sk.poly([
-      { x: x + s * 0.12, y: y - s * 0.02 }, { x: x + s * 0.24, y: y - s * 0.02 },
-      { x: x + s * 0.3, y: y + s * 0.32 }, { x: x + s * 0.18, y: y + s * 0.34 },
-    ], 2.1, false, 0.4);
-    // Optic rail and front sight.
-    sk.line({ x: x + s * 0.12, y: y - s * 0.26 }, { x: x + s * 0.3, y: y - s * 0.26 }, 1.9, 1, 0.35);
-    sk.line({ x: x + s * 0.44, y: y - s * 0.22 }, { x: x + s * 0.44, y: y - s * 0.12 }, 1.9, 1, 0.3);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 7. SHOTGUN
-// ---------------------------------------------------------------------------
-export class Shotgun extends Weapon {
-  readonly id = 7;
-  readonly name = 'SHOTGUN';
-  readonly tagline = 'wide bites, hard kick';
-  override cooldown = 0.72;
-  private flashT = 0;
-
-  constructor() { super(); this.animLen = 0.5; }
-
-  protected release(ctx: WeaponCtx): void {
+  private fireShotgun(ctx: WeaponCtx): void {
     const muzzle = grip(ctx, 84);
     const base = this.aimFrom(ctx, muzzle);
     this.flashT = 0.09;
@@ -1017,149 +925,290 @@ export class Shotgun extends Weapon {
     ctx.shake(13);
     ctx.flash(0.22);
     ctx.sm.applyRecoil(1.1, base, 260);
-    for (let i = 0; i < 11; i++) {
-      const a = base + rand(-1, 1) * 0.17;
-      this.hitscan(ctx, muzzle, a, 700, 6.8);
-    }
+    for (let i = 0; i < 11; i++) this.hitscan(ctx, muzzle, base + rand(-1, 1) * 0.17, 700, 6.8);
     ctx.particles.smoke(muzzle.x, muzzle.y, 5, 8);
     ctx.particles.streaks(muzzle.x, muzzle.y, 9, base, 0.5, 60);
   }
 
-  protected override tick(ctx: WeaponCtx): void {
+  /**
+   * The trick. Three grenades leave the tube down one line, and while they are
+   * still in the air the rifle comes off his back and puts a round through
+   * each of them in turn - so the wall takes three explosions in a row, spaced
+   * out along whatever he happened to be pointing at.
+   */
+  protected override onLetGo(ctx: WeaponCtx): void {
+    if (this.heldFor <= SLING_HOLD || this.volley > 0) return;
+    const a = this.aimFrom(ctx, grip(ctx, 96));
+    this.volley = FUSE + 0.62;
+    this.timer = 1.9;
+    this.gun = 'bazooka';
+    this.swapT = 1;
+    this.live.length = 0;
+
+    for (let i = 0; i < 3; i++) {
+      ctx.after(i * 0.11, () => {
+        const muzzle = grip(ctx, 96);
+        // All three down the same line, at three speeds, so they string out
+        // instead of arriving as one lump.
+        const speed = 700 + i * 210;
+        const p = new Projectile({
+          x: muzzle.x, y: muzzle.y,
+          vx: Math.cos(a) * speed, vy: Math.sin(a) * speed - 40,
+          kind: 'rocket', gravity: 260, radius: 8, life: 5, blast: BLASTS.bazooka,
+        });
+        this.live.push(p);
+        ctx.projectiles.push(p);
+        this.fireT = 0.18;
+        ctx.sfx('launch', 0.82 + i * 0.06);
+        ctx.shake(9);
+        ctx.sm.applyRecoil(0.9, a, 120);
+        const back = grip(ctx, -26);
+        ctx.particles.smoke(back.x, back.y, 7, 12);
+        ctx.particles.streaks(back.x, back.y, 6, a + Math.PI, 0.8, 80);
+      });
+    }
+
+    // And then the rifle, one round per grenade, as fast as he can swap to it.
+    ctx.after(FUSE, () => { this.gun = 'rifle'; this.swapT = 1; ctx.sfx('ui', 1.5); });
+    for (let i = 0; i < 3; i++) {
+      ctx.after(FUSE + 0.08 + i * 0.16, () => this.shootOne(ctx));
+    }
+  }
+
+  /** One rifle round, aimed at the oldest grenade still up. */
+  private shootOne(ctx: WeaponCtx): void {
+    this.heat = Math.min(1, this.heat + 0.3);
+    const muzzle = grip(ctx, 90);
+    while (this.live.length > 0 && this.live[0].dead) this.live.shift();
+    const g = this.live.shift();
+    const a = g
+      ? Math.atan2(g.y - muzzle.y, g.x - muzzle.x)
+      : this.aimFrom(ctx, muzzle);
+    this.flashT = 0.05;
+    ctx.sfx('rifle', rand(0.94, 1.06));
+    ctx.sm.applyRecoil(0.34, a, 12);
+    ctx.shake(3);
+    ctx.particles.sparks(muzzle.x - Math.cos(a) * 34, muzzle.y - Math.sin(a) * 34, 1, 150,
+      -Math.PI / 2 + rand(-0.5, 0.5), 0.6);
+    if (!g) { this.hitscan(ctx, muzzle, a, 1500, 5.6); return; }
+    const dist = Math.hypot(g.x - muzzle.x, g.y - muzzle.y);
+    ctx.particles.tracer(muzzle.x, muzzle.y, g.x, g.y, 3600, 0.7);
+    // The round arrives, and the grenade is where it was going to be anyway.
+    ctx.after(dist / 3600, () => {
+      if (g.dead) return;
+      g.dead = true;
+      g.hitAt = { x: g.x, y: g.y };
+    });
+  }
+
+  protected override tick(ctx: WeaponCtx, held: boolean): void {
     this.flashT = Math.max(0, this.flashT - ctx.dt);
-  }
-
-  hands(ctx: WeaponCtx): HandTargets {
-    // Pump action: the support hand racks back and forward after each shot.
-    const t = this.t;
-    const pump = this.anim > 0 ? Math.sin(clamp((t - 0.15) / 0.7, 0, 1) * Math.PI) : 0;
-    return { main: grip(ctx, 30, 3), off: grip(ctx, 45 - pump * 14, 4) };
-  }
-
-  draw(sk: Sketch, ctx: WeaponCtx): void {
-    const c = sk.ctx;
-    const h = ctx.sm.pose.handR;
-    const a = ctx.sm.pose.aim;
-    const t = this.t;
-    const pump = this.anim > 0 ? Math.sin(clamp((t - 0.15) / 0.7, 0, 1) * Math.PI) : 0;
-    c.save();
-    c.translate(h.x, h.y);
-    c.rotate(a);
-    if (Math.cos(a) < 0) c.scale(1, -1);
-    sk.poly([
-      { x: -28, y: 4 }, { x: -20, y: -7 }, { x: 52, y: -8 }, { x: 52, y: -1 },
-      { x: 2, y: 0 }, { x: 0, y: 9 }, { x: -8, y: 9 }, { x: -20, y: -1 },
-    ], 2.9, false, 0.55);
-    // Sliding forend.
-    const fx = 26 - pump * 17;
-    sk.poly([{ x: fx, y: -1 }, { x: fx + 16, y: -1 }, { x: fx + 16, y: 6 }, { x: fx, y: 6 }], 2.4, false, 0.5);
-    sk.line({ x: 4, y: -10 }, { x: 50, y: -11 }, 2.2, 2, 0.5); // magazine tube
-    if (this.flashT > 0) {
-      this.muzzle(sk, 56, -5, 30, 303);
-      sk.ctx.lineWidth = 2.4;
-      sk.burst(56, -5, 9, 6, 46, 2.4, 0.9, 0, 304);
-    }
-    c.restore();
-  }
-
-  icon(sk: Sketch, x: number, y: number, s: number): void {
-    sk.poly([
-      { x: x - s * 0.4, y: y + s * 0.16 }, { x: x - s * 0.26, y: y - s * 0.12 },
-      { x: x + s * 0.42, y: y - s * 0.16 }, { x: x + s * 0.42, y: y - s * 0.02 },
-      { x: x - s * 0.2, y: y + s * 0.02 }, { x: x - s * 0.24, y: y + s * 0.3 },
-    ], 2.1, false, 0.5);
-    sk.line({ x: x - s * 0.05, y: y - s * 0.22 }, { x: x + s * 0.4, y: y - s * 0.26 }, 1.8, 1, 0.4);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 8. BAZOOKA
-// ---------------------------------------------------------------------------
-/**
- * One tube on the shoulder and one warhead in it. It replaces both of the old
- * artillery pieces, and it is meant to: nothing here needs a charge meter and
- * a wind-up to say "this is the big one" - a rocket the size of his torso
- * leaving a tube beside his ear already says it.
- */
-export class Bazooka extends Weapon {
-  readonly id = 8;
-  readonly name = 'BAZOOKA';
-  readonly tagline = 'shoulder it, and stand back';
-  override cooldown = 1.15;
-  private fireT = 0;
-
-  constructor() { super(); this.animLen = 0.7; }
-
-  protected release(ctx: WeaponCtx): void {
-    const muzzle = grip(ctx, 96);
-    const a = this.aimFrom(ctx, muzzle);
-    ctx.projectiles.push(new Projectile({
-      x: muzzle.x, y: muzzle.y,
-      vx: Math.cos(a) * 1020, vy: Math.sin(a) * 1020,
-      kind: 'rocket', gravity: 210, radius: 8, life: 5, blast: BLASTS.bazooka,
-    }));
-    this.fireT = 0.18;
-    ctx.sfx('launch', 0.82);
-    ctx.shake(12);
-    ctx.flash(0.2);
-    ctx.sm.applyRecoil(1.2, a, 170);
-    // Backblast: everything the tube did not put into the rocket comes out of
-    // the open end behind his shoulder.
-    const back = grip(ctx, -26);
-    ctx.particles.smoke(back.x, back.y, 9, 12);
-    ctx.particles.sparks(back.x, back.y, 12, 320, a + Math.PI, 1.0);
-    ctx.particles.streaks(back.x, back.y, 7, a + Math.PI, 0.8, 80);
-  }
-
-  protected override tick(ctx: WeaponCtx): void {
+    this.kick = Math.max(0, this.kick - ctx.dt * 3.4);
     this.fireT = Math.max(0, this.fireT - ctx.dt);
+    this.swapT = Math.max(0, this.swapT - ctx.dt * 4);
+    if (!held) this.heat = Math.max(0, this.heat - ctx.dt * 1.6);
+    if (this.volley > 0) {
+      this.volley -= ctx.dt;
+      if (this.volley <= 0) { this.live.length = 0; this.gun = 'magnum'; this.swapT = 1; }
+      return;
+    }
+    // Shouldering the tube while the trigger is down.
+    if (held && this.heldFor > SLING_HOLD && this.gun !== 'bazooka') {
+      this.gun = 'bazooka';
+      this.swapT = 1;
+      ctx.sfx('ui', 1.2);
+    }
   }
 
   hands(ctx: WeaponCtx): HandTargets {
-    // Both hands under the tube, the rear one back at the trigger group.
-    return { main: grip(ctx, 28, 11), off: grip(ctx, 48, 9) };
+    switch (this.gun) {
+      case 'magnum':
+        // One hand on it; the other swings with the gait.
+        return { main: grip(ctx, 38 - this.kick * 5, 1 - this.kick * 7), off: null };
+      case 'shotgun': {
+        const pump = this.anim > 0 ? Math.sin(clamp((this.t - 0.15) / 0.7, 0, 1) * Math.PI) : 0;
+        return { main: grip(ctx, 30, 3), off: grip(ctx, 45 - pump * 14, 4) };
+      }
+      case 'rifle':
+        return { main: grip(ctx, 31, 3), off: grip(ctx, 45, 4) };
+      default:
+        return { main: grip(ctx, 28, 11), off: grip(ctx, 48, 9) };
+    }
+  }
+
+  // ---------------------------------------------------------------- drawing ---
+
+  /**
+   * The three he is not holding, slung across his back.
+   *
+   * This is the whole point of the slot: you can see at a glance that he has
+   * the other three on him, and which one has just come off the strap.
+   */
+  override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const p = ctx.sm.pose;
+    const f = ctx.sm.facing;
+    // Hung off the spine, angled across the back, fanned so all three read.
+    const mid = { x: (p.neck.x + p.pelvis.x) * 0.5 - f * 9, y: (p.neck.y + p.pelvis.y) * 0.5 };
+    c.save();
+    c.strokeStyle = '#000';
+    const slung: Gun[] = (['magnum', 'shotgun', 'rifle', 'bazooka'] as Gun[])
+      .filter((g) => g !== this.gun);
+    // Stacked *parallel* across his back like a rack, not fanned out of one
+    // point: three silhouettes radiating from the same shoulder piled into one
+    // black scribble, and three lying side by side read instantly as three.
+    // Muzzles up over the far shoulder, grips down by the hip - carried, not
+    // hung. Laid out behind the spine so the barrels clear his own silhouette.
+    const lay = f > 0 ? Math.PI + 0.74 : -0.74;
+    const nx = -Math.sin(lay), ny = Math.cos(lay);
+    for (let i = 0; i < slung.length; i++) {
+      const o = (i - 1) * 13;
+      c.save();
+      c.translate(mid.x + nx * o - f * 12, mid.y + ny * o + 8);
+      c.rotate(lay);
+      c.scale(0.9, 0.9);
+      this.slungGun(sk, slung[i]);
+      c.restore();
+    }
+    // The strap itself, so they are plainly carried and not floating.
+    sk.line({ x: p.neck.x - f * 2, y: p.neck.y + 2 }, { x: p.pelvis.x - f * 16, y: p.pelvis.y + 10 }, 3, 2, 0.8);
+    c.restore();
   }
 
   draw(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
-    const a = ctx.sm.pose.aim;
+    const a = this.gun === 'magnum'
+      ? ctx.sm.pose.aim - ctx.sm.facing * this.kick * 0.5
+      : ctx.sm.pose.aim;
     c.save();
     c.translate(h.x, h.y);
     c.rotate(a);
     if (Math.cos(a) < 0) c.scale(1, -1);
-    // A long fat tube, flared at the back, with the warhead's nose showing.
-    sk.poly([
-      { x: -44, y: -17 }, { x: -32, y: -11 }, { x: 62, y: -11 }, { x: 62, y: 3 },
-      { x: -32, y: 3 }, { x: -44, y: 10 },
-    ], 3.2, false, 0.6);
-    sk.line({ x: -32, y: -11 }, { x: -32, y: 3 }, 2.4, 1, 0.4);   // blast ring
-    sk.poly([{ x: 62, y: -9 }, { x: 74, y: -4 }, { x: 62, y: 1 }], 2.6, false, 0.4); // warhead nose
-    sk.line({ x: 4, y: -11 }, { x: 4, y: -23 }, 2.4, 1, 0.4);     // sight post
-    sk.line({ x: -4, y: -23 }, { x: 14, y: -23 }, 2.4, 1, 0.4);
-    sk.line({ x: -14, y: 3 }, { x: -16, y: 17 }, 3, 1, 0.5);      // trigger grip
-    sk.line({ x: 24, y: 3 }, { x: 26, y: 15 }, 2.8, 1, 0.5);      // forward grip
-    if (this.fireT > 0) {
-      const k = this.fireT / 0.18;
-      this.muzzle(sk, 78, -4, 34 * k, 404);
-      c.lineWidth = 2.8;
-      sk.burst(-42, -4, 8, 8, 54 * k, 2.8, 1.3, Math.PI, 405);
-    }
+    // Coming off the back: it swings up into the hand rather than appearing.
+    if (this.swapT > 0) c.rotate(-this.swapT * 0.9 * Math.sign(Math.cos(a) || 1));
+    c.strokeStyle = '#000';
+    this.drawGun(sk, this.gun, this.flashT);
     c.restore();
   }
 
+  /**
+   * A gun on the strap. Not the same drawing as the one in his hands, and it
+   * must not be: three detailed weapons at two thirds scale piled into one
+   * black smudge. On his back each is a silhouette with the one feature that
+   * names it - a cylinder, a magazine, a pump, a flared tube.
+   */
+  private slungGun(sk: Sketch, gun: Gun): void {
+    const c = sk.ctx;
+    c.strokeStyle = '#000';
+    switch (gun) {
+      case 'magnum':
+        sk.poly([{ x: -4, y: -4 }, { x: 20, y: -4 }, { x: 20, y: 1 }, { x: 1, y: 1 },
+          { x: -1, y: 9 }, { x: -6, y: 9 }], 2, false, 0.5);
+        sk.poly([{ x: 3, y: -4 }, { x: 10, y: -4 }, { x: 10, y: 1 }, { x: 3, y: 1 }], 2, false, 0.4);
+        break;
+      case 'shotgun':
+        sk.poly([{ x: -18, y: 3 }, { x: -13, y: -4 }, { x: 34, y: -5 }, { x: 34, y: -1 },
+          { x: 1, y: 0 }, { x: 0, y: 6 }, { x: -6, y: 6 }, { x: -13, y: 0 }], 2.4, false, 0.5);
+        sk.line({ x: 3, y: -7 }, { x: 32, y: -8 }, 2, 1, 0.4);
+        break;
+      case 'rifle':
+        sk.poly([{ x: -20, y: -2 }, { x: -15, y: -5 }, { x: 28, y: -6 }, { x: 28, y: -1 },
+          { x: 6, y: -1 }, { x: 5, y: 5 }, { x: 0, y: 5 }, { x: 0, y: -1 },
+          { x: -15, y: -1 }], 2.4, false, 0.5);
+        sk.poly([{ x: 9, y: -1 }, { x: 15, y: -1 }, { x: 14, y: 8 }, { x: 10, y: 8 }], 2.1, false, 0.4);
+        break;
+      default:
+        sk.poly([{ x: -26, y: -9 }, { x: -19, y: -6 }, { x: 34, y: -6 }, { x: 34, y: 2 },
+          { x: -19, y: 2 }, { x: -26, y: 6 }], 2.6, false, 0.5);
+        sk.poly([{ x: 34, y: -5 }, { x: 41, y: -2 }, { x: 34, y: 1 }], 2.2, false, 0.4);
+        break;
+    }
+  }
+
+  /** One gun in its own local space: hand at the origin, muzzle to +x. */
+  private drawGun(sk: Sketch, gun: Gun, flash: number): void {
+    const c = sk.ctx;
+    c.strokeStyle = '#000';
+    switch (gun) {
+      case 'magnum': {
+        sk.poly([
+          { x: -7, y: -7 }, { x: 6, y: -8 }, { x: 30, y: -8 }, { x: 30, y: -2 },
+          { x: 4, y: -1 }, { x: 2, y: 12 }, { x: -7, y: 13 },
+        ], 3.2, false, 0.5);
+        sk.poly([{ x: 5, y: -7 }, { x: 15, y: -7 }, { x: 15, y: 4 }, { x: 5, y: 4 }], 2.8, false, 0.45);
+        sk.line({ x: 8, y: -7 }, { x: 8, y: 4 }, 1.8, 1, 0.3);
+        sk.line({ x: 12, y: -7 }, { x: 12, y: 4 }, 1.8, 1, 0.3);
+        sk.line({ x: 18, y: -11 }, { x: 30, y: -11 }, 2.2, 1, 0.4);
+        sk.line({ x: -5, y: -9 }, { x: 3, y: -9 }, 2.2, 1, 0.4);
+        if (flash > 0) this.muzzle(sk, 34, -5, 26, 101);
+        break;
+      }
+      case 'shotgun': {
+        const pump = this.anim > 0 ? Math.sin(clamp((this.t - 0.15) / 0.7, 0, 1) * Math.PI) : 0;
+        sk.poly([
+          { x: -28, y: 4 }, { x: -20, y: -7 }, { x: 52, y: -8 }, { x: 52, y: -1 },
+          { x: 2, y: 0 }, { x: 0, y: 9 }, { x: -8, y: 9 }, { x: -20, y: -1 },
+        ], 2.9, false, 0.55);
+        const fx = 26 - pump * 17;
+        sk.poly([{ x: fx, y: -1 }, { x: fx + 16, y: -1 }, { x: fx + 16, y: 6 }, { x: fx, y: 6 }], 2.4, false, 0.5);
+        sk.line({ x: 4, y: -10 }, { x: 50, y: -11 }, 2.2, 2, 0.5);
+        if (flash > 0) this.muzzle(sk, 56, -5, 30, 303);
+        break;
+      }
+      case 'rifle': {
+        sk.poly([
+          { x: -30, y: -3 }, { x: -22, y: -8 }, { x: 6, y: -8 }, { x: 10, y: -11 },
+          { x: 34, y: -10 }, { x: 34, y: -6 }, { x: 44, y: -6 }, { x: 44, y: -2 },
+          { x: 10, y: -1 }, { x: 8, y: 8 }, { x: 1, y: 9 }, { x: 0, y: -1 },
+          { x: -22, y: -1 }, { x: -30, y: 2 },
+        ], 2.8, false, 0.55);
+        sk.line({ x: 12, y: -13 }, { x: 26, y: -13 }, 2, 1, 0.4);
+        sk.poly([{ x: 14, y: -1 }, { x: 22, y: -1 }, { x: 20, y: 12 }, { x: 15, y: 12 }], 2.4, false, 0.5);
+        sk.line({ x: 44, y: -4 }, { x: 58, y: -4 }, 3.2, 1, 0.4);
+        if (flash > 0) this.muzzle(sk, 60, -4, 20 + this.heat * 8, 202);
+        break;
+      }
+      default: {
+        sk.poly([
+          { x: -44, y: -17 }, { x: -32, y: -11 }, { x: 62, y: -11 }, { x: 62, y: 3 },
+          { x: -32, y: 3 }, { x: -44, y: 10 },
+        ], 3.2, false, 0.6);
+        sk.line({ x: -32, y: -11 }, { x: -32, y: 3 }, 2.4, 1, 0.4);
+        sk.poly([{ x: 62, y: -9 }, { x: 74, y: -4 }, { x: 62, y: 1 }], 2.6, false, 0.4);
+        sk.line({ x: 4, y: -11 }, { x: 4, y: -23 }, 2.4, 1, 0.4);
+        sk.line({ x: -4, y: -23 }, { x: 14, y: -23 }, 2.4, 1, 0.4);
+        sk.line({ x: -14, y: 3 }, { x: -16, y: 17 }, 3, 1, 0.5);
+        sk.line({ x: 24, y: 3 }, { x: 26, y: 15 }, 2.8, 1, 0.5);
+        if (this.fireT > 0) {
+          const k = this.fireT / 0.18;
+          this.muzzle(sk, 78, -4, 34 * k, 404);
+          c.lineWidth = 2.8;
+          sk.burst(-42, -4, 8, 8, 54 * k, 2.8, 1.3, Math.PI, 405);
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * The emblem is not one of the four guns - picking one would be a lie about
+   * what the slot is. It is a revolver crossed with a rifle over a strap,
+   * which reads as "he is carrying an armoury" at twenty pixels.
+   */
   icon(sk: Sketch, x: number, y: number, s: number): void {
-    sk.poly([
-      { x: x - s * 0.46, y: y - s * 0.18 }, { x: x + s * 0.28, y: y - s * 0.18 },
-      { x: x + s * 0.28, y: y + s * 0.1 }, { x: x - s * 0.46, y: y + s * 0.1 },
-    ], 2.2, false, 0.5);
-    // The warhead poking out of the muzzle, which is what says bazooka.
-    sk.poly([
-      { x: x + s * 0.28, y: y - s * 0.16 }, { x: x + s * 0.5, y: y - s * 0.04 },
-      { x: x + s * 0.28, y: y + s * 0.08 },
-    ], 2.1, false, 0.4);
-    sk.line({ x: x - s * 0.16, y: y + s * 0.1 }, { x: x - s * 0.2, y: y + s * 0.36 }, 2.2, 1, 0.4);
-    sk.line({ x: x - s * 0.1, y: y - s * 0.18 }, { x: x - s * 0.1, y: y - s * 0.34 }, 2, 1, 0.3);
+    for (const d of [-1, 1]) {
+      const c = sk.ctx;
+      c.save();
+      c.translate(x, y);
+      c.rotate(d * 0.62);
+      sk.poly([
+        { x: -s * 0.34, y: -s * 0.1 }, { x: s * 0.3, y: -s * 0.12 },
+        { x: s * 0.3, y: s * 0.02 }, { x: -s * 0.16, y: s * 0.04 },
+        { x: -s * 0.2, y: s * 0.3 }, { x: -s * 0.36, y: s * 0.3 },
+      ], 2.1, false, 0.45);
+      c.restore();
+    }
   }
 }
 
@@ -1177,7 +1226,8 @@ const BEAM_BORE = 340;
 
 export class EnergyBeam extends Weapon {
   readonly id = 14;
-  readonly name = 'PWNAGE BEAM';
+  readonly name = 'SAYAJEANS';
+  override readonly group = 'extra' as const;
   readonly tagline = 'gather everything, then let go';
   override cooldown = 1.5;
   override chargeTime = 0.85;
@@ -1576,10 +1626,13 @@ export function createArsenal(): Weapon[] {
   // stop being weapons and start being weather. The order is the order of the
   // number keys, so it also has to climb: slot 12 must feel like slot 12.
   return [
+    // MAIN - the set the source film actually shows him using, in the order it
+    // climbs: hands, edges, weather, then the things that stop being weapons.
     new Fists(), new Greatsword(), new Warhammer(), new Wind(),
-    new Magnum(), new Rifle(), new Shotgun(), new Bazooka(), new MissilePods(),
-    new ArcaneStaff(), new Shinobi(), new Thunderbolt(), new Mecha(), new EnergyBeam(),
-    new Shout(), new Titan(), new SplitHead(),
+    new Gunslinger(), new MissilePods(), new ArcaneStaff(), new Shinobi(),
+    new Thunderbolt(), new Mecha(), new SplitHead(), new Titan(), new Shout(),
+    // EXTRA - built on top of the film rather than taken from it.
+    new EnergyBeam(),
   ];
 }
 

@@ -150,10 +150,20 @@ export function impact(ctx: WeaponCtx, x: number, y: number, dir: number, power:
   ctx.particles.streaks(x, y, Math.round(2 + power * 6), dir + Math.PI, 1.9, 16 + power * 40);
 }
 
+/**
+ * Which half of the arsenal a weapon belongs to.
+ *
+ * `main` is the set the source film actually shows him using. `extra` is
+ * everything built on top of it, kept in its own group on the wheel so the two
+ * never get confused for one another.
+ */
+export type WeaponGroup = 'main' | 'extra';
+
 export abstract class Weapon {
   abstract readonly id: number;
   abstract readonly name: string;
   abstract readonly tagline: string;
+  readonly group: WeaponGroup = 'main';
 
   /**
    * Whether this fires down a line rather than swinging through an arc. It

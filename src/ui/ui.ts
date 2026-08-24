@@ -42,7 +42,7 @@ export interface Rect { x: number; y: number; w: number; h: number; }
  * The key that equips slot `i`. The number row runs out at ten weapons, so the
  * two after it borrow the keys immediately to its right.
  */
-const SLOT_KEYS = ['0', '-', '=', '[', ']', ';', "'", '\\'];
+const SLOT_KEYS = ['0', '-', '=', '[', ']'];
 export const slotKey = (i: number): string =>
   i < 9 ? String(i + 1) : (SLOT_KEYS[i - 9] ?? '?');
 
@@ -158,6 +158,25 @@ function slotPos(layout: WheelLayout, i: number, n: number, extra = 0): Vec2 {
 }
 
 /**
+ * Where each slot sits once the arsenal is split into groups.
+ *
+ * The main set is what the source film actually shows him using; everything
+ * after it was built on top. Leaving one blank seat at the boundary is all it
+ * takes for the two to read as two - no boxes, no dividers, just a gap in the
+ * ring where a slot would otherwise be.
+ */
+function seating(weapons: readonly Weapon[]): { seat: number[]; total: number } {
+  const seat: number[] = [];
+  let s = 0;
+  for (let i = 0; i < weapons.length; i++) {
+    if (i > 0 && weapons[i].group !== weapons[i - 1].group) s += 1;
+    seat.push(s);
+    s += 1;
+  }
+  return { seat, total: Math.max(1, s) };
+}
+
+/**
  * The weapon wheel. The highlighted slot swells and shows its name; selection
  * is by nearest slot to the pointer, which is what makes a touch drag feel
  * right - you go towards what you want rather than aiming an angle.
@@ -170,14 +189,16 @@ export class WeaponWheel {
   /** Returns true when the highlighted slot changed this frame. */
   update(
     dt: number, isOpen: boolean, pointer: Vec2, layout: WheelLayout,
-    count: number, numberKey: number | null,
+    weapons: readonly Weapon[], numberKey: number | null,
   ): boolean {
+    const count = weapons.length;
     const target = isOpen ? 1 : 0;
     this.open += (target - this.open) * Math.min(1, dt * 18);
     if (this.open < 0.002) this.open = 0;
     if (this.popped.length !== count) this.popped = new Array(count).fill(0);
     if (!isOpen) return false;
 
+    const { seat, total } = seating(weapons);
     const prev = this.hovered;
     if (numberKey !== null && numberKey < count) {
       this.hovered = numberKey;
@@ -188,7 +209,7 @@ export class WeaponWheel {
       if (Math.hypot(dx, dy) > layout.radius * 0.28) {
         let best = this.hovered, bestD = Infinity;
         for (let i = 0; i < count; i++) {
-          const p = slotPos(layout, i, count);
+          const p = slotPos(layout, seat[i], total);
           const d = (p.x - pointer.x) ** 2 + (p.y - pointer.y) ** 2;
           if (d < bestD) { bestD = d; best = i; }
         }
@@ -210,10 +231,11 @@ export class WeaponWheel {
     const c = sk.ctx;
     const k = easeOutCubic(this.open);
     const n = weapons.length;
+    const { seat, total } = seating(weapons);
     // Size the slots from the spacing actually available along the arc, so a
     // narrow fan on a phone tightens up instead of overlapping itself.
     const span = layout.kind === 'ring' ? TAU : layout.to - layout.from;
-    const gaps = layout.kind === 'ring' ? n : Math.max(1, n - 1);
+    const gaps = layout.kind === 'ring' ? total : Math.max(1, total - 1);
     const slotSize = Math.min(38, (layout.radius * span / gaps) * 0.46);
 
     // Dim the field so the wheel reads clearly over the action.
@@ -244,7 +266,7 @@ export class WeaponWheel {
 
     for (let i = 0; i < n; i++) {
       const pop = this.popped[i] ?? 0;
-      const p = slotPos(layout, i, n, pop * 18 * (layout.kind === 'ring' ? 1 : -1));
+      const p = slotPos(layout, seat[i], total, pop * 18 * (layout.kind === 'ring' ? 1 : -1));
       const size = (slotSize + pop * slotSize * 0.42) * easeOutBack(clamp(k * 1.4 - i * 0.02, 0, 1));
       const isEquipped = i === equippedIndex;
 
@@ -286,6 +308,8 @@ export class WeaponWheel {
       const top = layout.kind === 'ring'
         ? layout.anchor.y - 12
         : layout.anchor.y - layout.radius - slotSize - 14 - nameSize * 1.6;
+      inkText(sk, w.group === 'extra' ? 'EXTRA' : 'MAIN', x, top - nameSize * 0.72,
+        nameSize * 0.38, { alpha: k * 0.5, wobble: 0.4 });
       inkText(sk, w.name, x, top, nameSize, { alpha: k, wobble: 1 });
       inkText(sk, w.tagline.toUpperCase(), x, top + nameSize * 0.74, nameSize * 0.44, { alpha: k * 0.7, wobble: 0.5 });
       inkText(sk, hint, x, top + nameSize * 1.5, nameSize * 0.38, { alpha: k * 0.45, wobble: 0.4 });

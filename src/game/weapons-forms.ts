@@ -119,7 +119,7 @@ const SHOUT_TAP = 0.3;
  */
 export class Shout extends Weapon {
   readonly id = 15;
-  readonly name = 'THE SHOUT';
+  readonly name = 'MONSTER TAMER';
   readonly tagline = 'straight ahead, and it does not aim';
   override cooldown = 0.9;
   override chargeTime = 1.2;
@@ -581,7 +581,7 @@ const T_VOLLEY = 1.0, T_BURN = 1.1, T_EJECT = 0.5, T_MONO = 0.75, T_GONE = 1.6;
  */
 export class Titan extends Weapon {
   readonly id = 16;
-  readonly name = 'TITAN';
+  readonly name = 'GIANT ROBOT';
   readonly tagline = 'punches, eye beams, and then he throws it';
   override auto = true;
   override cooldown = 0.42;

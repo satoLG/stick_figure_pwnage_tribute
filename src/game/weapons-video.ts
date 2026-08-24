@@ -169,7 +169,7 @@ const WIND_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 
 export class Wind extends MeleeWeapon {
   readonly id = 4;
-  readonly name = 'WIND';
+  readonly name = 'WINDSLASH';
   readonly tagline = 'three claws of air, or the whole storm';
   protected readonly len = 172;
   protected readonly sets = WIND_SETS;
@@ -879,7 +879,7 @@ interface Sigil {
 
 export class ArcaneStaff extends Weapon {
   readonly id = 10;
-  readonly name = 'ARCANE STAFF';
+  readonly name = 'MAGE';
   readonly tagline = 'four bolts, or one very wide beam';
   override cooldown = 0.5;
   override chargeTime = 0.9;
