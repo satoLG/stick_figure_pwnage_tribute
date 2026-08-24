@@ -1275,12 +1275,14 @@ const BEAM_RANGE = 1600;
  * second, so a single beam bores most of the way in and no further.
  */
 const BEAM_BORE = 340;
+/** Under this much charge a release is a thrown ball rather than the beam. */
+const ORB_TAP = 0.22;
 
 export class EnergyBeam extends Weapon {
   readonly id = 14;
   readonly name = 'SAYAJEANS';
   override readonly group = 'extra' as const;
-  readonly tagline = 'gather everything, then let go';
+  readonly tagline = 'two hands throwing, or gather it all and let go';
   override cooldown = 1.5;
   override chargeTime = 0.85;
   private beam = 0;
@@ -1302,6 +1304,9 @@ export class EnergyBeam extends Weapon {
   private auraSfx = 0;
   /** Held above zero through the beam, so the aura does not blink off on release. */
   private thrust = 0;
+  /** Seconds since the last thrown ball, and which hand threw it. */
+  private orbT = 0;
+  private orbSide = 1;
 
   override onEquip(): void {
     super.onEquip();
@@ -1317,6 +1322,7 @@ export class EnergyBeam extends Weapon {
   }
 
   protected release(ctx: WeaponCtx, power: number): void {
+    if (power < ORB_TAP) { this.throwOrb(ctx); return; }
     this.beam = this.beamMax;
     this.power = 0.45 + power * 0.55;
     this.beamAngle = ctx.sm.pose.aim;
@@ -1335,7 +1341,42 @@ export class EnergyBeam extends Weapon {
     }
   }
 
+  /**
+   * The ordinary shot: one ball of light out of one hand, and the next one out
+   * of the other.
+   *
+   * No wind-up, no charge meter and - deliberately - no screen shake at all.
+   * The whole weight of this slot lives in the held beam, so what the trigger
+   * does on a tap has to be *light*: the aura barely comes up, the hands take
+   * turns, and he can hang in the air throwing them.
+   */
+  private throwOrb(ctx: WeaponCtx): void {
+    this.orbSide = -this.orbSide;
+    this.orbT = 0.2;
+    this.cooldown = 0.19;
+    this.timer = this.cooldown;
+    this.startAnim(0.19);
+    // A light lift under the aura rather than a shove: enough for it to show.
+    this.thrust = Math.max(this.thrust, 0.42);
+    if (!ctx.sm.onGround) this.airborne = true;
+
+    const from = grip(ctx, 44, this.orbSide * 12);
+    const a = this.aimFrom(ctx, from) + rand(-0.02, 0.02);
+    ctx.projectiles.push(new Projectile({
+      x: from.x, y: from.y,
+      vx: Math.cos(a) * 1150, vy: Math.sin(a) * 1150,
+      kind: 'orb', gravity: 0, radius: 9, life: 2.6,
+      blast: { ...BLASTS.orb, radius: BLASTS.orb.radius * 1.15, shake: 4 },
+    }));
+    ctx.sfx('fire', rand(1.15, 1.3));
+    ctx.particles.streaks(from.x, from.y, 3, a, 0.5, 46);
+    // He is pushed a hair back by each one, and in the air that is what keeps
+    // him up: throwing is the thrust.
+    ctx.sm.applyRecoil(0.22, a, this.airborne ? 26 : 8);
+  }
+
   protected override tick(ctx: WeaponCtx): void {
+    this.orbT = Math.max(0, this.orbT - ctx.dt);
     const charging = this.charge > 0.01;
 
     // Latch where this charge started. Once he is holding himself up, a stray
@@ -1434,7 +1475,13 @@ export class EnergyBeam extends Weapon {
    * in the air the same charge holds him up, and he fires from a float before
    * the power lets go and drops him.
    */
-  override stance(_ctx: WeaponCtx): Stance | null {
+  override stance(ctx: WeaponCtx): Stance | null {
+    // Throwing keeps him up. A ball a fifth of a second, each one shoving him
+    // back a little, is exactly the excuse a figure needs to hang in the air -
+    // so as long as they keep coming, so does the float.
+    if (this.orbT > 0 && !ctx.sm.onGround) {
+      return { kind: 'hover', weight: 1, lean: -0.06, hip: 2 };
+    }
     const k = Math.max(this.charge * 2.4, this.beam > 0 ? 1 : 0, this.thrust);
     if (k < 0.03) return null;
     const w = clamp(k, 0, 1);
@@ -1450,6 +1497,14 @@ export class EnergyBeam extends Weapon {
    */
   hands(ctx: WeaponCtx): HandTargets | null {
     const f = ctx.sm.facing;
+    if (this.orbT > 0 && this.beam <= 0 && this.charge < 0.05) {
+      // The hand that just threw is out along the aim; the other is cocked
+      // back at the hip with the next one already in it.
+      const k = this.orbT / 0.2;
+      const out = grip(ctx, 40 + k * 6, this.orbSide * 12);
+      const back = gripAt(ctx, ctx.sm.pose.aim + 2.3 * f, 26, -this.orbSide * 10);
+      return this.orbSide > 0 ? { main: out, off: back } : { main: back, off: out };
+    }
     if (this.beam > 0) {
       // Thrust out along the beam, one hand stacked on the other.
       const k = this.beam / this.beamMax;
@@ -1462,6 +1517,55 @@ export class EnergyBeam extends Weapon {
     const ang = ctx.sm.pose.aim + (2.35 + k * 0.25) * f;
     const r = 26 + k * 8;
     return { main: gripAt(ctx, ang, r, -8 * f), off: gripAt(ctx, ang, r - 4, 8 * f) };
+  }
+
+  /**
+   * The hair.
+   *
+   * A soft nod and no more: five swept-back spikes standing off the top of the
+   * skull, white with an ink edge like everything else that has to read over
+   * the wall. They stand taller and rake back further as the aura comes up, so
+   * the head is doing the same thing the rest of the figure is - and it is the
+   * one mark that names this slot before anything has been fired.
+   */
+  private drawHair(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+    const p = sm.pose.head;
+    const f = sm.facing;
+    const R = HEAD_R;
+    const k = this.aura;
+    const tilt = sm.pose.bodyAngle * 0.6;
+    const cs = Math.cos(tilt), sn = Math.sin(tilt);
+    const at = (dx: number, dy: number): Vec2 =>
+      ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
+
+    c.save();
+    c.strokeStyle = '#000';
+    const n = 5;
+    for (let i = 0; i < n; i++) {
+      // Rooted across the crown, front to back, and swept the way he faces.
+      const t = i / (n - 1) - 0.5;
+      const rootX = -f * t * R * 1.5;
+      const rootY = -R * (0.82 - Math.abs(t) * 0.34);
+      // The middle spikes are the long ones; every drawing they flick a little.
+      const len = R * (1.05 + Math.cos(t * 2.4) * 0.5) * (1 + k * 0.55)
+        * (1 + hashNoise(i * 7, sk.boil) * 0.1);
+      const rake = -f * (0.35 + Math.abs(t) * 0.5) * len;
+      const half = R * 0.3 * (1 - Math.abs(t) * 0.3);
+      const spike = [
+        at(rootX - half, rootY),
+        at(rootX + rake * 0.55 - half * 0.4, rootY - len * 0.62),
+        at(rootX + rake, rootY - len),
+        at(rootX + rake * 0.6 + half * 0.5, rootY - len * 0.5),
+        at(rootX + half, rootY + R * 0.06),
+      ];
+      c.fillStyle = '#fff';
+      sk.polyPath(spike, 0.8);
+      c.fill();
+      sk.poly(spike, 3, false, 0.8);
+    }
+    c.restore();
   }
 
   /**
@@ -1552,6 +1656,24 @@ export class EnergyBeam extends Weapon {
     const h = ctx.sm.pose.handR;
     const o = ctx.sm.pose.handL;
     const mid = { x: (h.x + o.x) / 2, y: (h.y + o.y) / 2 };
+
+    this.drawHair(sk, ctx);
+
+    // --- the ball still in the other hand -----------------------------------
+    if (this.orbT > 0 && this.beam <= 0 && this.charge < 0.05) {
+      const k = this.orbT / 0.2;
+      const held = this.orbSide > 0 ? o : h;
+      const r = 6 + k * 4;
+      const ball: Vec2[] = [];
+      for (let i = 0; i < 9; i++) {
+        const ang = (i / 9) * TAU + ctx.time * 3;
+        ball.push({ x: held.x + Math.cos(ang) * r, y: held.y + Math.sin(ang) * r });
+      }
+      sk.inked(() => sk.polyPath(ball, 1), 3.2, 0.3, 771);
+      c.strokeStyle = '#000';
+      c.lineWidth = 2;
+      sk.burst(held.x, held.y, 6, r * 1.4, r * 2.6, 2, TAU, 0, 772);
+    }
 
     // --- charging: energy converging into the cupped hands ------------------
     if (this.charge > 0.01) {
