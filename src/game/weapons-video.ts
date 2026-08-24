@@ -170,9 +170,24 @@ const WIND_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 export class Wind extends MeleeWeapon {
   readonly id = 4;
   readonly name = 'WINDSLASH';
-  readonly tagline = 'three claws of air, or the whole storm';
-  protected readonly len = 172;
+  readonly tagline = 'the air is the blade, and it reaches';
+  /**
+   * How far a cut carries.
+   *
+   * This is not a weapon length - there is nothing in his hands - it is how
+   * far downwind the air is still sharp, and it has to be the same distance
+   * the strokes are drawn to. It used to be a bit over arm's reach while the
+   * blades on the page ran three times that, so the wall took a bite well
+   * short of where the cut visibly landed.
+   */
+  protected readonly len = 430;
   protected readonly sets = WIND_SETS;
+  /** The air keeps moving round him whether or not he is swinging. */
+  private ambient: Gust[] = [];
+  private ambientAcc = 0;
+
+  /** Carried on the air rather than pushing off the floor. */
+  override get jumpBoost(): number { return 1.62; }
 
   private marked = false;
   /** 0..1 how much of the storm he has pulled in around himself. */
@@ -193,6 +208,7 @@ export class Wind extends MeleeWeapon {
   override onEquip(): void {
     super.onEquip();
     this.gusts.length = 0;
+    this.ambient.length = 0;
     this.marked = false;
     this.gather = 0;
     this.vortex = null;
@@ -201,6 +217,7 @@ export class Wind extends MeleeWeapon {
   override onUnequip(ctx: WeaponCtx): void {
     super.onUnequip(ctx);
     this.gusts.length = 0;
+    this.ambient.length = 0;
     this.gather = 0;
     this.vortex = null;
   }
@@ -326,6 +343,7 @@ export class Wind extends MeleeWeapon {
       this.gusts[i].life -= ctx.dt;
       if (this.gusts[i].life <= 0) this.gusts.splice(i, 1);
     }
+    this.blowAmbient(ctx);
     this.runVortex(ctx);
 
     // Pulling the air in. It has to be visible from across the room, because
@@ -358,6 +376,48 @@ export class Wind extends MeleeWeapon {
    * draws moving air, and they travel outwards rather than sitting where they
    * were cut.
    */
+  /**
+   * The weather he stands in.
+   *
+   * Not decoration round the edges of an attack: this one is *made* of moving
+   * air, so there is always some of it going past him - long curved strokes
+   * drifting the way he is facing, faster and thicker while he is running or
+   * pulling the storm in. It is what makes the slot read as wind even with the
+   * trigger untouched.
+   */
+  private blowAmbient(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    for (let i = this.ambient.length - 1; i >= 0; i--) {
+      const g = this.ambient[i];
+      g.life -= ctx.dt;
+      // The air keeps travelling after it is drawn, so nothing sits still.
+      g.x += Math.cos(g.ang) * 190 * ctx.dt;
+      g.y += Math.sin(g.ang) * 190 * ctx.dt;
+      if (g.life <= 0) this.ambient.splice(i, 1);
+    }
+    const speed = Math.abs(sm.vel.x);
+    const rate = 5 + speed * 0.02 + this.gather * 16 + (sm.onGround ? 0 : 4);
+    this.ambientAcc += ctx.dt * rate;
+    while (this.ambientAcc >= 1) {
+      this.ambientAcc -= 1;
+      const c = sm.center;
+      // Upwind of him and off to the side, blowing past.
+      const ang = (sm.facing > 0 ? 0 : Math.PI) + rand(-0.34, 0.34);
+      this.ambient.push({
+        x: c.x - Math.cos(ang) * rand(120, 300) + rand(-40, 40),
+        y: c.y + rand(-140, 110),
+        ang,
+        len: rand(90, 300),
+        curl: rand(-0.5, 0.5),
+        off: 0,
+        width: rand(5, 15) * (1 + this.gather),
+        life: rand(0.45, 0.95), max: 0.95,
+        seed: Math.floor(rand(0, 9999)),
+      });
+    }
+    if (this.ambient.length > 34) this.ambient.splice(0, this.ambient.length - 34);
+  }
+
   private addMarks(ctx: WeaponCtx): void {
     const mv = this.move;
     const h = ctx.sm.pose.handR;
@@ -373,16 +433,31 @@ export class Wind extends MeleeWeapon {
       // is three separate curved blades of air with paper between them. Short
       // marks bunched at his hand read as a scribble, which is what they were.
       this.gusts.push({
-        x: h.x + Math.cos(a) * 54, y: h.y + Math.sin(a) * 54,
+        x: h.x + Math.cos(a) * 42, y: h.y + Math.sin(a) * 42,
         ang: a + t * 0.42 * f,
-        len: reach * (1.7 + Math.abs(t) * 0.55),
+        len: reach * (0.9 + Math.abs(t) * 0.28),
         curl: curl * (0.85 + Math.abs(t) * 1.1),
         off: t * (44 + (mv.thick ?? 26) * 0.5),
         width: 20 + (mv.thick ?? 26) * 0.5,
         life: 0.34, max: 0.34, seed: Math.floor(rand(0, 9999)),
       });
     }
-    if (this.gusts.length > 22) this.gusts.splice(0, this.gusts.length - 22);
+    // A second, looser set thrown further down the same line, so a cut reads
+    // as weather arriving rather than as three parallel marks.
+    for (let i = 0; i < n + 2; i++) {
+      const t = (i / (n + 1) - 0.5) * 1.5;
+      this.gusts.push({
+        x: h.x + Math.cos(a) * (reach * 0.34) + rand(-30, 30),
+        y: h.y + Math.sin(a) * (reach * 0.34) + rand(-40, 40),
+        ang: a + t * 0.6 * f,
+        len: reach * (0.5 + Math.random() * 0.45),
+        curl: curl * (1.2 + Math.abs(t) * 1.4),
+        off: t * (70 + (mv.thick ?? 26) * 0.6),
+        width: 9 + (mv.thick ?? 26) * 0.28,
+        life: 0.4, max: 0.4, seed: Math.floor(rand(0, 9999)),
+      });
+    }
+    if (this.gusts.length > 40) this.gusts.splice(0, this.gusts.length - 40);
     ctx.particles.streaks(
       h.x + Math.cos(a) * reach * 0.7, h.y + Math.sin(a) * reach * 0.7,
       4, a, 1.1, 70,
@@ -402,6 +477,11 @@ export class Wind extends MeleeWeapon {
     const sm = ctx.sm;
     const cx = sm.center.x, cy = sm.center.y;
     c.save();
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
+    // The weather first, behind everything, so he is standing *in* it.
+    for (const g of this.ambient) this.drawGust(sk, g);
+    c.globalAlpha = 1;
     c.strokeStyle = '#000';
     c.globalAlpha = 0.34 + this.gather * 0.5;
     c.lineWidth = 2 + this.gather * 1.6;

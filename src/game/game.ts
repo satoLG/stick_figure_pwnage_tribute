@@ -738,6 +738,7 @@ export class Game {
     this.sm.headHidden = this.weapon.hidesHead;
     this.sm.bodyHidden = this.weapon.hidesBody;
     this.sm.headScale = this.weapon.headScale;
+    this.sm.jumpBoost = this.weapon.jumpBoost;
     // Weapons that own the whole body - a charge-up, a heavy wind-up - say so
     // here, every frame, so dropping the stance is just saying nothing.
     this.sm.setStance(this.weapon.stance(wctx));
@@ -843,6 +844,7 @@ export class Game {
     this.sm.headHidden = false;
     this.sm.bodyHidden = false;
     this.sm.headScale = 1;
+    this.sm.jumpBoost = 1;
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.update(dt, this.terrain);

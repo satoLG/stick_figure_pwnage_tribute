@@ -212,6 +212,13 @@ export class Stickman {
 
   private coyote = 0;
   private jumpBuffer = 0;
+  /**
+   * How much of a jump the thing in his hands gives him. One, for everything
+   * that is not the wind: what carries him up there is the air itself, and it
+   * should be visible from the first press that this one leaves the ground
+   * differently from the rest.
+   */
+  jumpBoost = 1;
   private airJumps = 1;
   private maxAirJumps = 1;
   /** Counts down through a wall kick; drives the pose that sells the push-off. */
@@ -383,7 +390,7 @@ export class Stickman {
     // key is the throttle, handled with gravity below.
     if (this.jumpBuffer > 0 && this.hoverT < 0.5 && !airborneOnWings) {
       if (this.coyote > 0) {
-        this.vel.y = -JUMP_V;
+        this.vel.y = -JUMP_V * this.jumpBoost;
         this.jumpBuffer = 0; this.coyote = 0;
         this.onGround = false;
         this.justJumped = true;
@@ -393,7 +400,7 @@ export class Stickman {
         // which is nearly all lift and only a nudge of push. The nudge is
         // deliberately small - see WALL_JUMP_PUSH - so he can steer straight
         // back into the wall and take another one, and climb the whole face.
-        this.vel.y = -WALL_JUMP_V;
+        this.vel.y = -WALL_JUMP_V * this.jumpBoost;
         this.vel.x = -this.onWall * WALL_JUMP_PUSH;
         this.jumpBuffer = 0;
         // The air jumps come back with it, so a kick and a somersault stack.
@@ -410,7 +417,7 @@ export class Stickman {
         this.addGhostBurst(0.22);
       } else if (this.airJumps > 0) {
         this.airJumps--;
-        this.vel.y = -AIR_JUMP_V;
+        this.vel.y = -AIR_JUMP_V * this.jumpBoost;
         this.jumpBuffer = 0;
         this.justJumped = true;
         // A full somersault on the second jump.

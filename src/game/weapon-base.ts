@@ -236,6 +236,13 @@ export abstract class Weapon {
   /** How big the head should be drawn; a shout swells it. */
   get headScale(): number { return 1; }
 
+  /**
+   * How much of a jump this weapon gives him. One for everything with weight
+   * in it; the wind is carrying him rather than being carried, so it is the
+   * one thing here that gets to leave the ground differently from the rest.
+   */
+  get jumpBoost(): number { return 1; }
+
   onEquip(): void {
     this.charge = 0;
     this.anim = 0;
