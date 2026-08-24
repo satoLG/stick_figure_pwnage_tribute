@@ -13,7 +13,7 @@ import {
 import type { Sketch } from '../core/sketch';
 import { MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { BLASTS, Projectile } from './projectiles';
-import { type HandTargets, type Stance } from './stickman';
+import { HEAD_R, type HandTargets, type Stance } from './stickman';
 import { grip, gripAt, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
 
 /** A rough ring, the way everything round in this game is drawn. */
@@ -942,6 +942,8 @@ const STAFF_RANGE = 1500;
  * - which is the joke, and the reason both of them get to exist.
  */
 const STAFF_BORE = 74;
+/** How far above his fist the head of the staff sits. */
+const STAFF_HEAD = 104;
 
 /** Seconds a summoned set hangs in the air before it starts going in. */
 const SIGIL_HOLD = 1;
@@ -993,8 +995,28 @@ export class ArcaneStaff extends Weapon {
     return waiting > 0 ? `${waiting} HELD` : null;
   }
 
-  /** The head of the staff, where everything comes out of. */
-  private head(ctx: WeaponCtx): Vec2 { return grip(ctx, 74); }
+  /**
+   * How the staff is held.
+   *
+   * Standing up in his fist, not levelled at the crosshair. A wizard plants
+   * his staff; pointing it down the aim line like a rifle read as a man with
+   * a stick and threw away the whole silhouette. It leans a hand's width
+   * forward, and a little further while something is coming out of it, and
+   * that is the only thing the aim does to it - the shot still leaves the top
+   * in whatever direction he is pointing.
+   */
+  private staffAngle(ctx: WeaponCtx): number {
+    const f = ctx.sm.facing;
+    const k = Math.max(this.charge, this.beam > 0 ? 1 : 0, this.cast);
+    return -Math.PI / 2 + f * (0.13 + k * 0.16);
+  }
+
+  /** The head of the staff, where everything comes out of: the top of it. */
+  private head(ctx: WeaponCtx): Vec2 {
+    const h = ctx.sm.pose.handR;
+    const a = this.staffAngle(ctx);
+    return { x: h.x + Math.cos(a) * STAFF_HEAD, y: h.y + Math.sin(a) * STAFF_HEAD };
+  }
 
   protected release(ctx: WeaponCtx, power: number): void {
     if (power < this.tapMax) { this.bolts(ctx); return; }
@@ -1120,10 +1142,15 @@ export class ArcaneStaff extends Weapon {
 
   private width(k: number): number { return (58 * this.power) * (0.55 + k * 0.45); }
 
-  /** Both hands on the shaft, and the whole thing levelled at the target. */
+  /** Both fists round the standing shaft, one a span below the other. */
   hands(ctx: WeaponCtx): HandTargets {
     const k = Math.max(this.charge, this.beam > 0 ? 1 : 0);
-    return { main: grip(ctx, 36 + k * 4, -2), off: grip(ctx, 20, 13) };
+    const main = grip(ctx, 30 + k * 5, -4);
+    const a = this.staffAngle(ctx);
+    return {
+      main,
+      off: { x: main.x - Math.cos(a) * 26, y: main.y - Math.sin(a) * 26 },
+    };
   }
 
   override stance(ctx: WeaponCtx): Stance | null {
@@ -1135,24 +1162,75 @@ export class ArcaneStaff extends Weapon {
       : { kind: 'hover', weight: w * 0.6, lean: -0.08, hip: 2 };
   }
 
+  /**
+   * The hat.
+   *
+   * A brim and a cone with a flop in the point of it, drawn white with an ink
+   * edge so it reads over the black wall like everything else. It is the one
+   * piece of costume in the game and it earns its place: a stick figure with a
+   * stick in its hand is a man with a stick, and the same figure in a pointed
+   * hat is a wizard before he has cast anything.
+   */
+  private drawHat(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+    const p = sm.pose.head;
+    const f = sm.facing;
+    const R = HEAD_R;
+    // The brim sits across the top third of the skull and tips with the lean.
+    const tilt = -0.14 * f + sm.pose.bodyAngle * 0.5;
+    const cs = Math.cos(tilt), sn = Math.sin(tilt);
+    const at = (dx: number, dy: number): Vec2 =>
+      ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
+
+    c.save();
+    c.strokeStyle = '#000';
+    // Cone: up off the brim and hooking forward at the point, which is what
+    // keeps it from reading as a traffic cone.
+    const tip = at(f * R * 1.9, -R * 3.9);
+    const cone = [
+      at(-R * 1.25, -R * 0.95), at(-R * 0.3, -R * 2.8), tip,
+      at(f * R * 0.75, -R * 2.6), at(R * 1.25, -R * 0.88),
+    ];
+    c.fillStyle = '#fff';
+    sk.polyPath(cone, 1.2);
+    c.fill();
+    sk.poly(cone, 3.4, false, 1.2);
+    // Brim: a lens across the head, wider than the hat is.
+    const brim = [
+      at(-R * 2.05, -R * 0.72), at(-R * 0.7, -R * 1.18), at(R * 0.8, -R * 1.16),
+      at(R * 2.1, -R * 0.68), at(R * 0.8, -R * 0.4), at(-R * 0.7, -R * 0.42),
+    ];
+    c.fillStyle = '#fff';
+    sk.polyPath(brim, 1.1);
+    c.fill();
+    sk.poly(brim, 3.4, false, 1.1);
+    // The band round the base of the cone.
+    sk.line(at(-R * 1.1, -R * 1.14), at(R * 1.1, -R * 1.1), 2.6, 1, 0.5);
+    c.restore();
+  }
+
   draw(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
-    const a = ctx.sm.pose.aim;
+    const a = this.staffAngle(ctx);
     const ca = Math.cos(a), sa = Math.sin(a);
     const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
 
-    // --- the staff ----------------------------------------------------------
+    this.drawHat(sk, ctx);
+
+    // --- the staff, standing up in his fist ---------------------------------
     c.strokeStyle = '#000';
-    sk.line(at(-34, 0), at(58, 0), 4.2, 3, 0.7);
-    sk.line(at(-34, -4), at(-34, 4), 3.4, 1, 0.4);
+    sk.line(at(-46, 0), at(STAFF_HEAD - 16, 0), 4.2, 3, 0.7);
+    sk.line(at(-46, -4), at(-46, 4), 3.4, 1, 0.4);
     // The head: two horns curling forward round the space the orb sits in.
     for (const side of [-1, 1]) {
-      sk.curve(at(58, side * 3), at(72, side * 15), at(86, side * 5), 3, 0.6);
+      sk.curve(at(STAFF_HEAD - 16, side * 3), at(STAFF_HEAD - 2, side * 15),
+        at(STAFF_HEAD + 12, side * 5), 3, 0.6);
     }
-    sk.line(at(52, -5), at(52, 5), 3, 1, 0.4);
+    sk.line(at(STAFF_HEAD - 22, -5), at(STAFF_HEAD - 22, 5), 3, 1, 0.4);
 
-    const head = at(74, 0);
+    const head = at(STAFF_HEAD, 0);
 
     // --- charging: the two rings and the ball between the horns -------------
     if (this.charge > 0.01) {
