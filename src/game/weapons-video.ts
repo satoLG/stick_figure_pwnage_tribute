@@ -1932,6 +1932,8 @@ const ROD_HOLD = 0.5;
 const LASER_TIME = 0.45;
 /** The blade that slides out of the forearm on the ground. */
 const MECHA_BLADE = 76;
+/** How far the hand cannon telescopes out of his palm when he opens fire. */
+const CANNON_LEN = 30;
 /** Where the four rods point, relative to the aim - two forward, two back. */
 const ROD_ANGLES = [-2.35, -0.95, 0.95, 2.35];
 
@@ -1958,6 +1960,8 @@ export class Mecha extends Weapon {
   private struck = false;
   private flashT = 0;
   private auraSfx = 0;
+  /** 0..1 how far the hand cannon has telescoped out of his palm. */
+  private cannon = 0;
 
   override onEquip(): void {
     super.onEquip();
@@ -1983,7 +1987,15 @@ export class Mecha extends Weapon {
   // ------------------------------------------------------------- attacking ---
 
   protected release(ctx: WeaponCtx): void {
-    if (ctx.sm.onGround) this.swing(ctx); else this.shoot(ctx);
+    // The blade comes out whenever there is masonry inside its reach, whether
+    // or not his feet are down. Gating it on `onGround` meant hovering an inch
+    // above the rubble at the foot of the wall handed him the pea-shooter
+    // while the thing he wanted to cut was an arm's length away.
+    const hand = grip(ctx, 40);
+    const a = this.aimFrom(ctx, hand);
+    const close = ctx.terrain.strikePoint(hand.x, hand.y, Math.cos(a), Math.sin(a),
+      MECHA_BLADE + 46, 4);
+    if (close) this.swing(ctx); else this.shoot(ctx);
   }
 
   /** On the floor: the blade slides out of the arm and he cuts with it. */
@@ -1996,19 +2008,25 @@ export class Mecha extends Weapon {
     ctx.sfx('swing', rand(1.05, 1.2));
   }
 
-  /** In the air: small, fast, cheap rounds, one every few frames. */
+  /**
+   * At range: a short barrel telescopes out of the palm and puts fast rounds
+   * down it. A machine does not carry a pistol - the gun *is* the hand, and
+   * watching a stub of cannon slide out of it every time he opens fire is the
+   * difference between a mech and a man in a suit.
+   */
   private shoot(ctx: WeaponCtx): void {
     this.slashing = false;
-    this.cooldown = 0.085;
+    this.cooldown = 0.1;
     this.timer = this.cooldown;
     this.startAnim(0.14);
-    const muzzle = grip(ctx, 46);
-    const a = this.aimFrom(ctx, muzzle) + rand(-0.035, 0.035);
-    this.flashT = 0.05;
-    ctx.sfx('rifle', rand(1.28, 1.45));
-    ctx.sm.applyRecoil(0.22, a, 6);
-    ctx.shake(1.4);
-    this.hitscan(ctx, muzzle, a, 1300, 5.4);
+    this.cannon = 1;
+    const muzzle = grip(ctx, 46 + CANNON_LEN);
+    const a = this.aimFrom(ctx, muzzle) + rand(-0.03, 0.03);
+    this.flashT = 0.055;
+    ctx.sfx('rifle', rand(1.2, 1.36));
+    ctx.sm.applyRecoil(0.3, a, 9);
+    ctx.shake(2.2);
+    this.hitscan(ctx, muzzle, a, 1300, 10.5);
   }
 
   /** The direction the forearm blade is pointing this frame. */
@@ -2077,6 +2095,8 @@ export class Mecha extends Weapon {
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
     this.flashT = Math.max(0, this.flashT - ctx.dt);
+    // The barrel slides back into the palm as soon as he stops firing.
+    this.cannon = Math.max(0, this.cannon - ctx.dt * 2.6);
     if (this.anim <= 0) this.slashing = false;
     if (this.slashing && !this.struck && this.t > 0.42) { this.struck = true; this.cut(ctx); }
 
@@ -2249,11 +2269,29 @@ export class Mecha extends Weapon {
       sk.line(at(-26, -5), at(-26, 5), 3, 1, 0.5);
     }
 
-    // --- muzzle flash off the flying shots ----------------------------------
-    if (this.flashT > 0) {
-      const m = grip(ctx, 46);
+    // --- the hand cannon, and the flash off the end of it -------------------
+    if (this.cannon > 0.02) {
+      const k = this.cannon;
+      const hand = sm.pose.handR;
+      const a = sm.pose.aim;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const at = (d: number, o: number): Vec2 =>
+        ({ x: hand.x + ca * d - sa * o, y: hand.y + sa * d + ca * o });
+      const L = CANNON_LEN * k;
       c.strokeStyle = '#000';
-      this.muzzle(sk, m.x, m.y, 16, 7101);
+      // A stub of barrel telescoped out of the palm: two rings and a muzzle,
+      // white inside so it reads over the wall he is shooting at.
+      const tube = [at(2, -8), at(L, -6.5), at(L, 6.5), at(2, 8)];
+      c.fillStyle = '#fff';
+      sk.polyPath(tube, 0.9);
+      c.fill();
+      sk.poly(tube, 3, false, 0.9);
+      sk.line(at(L * 0.42, -7), at(L * 0.42, 7), 2.4, 1, 0.4);
+      sk.line(at(L, -9), at(L, 9), 3.2, 1, 0.5);
+      if (this.flashT > 0) {
+        const m = at(L + 6, 0);
+        this.muzzle(sk, m.x, m.y, 19, 7101);
+      }
     }
 
     // --- and the four beams converging on one point -------------------------
