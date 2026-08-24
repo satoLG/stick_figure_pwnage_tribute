@@ -1400,17 +1400,31 @@ export class Shinobi extends Weapon {
   /** Counts down through the exhale, which owns the whole pose while it runs. */
   private breath = 0;
   private throwT = 0;
+  /** Throws since the last shuriken. Two of blades, then the big one. */
+  private throws = 0;
+  /** Set while a shuriken rather than a pair of kunai is leaving his hand. */
+  private starT = 0;
 
-  override onEquip(): void { super.onEquip(); this.breath = 0; }
+  override onEquip(): void { super.onEquip(); this.breath = 0; this.throws = 0; }
   override onUnequip(ctx: WeaponCtx): void { super.onUnequip(ctx); this.breath = 0; }
+
+  override get comboLabel(): string | null {
+    if (this.breath > 0) return 'KATON';
+    return this.throws % 3 === 2 ? 'SHURIKEN NEXT' : null;
+  }
 
   protected release(ctx: WeaponCtx, power: number): void {
     if (power < SEAL_TAP) { this.kunai(ctx); return; }
     this.fireball(ctx, power);
   }
 
-  /** Two blades, one after the other, roughly where he is looking. */
+  /**
+   * Two blades, one after the other - and then, on the third throw, the thing
+   * the first two were setting up. Counting is the whole rhythm of the slot:
+   * blade, blade, star, and the star opens a hole the kunai never could.
+   */
   private kunai(ctx: WeaponCtx): void {
+    if (this.throws++ % 3 === 2) { this.shuriken(ctx); return; }
     this.cooldown = 0.36;
     this.throwT = 0.26;
     this.startAnim(0.26);
@@ -1431,6 +1445,26 @@ export class Shinobi extends Weapon {
       });
     }
     ctx.shake(2);
+  }
+
+  /** The third throw: one big star, thrown flat and turning hard. */
+  private shuriken(ctx: WeaponCtx): void {
+    this.cooldown = 0.72;
+    this.throwT = 0.34;
+    this.starT = 0.34;
+    this.startAnim(0.34);
+    const from = grip(ctx, 46, 0);
+    const a = this.aimFrom(ctx, from) + rand(-0.03, 0.03);
+    ctx.sm.applyRecoil(0.6, a, 40);
+    ctx.projectiles.push(new Projectile({
+      x: from.x, y: from.y,
+      vx: Math.cos(a) * 1050, vy: Math.sin(a) * 1050,
+      kind: 'shuriken', gravity: 90, radius: 26, life: 3.4, blast: BLASTS.shuriken,
+    }));
+    ctx.sfx('swing', 0.8);
+    ctx.sfx('stab', 0.7);
+    ctx.shake(6);
+    ctx.particles.streaks(from.x, from.y, 5, a, 0.5, 62);
   }
 
   /**
@@ -1475,6 +1509,7 @@ export class Shinobi extends Weapon {
   protected override tick(ctx: WeaponCtx): void {
     this.breath = Math.max(0, this.breath - ctx.dt);
     this.throwT = Math.max(0, this.throwT - ctx.dt);
+    this.starT = Math.max(0, this.starT - ctx.dt);
   }
 
   /**
@@ -1547,22 +1582,12 @@ export class Shinobi extends Weapon {
       sk.polyPath(ring(cx, cy, R, 16, 0), 1.2);
       c.stroke();
 
-      // Inside it: two hands pressed together, the fingers changing every few
-      // frames so it reads as a sequence of seals rather than one pose held.
-      const seal = Math.floor(ctx.time * 7) % 3;
-      c.lineWidth = 2.6;
-      const s = R * 0.62;
-      sk.line({ x: cx - s * 0.7, y: cy + s * 0.9 }, { x: cx - s * 0.15, y: cy - s * 0.1 }, 2.8, 2, 0.5);
-      sk.line({ x: cx + s * 0.7, y: cy + s * 0.9 }, { x: cx + s * 0.15, y: cy - s * 0.1 }, 2.8, 2, 0.5);
-      for (let i = 0; i < 3; i++) {
-        const up = seal === 0 ? i !== 1 : seal === 1 ? i === 1 : i === 0;
-        const x0 = cx + (i - 1) * s * 0.34;
-        sk.line(
-          { x: x0, y: cy - s * 0.05 },
-          { x: x0 + (up ? 0 : (i - 1) * s * 0.3), y: cy - (up ? s * 0.85 : s * 0.35) },
-          2.4, 1, 0.4,
-        );
-      }
+      // Inside it: two *hands*. The whole reason for magnifying this corner of
+      // the drawing is that the seals are made of fingers, and three sticks in
+      // a row said nothing at all - so both palms are drawn as real outlined
+      // hands with five fingers each, folding through a different seal every
+      // few frames.
+      this.drawSeal(sk, ctx, cx, cy, R * 1.02);
       // A tick or two of "this is moving", and the charge ring round the rim.
       c.lineWidth = 2.2;
       sk.burst(cx, cy, 5, R * 1.08, R * (1.25 + k * 0.5), 2.2, TAU, 0, 8101);
@@ -1586,17 +1611,148 @@ export class Shinobi extends Weapon {
       c.restore();
     }
 
-    // --- a blade in hand between throws -------------------------------------
+    // --- what is in his hand between throws ---------------------------------
     if (this.throwT > 0.02 && this.charge < 0.02 && this.breath <= 0) {
       const h = sm.pose.handR;
       const a = sm.pose.aim;
       const ca = Math.cos(a), sa = Math.sin(a);
       const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
       c.strokeStyle = '#000';
-      sk.poly([at(20, 0), at(6, -5), at(-2, -3), at(-2, 3), at(6, 5)], 2.2, false, 0.4);
-      sk.line(at(-2, 0), at(-14, 0), 2.6, 1, 0.4);
-      sk.polyPath(ring(at(-16, 0).x, at(-16, 0).y, 4, 7, 0), 0.7);
-      c.stroke();
+      if (this.starT > 0.02) {
+        // The star, held flat between two fingers on its way out.
+        const r = 20;
+        const star: Vec2[] = [];
+        for (let i = 0; i < 8; i++) {
+          const ang = (i / 8) * TAU + this.starT * 9;
+          const rr = i % 2 === 0 ? r : r * 0.34;
+          star.push(at(Math.cos(ang) * rr * 0.4 + 10, Math.sin(ang) * rr));
+        }
+        c.fillStyle = '#fff';
+        sk.polyPath(star, 1);
+        c.fill();
+        sk.poly(star, 3, false, 1);
+      } else {
+        sk.poly([at(20, 0), at(6, -5), at(-2, -3), at(-2, 3), at(6, 5)], 2.2, false, 0.4);
+        sk.line(at(-2, 0), at(-14, 0), 2.6, 1, 0.4);
+        sk.polyPath(ring(at(-16, 0).x, at(-16, 0).y, 4, 7, 0), 0.7);
+        c.stroke();
+      }
+    }
+  }
+
+  /**
+   * The forehead protector.
+   *
+   * A cloth band round the skull with a rectangle of metal set into the front
+   * of it and two tails streaming off the knot at the back - the one piece of
+   * costume that says which kind of ninja this is before he has thrown
+   * anything. The tails blow off whatever he is doing, so they lag behind a
+   * run and lift while he is winding up a breath.
+   */
+  override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+    const p = sm.pose.head;
+    const f = sm.facing;
+    const R = HEAD_R;
+    const tilt = sm.pose.bodyAngle * 0.6;
+    const cs = Math.cos(tilt), sn = Math.sin(tilt);
+    const at = (dx: number, dy: number): Vec2 =>
+      ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
+
+    c.save();
+    c.strokeStyle = '#000';
+    // The two tails first, so the band sits over the knot they come out of.
+    const blow = 40 + Math.abs(sm.vel.x) * 0.06 + this.charge * 46 + (this.breath > 0 ? 52 : 0);
+    const sway = Math.sin(ctx.time * 4.4) * 7;
+    for (const side of [-1, 1]) {
+      const root = at(-f * R * 0.95, -R * 0.15 + side * R * 0.22);
+      const mid = { x: root.x - f * blow * 0.55, y: root.y + side * 9 + sway * 0.5 };
+      const tip = { x: root.x - f * blow, y: root.y + side * 16 + sway };
+      c.fillStyle = '#fff';
+      sk.ribbonPath(root, mid, tip, 9, 0.3, 0.6);
+      c.fill();
+      sk.ribbonPath(root, mid, tip, 9, 0.3, 0.6);
+      sk.rim(2.6, 0.3, 8401 + side);
+    }
+    // The band: a strip across the forehead, white with an ink edge.
+    const band = [
+      at(-R * 1.12, -R * 0.36), at(R * 1.12, -R * 0.36),
+      at(R * 1.1, -R * 0.94), at(-R * 1.1, -R * 0.94),
+    ];
+    c.fillStyle = '#fff';
+    sk.polyPath(band, 0.9);
+    c.fill();
+    sk.poly(band, 3, false, 0.9);
+    // The plate, set into the front of it and turned the way he is facing.
+    const plate = [
+      at(f * R * 0.06 - R * 0.52, -R * 0.42), at(f * R * 0.06 + R * 0.52, -R * 0.42),
+      at(f * R * 0.06 + R * 0.5, -R * 0.88), at(f * R * 0.06 - R * 0.5, -R * 0.88),
+    ];
+    c.fillStyle = '#fff';
+    sk.polyPath(plate, 0.7);
+    c.fill();
+    sk.poly(plate, 3.2, false, 0.7);
+    // A mark scratched into it - a spiral leaf, at this size two strokes.
+    sk.curve(at(f * R * 0.06 - R * 0.2, -R * 0.5), at(f * R * 0.06 + R * 0.24, -R * 0.62),
+      at(f * R * 0.06 - R * 0.06, -R * 0.78), 2, 0.4);
+    c.restore();
+  }
+
+  /**
+   * Two hands folding through hand seals, drawn as hands.
+   *
+   * Every seal in the sequence is the same pair of palms with different
+   * fingers up, which is exactly how the real thing works and is why the inset
+   * exists at all - at figure scale you would see nothing.
+   */
+  private drawSeal(sk: Sketch, ctx: WeaponCtx, cx: number, cy: number, s: number): void {
+    const c = sk.ctx;
+    const seal = Math.floor(ctx.time * 6) % 4;
+    // Which fingers stand up on this seal, thumb outwards. Ram, snake, tiger,
+    // and the one where everything folds in.
+    const UP: readonly (readonly boolean[])[] = [
+      [false, true, true, false, false],
+      [true, true, true, true, true],
+      [false, true, true, true, true],
+      [true, false, false, false, false],
+    ];
+    const up = UP[seal];
+    c.strokeStyle = '#000';
+    for (const side of [-1, 1]) {
+      // The palm: a squarish outlined hand, its back to us, tilted inwards.
+      const px = cx + side * s * 0.3;
+      const py = cy + s * 0.3;
+      const palm = [
+        { x: px - side * s * 0.26, y: py + s * 0.4 },
+        { x: px - side * s * 0.32, y: py - s * 0.2 },
+        { x: px + side * s * 0.2, y: py - s * 0.34 },
+        { x: px + side * s * 0.28, y: py + s * 0.3 },
+      ];
+      c.fillStyle = '#fff';
+      sk.polyPath(palm, 0.7);
+      c.fill();
+      sk.poly(palm, 2.4, false, 0.7);
+      // Wrist and forearm heading out of the bottom of the panel.
+      sk.line({ x: px - side * s * 0.06, y: py + s * 0.4 },
+        { x: px - side * s * 0.2, y: cy + s * 1.15 }, 2.8, 1, 0.5);
+      // Four fingers and a thumb. The thumb comes off the inside edge.
+      for (let i = 0; i < 4; i++) {
+        const t = (i + 0.5) / 4;
+        const bx = px - side * s * 0.3 + side * t * s * 0.52;
+        const by = py - s * 0.24 - t * s * 0.1;
+        const len = up[i + 1] ? s * 0.78 : s * 0.28;
+        const bend = up[i + 1] ? 0 : side * s * 0.26;
+        sk.line({ x: bx, y: by }, { x: bx + bend, y: by - len }, 2.2, 1, 0.4);
+        if (!up[i + 1]) {
+          // Folded: the second knuckle turns back down towards the palm.
+          sk.line({ x: bx + bend, y: by - len }, { x: bx + bend * 0.7, y: by - len * 0.1 }, 2, 1, 0.4);
+        }
+      }
+      const tx = px - side * s * 0.32, ty = py + s * 0.04;
+      sk.line({ x: tx, y: ty },
+        { x: tx - side * (up[0] ? s * 0.1 : s * 0.34), y: ty - (up[0] ? s * 0.42 : s * 0.06) },
+        2.4, 1, 0.4);
     }
   }
 

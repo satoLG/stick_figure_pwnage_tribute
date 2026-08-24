@@ -13,7 +13,8 @@ export interface Blast {
 }
 
 export type ProjectileKind =
-  | 'rocket' | 'shell' | 'missile' | 'orb' | 'fireball' | 'kunai' | 'bolt' | 'pellet';
+  | 'rocket' | 'shell' | 'missile' | 'orb' | 'fireball' | 'kunai' | 'shuriken'
+  | 'bolt' | 'pellet';
 
 export class Projectile {
   x: number; y: number;
@@ -239,17 +240,46 @@ export class Projectile {
         break;
       }
       case 'kunai': {
-        // A little throwing blade, end over end: leaf point, wrapped grip and
-        // a ring on the butt.
+        // A little throwing blade: leaf point, wrapped grip and a ring on the
+        // butt. Thrown flat and point first - it does not tumble. A blade
+        // turning end over end reads as dropped rather than thrown, and a
+        // shinobi does not drop them.
         const r = this.radius;
-        c.rotate(-this.angle + this.spin);
         sk.poly([
           { x: r * 2.6, y: 0 }, { x: r * 0.6, y: -r * 0.75 }, { x: -r * 0.4, y: -r * 0.5 },
           { x: -r * 0.4, y: r * 0.5 }, { x: r * 0.6, y: r * 0.75 },
         ], 2.2, false, 0.4);
         sk.line({ x: -r * 0.4, y: 0 }, { x: -r * 2.2, y: 0 }, 2.8, 1, 0.4);
-        sk.polyPath(ring(r * 0.55, 7, this.spin), 0.8);
+        sk.polyPath(ring(r * 0.55, 7, 0).map((p) => ({ x: p.x - r * 2.2, y: p.y })), 0.8);
         c.stroke();
+        // A couple of speed lines off the back of it, since it is not spinning.
+        sk.line({ x: -r * 2.6, y: -r * 0.5 }, { x: -r * 5.2, y: -r * 0.7 }, 1.6, 1, 0.4);
+        sk.line({ x: -r * 2.6, y: r * 0.5 }, { x: -r * 5.4, y: r * 0.8 }, 1.6, 1, 0.4);
+        break;
+      }
+      case 'shuriken': {
+        // The big one. Four points round a hole, turning hard - the one thing
+        // in his hand that is *supposed* to spin.
+        const r = this.radius;
+        c.rotate(-this.angle + this.spin * 2.6);
+        const star: Vec2[] = [];
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * TAU;
+          const rr = i % 2 === 0 ? r : r * 0.34;
+          star.push({ x: Math.cos(a) * rr, y: Math.sin(a) * rr });
+        }
+        c.fillStyle = '#fff';
+        sk.polyPath(star, 1.1);
+        c.fill();
+        sk.poly(star, 3.4, false, 1.1);
+        // The hole in the middle, and an edge line down each point.
+        sk.polyPath(ring(r * 0.16, 8, 0), 0.6);
+        c.stroke();
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * TAU;
+          sk.line({ x: Math.cos(a) * r * 0.34, y: Math.sin(a) * r * 0.34 },
+            { x: Math.cos(a) * r * 0.9, y: Math.sin(a) * r * 0.9 }, 1.8, 1, 0.4);
+        }
         break;
       }
       case 'bolt': {
@@ -386,6 +416,9 @@ export const BLASTS: Record<string, Blast> = {
   orb: { radius: 31, shake: 7, flash: 0.2, debris: 16, sfx: 'explosion', bites: 5 },
   /** A thrown blade: barely a mark, but there are always two of them. */
   kunai: { radius: 15, shake: 4, flash: 0.08, debris: 7, sfx: 'explosion', bites: 3 },
+  // Every third throw. It is not a bigger kunai - it is the reason you counted
+  // the first two.
+  shuriken: { radius: 62, shake: 15, flash: 0.24, debris: 30, sfx: 'explosion', bites: 6 },
   /** One discharge earthing itself into the masonry. */
   bolt: { radius: 27, shake: 8, flash: 0.26, debris: 13, sfx: 'explosion', bites: 5 },
   /** The fireball, which is most of a doorway on its own. */
