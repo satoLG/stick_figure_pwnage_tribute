@@ -116,11 +116,22 @@ export abstract class MeleeWeapon extends Weapon {
   private chain = 0;
   private idle = 0;
   private struck = false;
+  /**
+   * A held chain, once it has started, is a committed sequence.
+   *
+   * Without this the swordsman's charge falls apart the instant it leaves the
+   * ground: the leap that opens it makes him airborne, `pickMode` reads that
+   * as the air chain, the chain counter resets, and the three cuts he jumped
+   * across the room to land never come out. A hold chain therefore keeps hold
+   * of the mode until it has run all the way round.
+   */
+  private holdLock = false;
 
   override onEquip(): void {
     super.onEquip();
     this.chain = 0;
     this.combo = 0;
+    this.holdLock = false;
     this.mode = 'ground';
     this.move = this.sets.ground[0] ?? FALLBACK;
   }
@@ -129,6 +140,7 @@ export abstract class MeleeWeapon extends Weapon {
     super.onUnequip(ctx);
     this.combo = 0;
     this.chain = 0;
+    this.holdLock = false;
   }
 
   override get comboLabel(): string | null {
@@ -144,6 +156,7 @@ export abstract class MeleeWeapon extends Weapon {
    * a real run, then a held trigger; standing still is the default chain.
    */
   private pickMode(ctx: WeaponCtx): MeleeMode {
+    if (this.holdLock) return 'hold';
     if (!ctx.sm.onGround) return 'air';
     if (Math.abs(ctx.sm.vel.x) > RUN_ATTACK_SPEED) return 'run';
     if (this.heldFor > HOLD_TIME) return 'hold';
@@ -157,6 +170,8 @@ export abstract class MeleeWeapon extends Weapon {
     const mv = list[this.chain % list.length] ?? FALLBACK;
 
     this.chain++;
+    // A multi-step hold chain holds the mode until it wraps back to its start.
+    this.holdLock = mode === 'hold' && list.length > 1 && this.chain % list.length !== 0;
     this.combo++;
     this.move = mv;
     this.struck = false;
@@ -194,6 +209,7 @@ export abstract class MeleeWeapon extends Weapon {
       if (this.idle > COMBO_WINDOW && (this.chain !== 0 || this.combo !== 0)) {
         this.chain = 0;
         this.combo = 0;
+        this.holdLock = false;
       }
       this.idleTick(ctx);
       return;

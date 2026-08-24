@@ -533,11 +533,31 @@ const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
       hitSfx: 'slam', hitPitch: 0.7, name: 'PLUNGE',
     },
   ],
+  // Held, it stops being one big swing and becomes a charge: he throws himself
+  // a long way forward turning over twice with the sword out, lands on the
+  // wall, and puts three cuts through it before the momentum runs out. Each of
+  // the three is a full-weight strike, so the chain is worth crossing the room
+  // for and not just a flourish.
   hold: [
     {
-      from: -2.8, to: 1.6, wind: 0.38, strike: 0.2, anim: 1.15, cooldown: 1.3, reach: 1, thick: 68,
-      heavy: true, spin: 2, hop: 265, dash: 90, flash: 0.55, invert: 0.08, shake: 30, quake: 1.4,
-      hitSfx: 'slam', hitPitch: 0.66, name: 'DOUBLE WHIRLWIND',
+      from: -2.8, to: 1.6, wind: 0.3, strike: 0.18, anim: 0.86, cooldown: 0.1, reach: 1, thick: 66,
+      heavy: true, spin: 2, hop: 250, dash: 1250, slide: 0.5, flash: 0.5, invert: 0.07,
+      shake: 28, quake: 1.3, hitSfx: 'slam', hitPitch: 0.66, name: 'LEAPING WHIRL',
+    },
+    {
+      from: -2.5, to: 1.35, wind: 0.16, strike: 0.16, anim: 0.34, cooldown: 0.04, reach: 1, thick: 70,
+      heavy: true, impact: 1.7, dash: 90, flash: 0.4, invert: 0.05, shake: 24, quake: 1,
+      hitSfx: 'slam', hitPitch: 0.8, name: 'CUT ONE',
+    },
+    {
+      from: 2.4, to: -1.3, wind: 0.14, strike: 0.16, anim: 0.32, cooldown: 0.04, reach: 1, thick: 70,
+      heavy: true, impact: 1.7, dash: 80, flash: 0.4, invert: 0.05, shake: 24, quake: 1,
+      hitSfx: 'slam', hitPitch: 0.88, name: 'CUT TWO',
+    },
+    {
+      from: -2.6, to: 1.5, wind: 0.16, strike: 0.18, anim: 0.44, cooldown: 0.72, reach: 1.05, thick: 82,
+      heavy: true, impact: 2, dash: 110, flash: 0.55, invert: 0.075, shake: 30, quake: 1.5,
+      hitSfx: 'slam', hitPitch: 0.7, name: 'CUT THREE',
     },
   ],
 };
@@ -697,11 +717,25 @@ const HAMMER_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
       hitSfx: 'slam', hitPitch: 0.76, name: 'METEOR',
     },
   ],
+  // Held, the ceremony goes out of it. He stops winding up and just beats the
+  // wall with the thing - forward, back, forward - three times as fast as a
+  // head this size has any right to move, with barely a frame of coil between
+  // them. It is the least dignified attack in the game and the point.
   hold: [
     {
-      from: 2.8, to: -1.45, wind: 0.4, strike: 0.18, anim: 1.1, cooldown: 1.3, reach: 0.98, thick: 96,
-      blast: MAUL_BIG, heavy: true, impact: 2, spin: 1, hop: 235, flash: 0.6, invert: 0.085, shake: 34,
-      quake: 1.7, hitSfx: 'slam', hitPitch: 0.68, name: 'GIANT SWING',
+      from: -2.1, to: 1.15, wind: 0.16, strike: 0.15, anim: 0.34, cooldown: 0.03, reach: 0.98, thick: 84,
+      blast: MAUL_LIGHT, heavy: true, impact: 1.8, flash: 0.4, invert: 0.05, shake: 26, quake: 1.2,
+      hitSfx: 'slam', hitPitch: 1.02, name: 'BATTER',
+    },
+    {
+      from: 2.1, to: -1.1, wind: 0.14, strike: 0.15, anim: 0.32, cooldown: 0.03, reach: 0.98, thick: 84,
+      blast: MAUL_LIGHT, heavy: true, impact: 1.8, flash: 0.4, invert: 0.05, shake: 26, quake: 1.2,
+      hitSfx: 'slam', hitPitch: 0.94, name: 'BATTER BACK',
+    },
+    {
+      from: -2.4, to: 1.3, wind: 0.16, strike: 0.18, anim: 0.46, cooldown: 0.6, reach: 1, thick: 104,
+      blast: MAUL_BIG, heavy: true, impact: 2, flash: 0.6, invert: 0.085, shake: 34, quake: 1.7,
+      hitSfx: 'slam', hitPitch: 0.68, name: 'AND THE LAST ONE',
     },
   ],
 };
@@ -710,12 +744,17 @@ export class Warhammer extends MeleeWeapon {
   readonly id = 3;
   readonly name = 'SMASHER';
   readonly tagline = 'the head is bigger than he is';
-  protected readonly len = 168;
+  protected readonly len = 236;
   protected readonly sets = HAMMER_SETS;
 
-  /** Half the height of the striking face, and how deep the block runs. */
-  private readonly headW = 44;
-  private readonly headD = 56;
+  /**
+   * Half the height of the striking face, and how long the drum runs back off
+   * it. The source's mallet is not a warhammer head on a haft - it is a barrel
+   * as tall as the figure and nearly as long, with a stick out of the back of
+   * it, and no bands, cheeks or claws anywhere on it.
+   */
+  private readonly headW = 74;
+  private readonly headD = 140;
 
   private dragT = 0;
   private scraped = 0;
@@ -738,7 +777,7 @@ export class Warhammer extends MeleeWeapon {
     if (this.dragT < 0.01) return carried;
     // The head is a block hanging off the end of the shaft, so the tip that
     // actually finds the floor is a whole head-depth short of the full length.
-    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - this.headD * 0.6, ctx.sm.facing);
+    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - this.headD * 0.42, ctx.sm.facing);
     return drag === null ? carried : carried + (drag - carried) * this.dragT;
   }
 
@@ -780,32 +819,45 @@ export class Warhammer extends MeleeWeapon {
     const D = this.headD;
 
     c.strokeStyle = '#000';
-    // Haft: one heavy stroke, running well behind his hands so the thing has a
-    // butt to counterweight against.
-    sk.line(at(-46, 0), at(L - D + 8, 0), 6.5, 2, 0.6);
-    sk.line(at(-46, -8), at(-46, 8), 5, 1, 0.4);
-    // The collar the haft disappears into.
-    sk.poly([at(L - D - 20, -15), at(L - D, -22), at(L - D, 22), at(L - D - 20, 15)], 3.6, false, 0.5);
+    // Haft: one plain stroke into the back of the drum. Thin, and short next
+    // to what is on the end of it - in the source it is almost an afterthought.
+    sk.line(at(-38, 0), at(L - D + 10, 0), 5.5, 2, 0.6);
 
-    // The head: a plain slab, knocked out in white with a heavy ink edge. A
-    // block this size drawn solid would swallow the figure every time it swung
-    // past him, and drawn as bare outline it would vanish into the black wall
-    // exactly where it matters - so it is white with an edge, like everything
-    // else in here that has to read over both.
-    const block = [at(L - D, -W), at(L + 12, -W), at(L + 12, W), at(L - D, W)];
+    // The head. Not a slab and not a warhammer: a great smooth *drum*, seen
+    // end-on, that tapers slightly from the striking face back to the haft.
+    // White inside with one heavy line round it, because a black block this
+    // size would swallow the figure every time it swung past him and a bare
+    // outline would vanish into the wall exactly where it lands.
+    const back = W * 0.82;
+    const body = [at(L - D, -back), at(L, -W), at(L, W), at(L - D, back)];
     c.fillStyle = '#fff';
-    sk.polyPath(block, 1.3);
+    sk.polyPath(body, 1.4);
     c.fill();
-    sk.poly(block, 5.2, false, 1.3);
-    // The striking face banded off the body of the block, and a seam behind it.
-    sk.line(at(L, -W), at(L, W), 3.4, 1, 0.7);
-    sk.line(at(L - D + 14, -W), at(L - D + 14, W), 2.6, 1, 0.7);
+    sk.poly(body, 5.4, false, 1.4);
+    // The striking face: the far end of the cylinder, so an ellipse. This one
+    // shape is what turns a rectangle into a mallet.
+    const face: Vec2[] = [];
+    for (let i = 0; i < 16; i++) {
+      const a2 = (i / 16) * TAU;
+      face.push(at(L + Math.cos(a2) * W * 0.3, Math.sin(a2) * W));
+    }
+    c.fillStyle = '#fff';
+    sk.polyPath(face, 1.2);
+    c.fill();
+    sk.poly(face, 4.6, false, 1.2);
+    // Two lengthwise strokes down the barrel and nothing else. The source has
+    // no bands, no rivets and no cheeks on this thing.
+    sk.line(at(L - D + 12, -back * 0.5), at(L - 6, -W * 0.52), 2.4, 2, 0.8);
+    sk.line(at(L - D + 16, back * 0.42), at(L - 6, W * 0.46), 2.2, 2, 0.8);
+    // The rim the drum is capped off at the back with.
+    sk.line(at(L - D, -back), at(L - D, back), 3.4, 1, 0.8);
 
     // A flash of impact on landing, sized off the head rather than off nothing.
     if (this.striking > 0.55 && this.striking < 0.95) {
-      const tip = at(L + 16, 0);
-      c.lineWidth = 4;
-      sk.burst(tip.x, tip.y, 13, 20, 110, 4, TAU, 0, 909);
+      const tip = at(L + 10, 0);
+      c.fillStyle = '#000';
+      sk.tuftPath(tip.x, tip.y, 17, W * 0.5, W * 2.4, TAU, 0, 909, 0.05);
+      c.fill();
     }
   }
 
