@@ -200,15 +200,15 @@ thing in his hands came out of.
 
 | # | Key | Power | Behaviour |
 | --- | --- | --- | --- |
-| 1 | `1` | Brawler | Jab, cross, hook, uppercut; a shoulder charge out of a run — and lean on the button past the haymakers and it becomes the barrage: five seconds of blows going off against the wall faster than the drawing can follow, at which point his arms stop being drawn at all |
+| 1 | `1` | Brawler | Punches and only punches — jab, cross, hook, uppercut, a shoulder charge out of a run, haymakers if you lean on it — each with its own stance so the body moves under the arm. Keep leaning and it winds up into the barrage: the blows arrive sooner and sooner until the arms stop being drawn at all and a field of drags buries him, and letting go runs the same thing backwards |
 | 2 | `2` | Swordsman | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front. Hold it and he throws himself the width of a room forward turning over twice, lands on the wall and puts three full-weight cuts through it |
 | 3 | `3` | Smasher | The source's mallet: a smooth barrel as tall as he is with a stick out of the back and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
 | 4 | `4` | Windslash | Nothing in his hands: every swing throws curved blades of air four hundred units out in front, and what they leave is separate scores with wall still standing between them. There is weather round him whether or not the trigger is down, and the air carries him half again as high as anyone else jumps. Hold it and he pulls the storm in; letting go throws a whirlwind whose base stays in his hands |
-| 5 | `5` | Gunslinger | Four guns and he chooses. The three he is not holding ride on his back where you can see them; the one in his hands is whatever the range calls for — the revolver out past 250 units, the shotgun inside it. Hold the trigger and the tube comes off his back: three grenades lobbed down one line, then the rifle comes off after them and shoots every one of them out of the air |
+| 5 | `5` | Gunslinger | Four guns and he chooses. The three he is not holding ride on his back where you can see them; the one in his hands is whatever the range calls for — the revolver out past 250 units, the shotgun inside it. Hold the trigger and the tube comes off his back: one rocket, then three grenades thrown after it, then the rifle, which waits until a grenade is nearly on the wall before putting a round through it |
 | 6 | `6` | Rocketeer | A long screened cannon over his shoulder with three ports in the mouth of it, and four fat tubes fanned out behind him with the bore showing at the end of each. Three rounds one after another out of the front, or hold it down and dump ten off the back |
-| 7 | `7` | Mage | Staff standing up in his fist and a pointed hat. Tap to summon four orbs, well apart, that hang for a second and then go in one at a time on thick white trails. Hold for hoops sliding up the shaft, two more round the head, a ball between the horns, and a very wide beam that barely scratches the paint |
-| 8 | `8` | Shinobi | Kunai thrown flat and point first, and every third throw a big shuriken that takes a proper hole out of the wall. Hold it and he sinks into a crouch making seals — shown as an inset panel zoomed on his hands, drawn as hands — then folds forward and breathes a fireball bigger than he is. Wears the headband |
-| 9 | `9` | Thunderbolt | Discharges that skip off the ground and take a bite out of everything they touch on the way to the wall; hold it and the charge crawls all over him, then earths itself in sixteen directions at once |
+| 7 | `7` | Mage | Staff planted on the floor and a pointed hat; it only comes up and points at anything while he is charging. Tap to summon four orbs, well apart, that hang for a second and then go in one at a time on thick white trails. Hold for hoops sliding up the shaft, a ball between the horns and a very wide beam that barely scratches the paint. Off the ground there is a circle turning under his boots, and he comes down at less than half everyone else's speed |
+| 8 | `8` | Shinobi | Kunai thrown flat and point first, and every third throw a big shuriken that takes a proper hole out of the wall. Hold it and he sinks into a crouch making seals — an inset panel zoomed on two hands with fingers that fold — then folds forward and breathes a fireball bigger than he is. Wears the headband: a dark band with a plate, tied off in two ends behind |
+| 9 | `9` | Thunderbolt | Discharges that skip off the ground and take a bite out of everything they touch on the way to the wall — each one drawing the jagged path it has actually taken behind it. Hold it and the charge crawls all over him, then earths itself in sixteen directions at once |
 | 10 | `0` | Mecha | Wings out: jump climbs, crouch dives. The forearm blade comes out whenever there is masonry inside its reach, on the floor or off it; at range a stub of cannon telescopes out of his palm. Hold it and four rods unfold out of his back and burn one point |
 | 11 | `-` | Split head | A press hinges his face apart on the seam across the middle and four very unfriendly rounds leave the rack. Hold it and the skull comes apart the other way — straight down the middle — and what stands in the doorway pours a cutting beam until he lets go |
 | 12 | `=` | Giant robot | He climbs inside a machine several times his size and stops being drawn at all: rounded tube limbs, a ribbed chest and a visored helmet. It punches holes in the wall and cuts with its eyes; hold it and the arm folds into a launcher, puts five guided rounds downrange, catches fire, drops him out of the top, folds itself into a slab, and he throws the slab through the wall |
@@ -446,6 +446,26 @@ each: a cylinder, a pump, a magazine, a flared tube. Which one is in his hands
 comes from a wall probe down the aim line, and holding the trigger runs the
 sequence: three grenades lobbed on one line at three speeds so they string out,
 then a swap to the rifle and a round through each of them in turn.
+
+### One shape, not a bag of leaves (`Sketch.starPath`)
+
+`tuftPath` traces one subpath per spike, which is exactly right when they are
+meant to be flicks of solid ink. The moment you want the white-bellied
+treatment on them it gives you a separate outline round every single spike, and
+a landed punch or a discharge earthing itself comes out as a bag of little
+leaves. `starPath` traces the same cluster as a *single closed zigzag* - tips
+at wildly uneven lengths, valleys pulled back in near the point of contact - so
+there is exactly one contour round the lot and the paper shows through it. The
+barrage's landings, the electricity's feathering and the bolts' heads all go
+through it.
+
+### Headgear, and why it does not turn over (`headTilt`)
+
+The figure somersaults, and while he is turning over `pose.bodyAngle` runs all
+the way round. A hat or a headband drawn at that angle spends half of every
+flip upside down on top of his head. `headTilt` takes the lean out of the body
+angle and throws the rest away: headgear tips with him up to about a third of a
+turn and no further, and the head can orbit the pelvis all it likes underneath.
 
 ### The stroke everything is drawn with (`src/core/sketch.ts`)
 
