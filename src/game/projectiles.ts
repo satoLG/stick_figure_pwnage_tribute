@@ -1,4 +1,4 @@
-import { angleDelta, clamp, rand, TAU, type Vec2 } from '../core/math';
+import { angleDelta, clamp, hashNoise, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Terrain } from './terrain';
 
@@ -323,30 +323,66 @@ export class Projectile {
         break;
       }
       case 'fireball': {
-        // The reference draws a fireball as a torn white shape over a patch of
-        // halftone with sharp licks flicked off it - not a hoop of petals.
+        // Fire, not a sea urchin.
+        //
+        // Paper is the flame here: a big torn white body with a light rim, a
+        // bed of screen tone behind it so it has some weight on the page, and
+        // the licks coming off it drawn as *curved tapered ribbons* at wildly
+        // uneven lengths rather than straight black spikes. Nothing about it is
+        // symmetrical - the tongues crowd one side, the tail drags off the
+        // back, and the rim is only drawn part of the way round.
         const r = this.radius;
         c.rotate(-this.angle);
-        // Halftone bed: poured into the blob as a pattern, so the dots stop on
-        // its torn edge instead of on a clipping box.
-        sk.ragPath(0, 0, r * 1.25, 15, 0.34, 4205);
+        // The bed, a little wider than the ball and offset off-centre.
+        sk.ragPath(-r * 0.12, r * 0.06, r * 1.62, 17, 0.3, 4205);
         c.fillStyle = '#fff';
         c.fill();
         c.fillStyle = sk.screenTone();
         c.fill();
-        // The body of it: paper, rimmed with a pen that lifts.
-        sk.inked(() => sk.ragPath(0, 0, r * 0.92, 15, 0.26, 4202), 4.4, 0.4, 4206);
-        // Licks off the rim and a tail dragging behind it, all thin and sharp.
-        c.fillStyle = '#000';
-        sk.tuftPath(0, 0, 20, r * 0.85, r * 1.85, TAU, 0, 4201, 0.085);
-        c.fill();
-        sk.tuftPath(-r * 0.5, 0, 10, r * 0.6, r * 3.2, 1.7, Math.PI, 4203, 0.09);
-        c.fill();
-        // One curl inside it, so it has some turn to it.
+        // The tongues. Long curved ribbons licking off the rim, bunched
+        // towards the leading edge and trailing behind, none the same.
+        const seed = 4210;
+        c.fillStyle = '#fff';
+        const licks: { a: number; len: number; w: number; bend: number }[] = [];
+        for (let i = 0; i < 13; i++) {
+          const a = (i / 13) * TAU + hashNoise(seed + i, sk.boil) * 0.34;
+          // Longest at the front, shortest under it, and a couple wild ones.
+          const facing = 0.45 + 0.55 * Math.cos(a);
+          const g = Math.abs(hashNoise(seed + i * 3, sk.boil + 1));
+          licks.push({
+            a,
+            len: r * (0.4 + facing * 0.6 + g * g * 0.95),
+            w: r * (0.3 + Math.abs(hashNoise(seed + i * 5, sk.boil)) * 0.34),
+            bend: hashNoise(seed + i * 7, sk.boil + 2) * 1.25,
+          });
+        }
+        for (const l of licks) {
+          const ca2 = Math.cos(l.a), sa2 = Math.sin(l.a);
+          const nx = -sa2, ny = ca2;
+          const from = { x: ca2 * r * 0.5, y: sa2 * r * 0.5 };
+          const mid = {
+            x: ca2 * (r * 0.5 + l.len * 0.55) + nx * l.bend * l.len * 0.4,
+            y: sa2 * (r * 0.5 + l.len * 0.55) + ny * l.bend * l.len * 0.4,
+          };
+          const tip = {
+            x: ca2 * (r * 0.5 + l.len) + nx * l.bend * l.len,
+            y: sa2 * (r * 0.5 + l.len) + ny * l.bend * l.len,
+          };
+          sk.inked(() => sk.ribbonPath(from, mid, tip, l.w, 0.34, 0.66), 3.2, 0.34,
+            seed + Math.round(l.a * 40));
+        }
+        // The body of it, over the roots of the tongues so they grow out of it.
+        sk.inked(() => sk.ragPath(0, 0, r * 0.95, 15, 0.2, 4202), 4.6, 0.14, 4206);
+        // One curl inside it, so it has some turn to it, and a lick of ink at
+        // the core - the only black on the whole thing.
         c.strokeStyle = '#000';
         c.lineWidth = 2.6;
         sk.polyPath(ring(r * 0.46, 9, this.spin * 0.5), r * 0.09);
         c.stroke();
+        c.fillStyle = '#000';
+        sk.tuftPath(-r * 0.24, r * 0.1, 5, r * 0.1, r * 0.5, 2.4,
+          Math.PI * 0.85, 4203, 0.07);
+        c.fill();
         break;
       }
       case 'pellet': {

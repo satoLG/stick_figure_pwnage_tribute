@@ -1714,7 +1714,7 @@ export class Shinobi extends Weapon {
       // a row said nothing at all - so both palms are drawn as real outlined
       // hands with five fingers each, folding through a different seal every
       // few frames.
-      this.drawSeal(sk, ctx, cx, cy, R * 1.02);
+      this.drawSeal(sk, ctx, cx, cy - R * 0.1, R * 0.8);
       // A tick or two of "this is moving", and the charge ring round the rim.
       c.lineWidth = 2.2;
       sk.burst(cx, cy, 5, R * 1.08, R * (1.25 + k * 0.5), 2.2, TAU, 0, 8101);
@@ -1789,40 +1789,58 @@ export class Shinobi extends Weapon {
 
     c.save();
     c.strokeStyle = '#000';
-    // The two tails first, so the band sits over the knot they come out of.
-    const blow = 40 + Math.abs(sm.vel.x) * 0.06 + this.charge * 46 + (this.breath > 0 ? 52 : 0);
-    const sway = Math.sin(ctx.time * 4.4) * 7;
-    for (const side of [-1, 1]) {
-      const root = at(-f * R * 0.95, -R * 0.15 + side * R * 0.22);
-      const mid = { x: root.x - f * blow * 0.55, y: root.y + side * 9 + sway * 0.5 };
-      const tip = { x: root.x - f * blow, y: root.y + side * 16 + sway };
-      c.fillStyle = '#fff';
-      sk.ribbonPath(root, mid, tip, 9, 0.3, 0.6);
+    c.lineJoin = 'round';
+    // --- the tails ----------------------------------------------------------
+    //
+    // Two ends of one knot, not two separate straps. They leave the same point
+    // at the back of his skull, cross once where the knot is and then blow
+    // apart - one long, one short, both tapering to a point, because that is
+    // what the loose ends of a tied cloth do.
+    const knot = at(-f * R * 1.02, -R * 0.42);
+    const blow = 46 + Math.abs(sm.vel.x) * 0.06 + this.charge * 50 + (this.breath > 0 ? 56 : 0);
+    const sway = Math.sin(ctx.time * 4.4) * 8;
+    const ends: readonly (readonly [number, number])[] = [[1, 0.62], [0.66, -0.5]];
+    for (const [span, drop] of ends) {
+      const mid = { x: knot.x - f * blow * span * 0.5, y: knot.y + drop * 30 + sway * 0.5 };
+      const tip = { x: knot.x - f * blow * span, y: knot.y + drop * 64 + sway };
+      c.fillStyle = '#000';
+      sk.ribbonPath(knot, mid, tip, 8 * span + 3, 0.22, 0.6);
       c.fill();
-      sk.ribbonPath(root, mid, tip, 9, 0.3, 0.6);
-      sk.rim(2.6, 0.3, 8401 + side);
     }
-    // The band: a strip across the forehead, white with an ink edge.
+    // The knot itself, so the two ends plainly come out of one tie.
+    c.fillStyle = '#000';
+    sk.polyPath([
+      at(-f * R * 0.78, -R * 0.72), at(-f * R * 1.25, -R * 0.6),
+      at(-f * R * 1.2, -R * 0.14), at(-f * R * 0.76, -R * 0.2),
+    ], 0.8);
+    c.fill();
+
+    // --- the band -----------------------------------------------------------
+    //
+    // Dark and heavy: it is a strip of cloth round his forehead, and drawn in
+    // outline it read as a bandage. The only white on it is the plate.
     const band = [
-      at(-R * 1.12, -R * 0.36), at(R * 1.12, -R * 0.36),
-      at(R * 1.1, -R * 0.94), at(-R * 1.1, -R * 0.94),
+      at(-R * 1.16, -R * 0.32), at(R * 1.16, -R * 0.32),
+      at(R * 1.14, -R * 0.98), at(-R * 1.14, -R * 0.98),
     ];
-    c.fillStyle = '#fff';
+    c.fillStyle = '#000';
     sk.polyPath(band, 0.9);
     c.fill();
-    sk.poly(band, 3, false, 0.9);
-    // The plate, set into the front of it and turned the way he is facing.
+    sk.poly(band, 3.4, false, 0.9);
+    // The plate, set into the front of it and turned the way he is facing: a
+    // small white rectangle in all that black, which is the whole read.
+    const px = f * R * 0.1;
     const plate = [
-      at(f * R * 0.06 - R * 0.52, -R * 0.42), at(f * R * 0.06 + R * 0.52, -R * 0.42),
-      at(f * R * 0.06 + R * 0.5, -R * 0.88), at(f * R * 0.06 - R * 0.5, -R * 0.88),
+      at(px - R * 0.46, -R * 0.36), at(px + R * 0.46, -R * 0.36),
+      at(px + R * 0.44, -R * 0.9), at(px - R * 0.44, -R * 0.9),
     ];
     c.fillStyle = '#fff';
-    sk.polyPath(plate, 0.7);
+    sk.polyPath(plate, 0.6);
     c.fill();
-    sk.poly(plate, 3.2, false, 0.7);
+    sk.poly(plate, 2.6, false, 0.6);
     // A mark scratched into it - a spiral leaf, at this size two strokes.
-    sk.curve(at(f * R * 0.06 - R * 0.2, -R * 0.5), at(f * R * 0.06 + R * 0.24, -R * 0.62),
-      at(f * R * 0.06 - R * 0.06, -R * 0.78), 2, 0.4);
+    sk.curve(at(px - R * 0.18, -R * 0.46), at(px + R * 0.2, -R * 0.6),
+      at(px - R * 0.04, -R * 0.76), 1.8, 0.4);
     c.restore();
   }
 
@@ -1835,52 +1853,77 @@ export class Shinobi extends Weapon {
    */
   private drawSeal(sk: Sketch, ctx: WeaponCtx, cx: number, cy: number, s: number): void {
     const c = sk.ctx;
-    const seal = Math.floor(ctx.time * 6) % 4;
-    // Which fingers stand up on this seal, thumb outwards. Ram, snake, tiger,
-    // and the one where everything folds in.
-    const UP: readonly (readonly boolean[])[] = [
-      [false, true, true, false, false],
-      [true, true, true, true, true],
-      [false, true, true, true, true],
-      [true, false, false, false, false],
+    const seal = Math.floor(ctx.time * 5) % 4;
+    /**
+     * Four seals, and for each one how far each finger is folded: 0 is
+     * straight up, 1 is curled right into the palm. Thumb first, then index
+     * out to little finger - which is the only way to make a hand read as a
+     * hand rather than as a comb.
+     */
+    const SEALS: readonly (readonly number[])[] = [
+      [0.9, 0, 0, 1, 1],    // ram
+      [0.2, 0, 0, 0, 0],    // snake, palms flat together
+      [1, 0, 0, 0.15, 0.9], // tiger
+      [0.1, 0.9, 0.9, 0.9, 0.9], // everything folded in but the thumb
     ];
-    const up = UP[seal];
+    const fold = SEALS[seal];
+
+    c.save();
     c.strokeStyle = '#000';
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
     for (const side of [-1, 1]) {
-      // The palm: a squarish outlined hand, its back to us, tilted inwards.
-      const px = cx + side * s * 0.3;
-      const py = cy + s * 0.3;
+      // The palm: a hand seen edge-on, wrist at the bottom, knuckles at the
+      // top, and wider across the knuckles than at the wrist the way one is.
+      const px = cx + side * s * 0.2;
+      const wristY = cy + s * 0.7;
+      const knuckY = cy - s * 0.02;
+      const inner = side * s * 0.05;
+      const outer = side * s * 0.42;
       const palm = [
-        { x: px - side * s * 0.26, y: py + s * 0.4 },
-        { x: px - side * s * 0.32, y: py - s * 0.2 },
-        { x: px + side * s * 0.2, y: py - s * 0.34 },
-        { x: px + side * s * 0.28, y: py + s * 0.3 },
+        { x: px + inner, y: wristY },
+        { x: px + inner * 1.6, y: knuckY + s * 0.06 },
+        { x: px + outer * 0.92, y: knuckY - s * 0.04 },
+        { x: px + outer, y: wristY - s * 0.2 },
+        { x: px + outer * 0.72, y: wristY + s * 0.04 },
       ];
       c.fillStyle = '#fff';
-      sk.polyPath(palm, 0.7);
+      sk.polyPath(palm, 0.6);
       c.fill();
-      sk.poly(palm, 2.4, false, 0.7);
-      // Wrist and forearm heading out of the bottom of the panel.
-      sk.line({ x: px - side * s * 0.06, y: py + s * 0.4 },
-        { x: px - side * s * 0.2, y: cy + s * 1.15 }, 2.8, 1, 0.5);
-      // Four fingers and a thumb. The thumb comes off the inside edge.
+      sk.poly(palm, 2.4, false, 0.6);
+      // The wrist and the forearm running out of the bottom of the panel.
+      sk.line({ x: px + (inner + outer) * 0.5, y: wristY },
+        { x: px + (inner + outer) * 0.4 - side * s * 0.1, y: cy + s * 1.3 }, 3, 1, 0.5);
+
+      // Four fingers off the knuckle line, each drawn in two segments so a
+      // folded one bends at the middle joint instead of just being short.
       for (let i = 0; i < 4; i++) {
         const t = (i + 0.5) / 4;
-        const bx = px - side * s * 0.3 + side * t * s * 0.52;
-        const by = py - s * 0.24 - t * s * 0.1;
-        const len = up[i + 1] ? s * 0.78 : s * 0.28;
-        const bend = up[i + 1] ? 0 : side * s * 0.26;
-        sk.line({ x: bx, y: by }, { x: bx + bend, y: by - len }, 2.2, 1, 0.4);
-        if (!up[i + 1]) {
-          // Folded: the second knuckle turns back down towards the palm.
-          sk.line({ x: bx + bend, y: by - len }, { x: bx + bend * 0.7, y: by - len * 0.1 }, 2, 1, 0.4);
-        }
+        const bx = px + inner * 1.4 + (outer - inner * 1.4) * t;
+        const by = knuckY + s * 0.03 - t * s * 0.05;
+        const fl = fold[i + 1];
+        const full = s * 0.52 * (1 - Math.abs(t - 0.38) * 0.42);
+        // First joint: up when open, tipped towards the palm when folded.
+        // A little splay, so four fingers are a hand and not a picket fence.
+        const a1 = -Math.PI / 2 + fl * side * 0.9 + side * (t - 0.45) * 0.42;
+        const j1 = { x: bx + Math.cos(a1) * full * 0.55, y: by + Math.sin(a1) * full * 0.55 };
+        // Second joint carries on when open, curls right back when folded.
+        const a2 = a1 + fl * side * 1.5;
+        const tip = { x: j1.x + Math.cos(a2) * full * 0.45, y: j1.y + Math.sin(a2) * full * 0.45 };
+        sk.line({ x: bx, y: by }, j1, 2.6 - i * 0.12, 1, 0.35);
+        sk.line(j1, tip, 2.3 - i * 0.12, 1, 0.35);
       }
-      const tx = px - side * s * 0.32, ty = py + s * 0.04;
-      sk.line({ x: tx, y: ty },
-        { x: tx - side * (up[0] ? s * 0.1 : s * 0.34), y: ty - (up[0] ? s * 0.42 : s * 0.06) },
-        2.4, 1, 0.4);
+      // The thumb: off the inside edge of the palm, lower down and stubbier.
+      const tx = px + inner * 1.5;
+      const ty = knuckY + s * 0.24;
+      const th = fold[0];
+      const ta = -Math.PI / 2 - side * (0.7 + th * 0.9);
+      const tj = { x: tx + Math.cos(ta) * s * 0.24, y: ty + Math.sin(ta) * s * 0.24 };
+      sk.line({ x: tx, y: ty }, tj, 3, 1, 0.35);
+      sk.line(tj, { x: tj.x + Math.cos(ta + side * th * 1.3) * s * 0.18,
+        y: tj.y + Math.sin(ta + side * th * 1.3) * s * 0.18 }, 2.7, 1, 0.35);
     }
+    c.restore();
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
