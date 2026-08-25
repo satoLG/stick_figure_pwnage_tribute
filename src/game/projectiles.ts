@@ -308,17 +308,70 @@ export class Projectile {
         break;
       }
       case 'bolt': {
-        // Electricity is never a shape, and it is never a tidy zigzag either:
-        // it is a ragged cluster of curved tapered strokes going the way it is
-        // going, with a few thrown back the other way.
+        // Electricity is a *path*, not a dot.
+        //
+        // This used to be a little cluster of spikes riding along at the head
+        // with a hairline of tracer behind it, which read as a dart rather
+        // than as a shock. What is drawn now is the run it has actually taken
+        // - the trail, kicked hard off its own axis and redrawn every frame,
+        // so the whole length of it forks and jumps the way a discharge does.
         const r = this.radius;
+        // Back into world space: the path happened out there, not here.
         c.rotate(-this.angle);
+        c.translate(-this.x, -this.y);
         const seed = Math.floor(this.spin * 5);
-        c.fillStyle = '#000';
-        sk.tuftPath(0, 0, 6, r * 0.4, r * 6, 1.1, this.angle, seed, 0.09);
-        c.fill();
-        sk.tuftPath(0, 0, 4, r * 0.3, r * 2.6, 2.6, this.angle + Math.PI, seed + 31, 0.1);
-        c.fill();
+        const n = this.trail.length;
+        if (n > 2) {
+          const pts: Vec2[] = [];
+          for (let i = 0; i < n; i++) {
+            const p0 = this.trail[i];
+            const q = this.trail[Math.min(n - 1, i + 1)];
+            const dx = q.x - p0.x, dy = q.y - p0.y;
+            const l = Math.hypot(dx, dy) || 1;
+            // Biggest kick in the middle, pinned at both ends so it still
+            // plainly runs from where it was to where it is.
+            const u = i / (n - 1);
+            const kick = hashNoise(seed + i * 3, i) * r * 3.4 * Math.sin(u * Math.PI);
+            pts.push({ x: p0.x - (dy / l) * kick, y: p0.y + (dx / l) * kick });
+          }
+          pts.push({ x: this.x, y: this.y });
+          const run = (): void => {
+            c.beginPath();
+            c.moveTo(pts[0].x, pts[0].y);
+            for (const p0 of pts) c.lineTo(p0.x, p0.y);
+          };
+          // White down the middle with an ink edge either side, so it reads
+          // over the paper and over the black wall alike.
+          c.lineCap = 'round';
+          c.lineJoin = 'round';
+          c.strokeStyle = '#000';
+          c.lineWidth = r * 1.3;
+          run(); c.stroke();
+          c.strokeStyle = '#fff';
+          c.lineWidth = r * 0.62;
+          run(); c.stroke();
+          // A fork or two off the middle of it.
+          c.strokeStyle = '#000';
+          c.lineWidth = 2.2;
+          for (let k = 0; k < 2; k++) {
+            const i = Math.floor((0.35 + k * 0.3) * (n - 1));
+            const p0 = pts[i];
+            const a = Math.atan2(this.vy, this.vx) + hashNoise(seed + k * 17, 3) * 1.5;
+            const l2 = r * (2 + Math.abs(hashNoise(seed + k * 5, 7)) * 3);
+            c.beginPath();
+            c.moveTo(p0.x, p0.y);
+            c.lineTo(p0.x + Math.cos(a) * l2 * 0.5, p0.y + Math.sin(a) * l2 * 0.5);
+            c.lineTo(p0.x + Math.cos(a + 0.7) * l2, p0.y + Math.sin(a + 0.7) * l2);
+            c.stroke();
+          }
+        }
+        // And the head of it: one torn white clump with a single contour, not
+        // a bag of black spikes.
+        sk.inked(
+          () => sk.starPath(this.x, this.y, 9, r * 0.5, r * 3.4, Math.PI * 2, 0, seed),
+          2.8, 0.18, seed + 11,
+        );
+        c.translate(this.x, this.y);
         c.rotate(this.angle);
         break;
       }

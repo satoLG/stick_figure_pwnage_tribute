@@ -2181,10 +2181,10 @@ export class Thunderbolt extends Weapon {
       // A white core with a thin ink edge, so the path stays legible over the
       // black wall without becoming a rope.
       c.strokeStyle = '#000';
-      c.lineWidth = a.width * (0.3 + k * 0.5) + 1.7;
+      c.lineWidth = a.width * (0.34 + k * 0.55) + 2.4;
       strokePts(c, a.pts);
       c.strokeStyle = '#fff';
-      c.lineWidth = a.width * (0.3 + k * 0.5);
+      c.lineWidth = a.width * (0.34 + k * 0.55);
       strokePts(c, a.pts);
       // And the feathering, which is the actual look: at every kink a ragged
       // fan of curved tapered slivers, mostly running along the bolt and a few
@@ -2200,25 +2200,26 @@ export class Thunderbolt extends Weapon {
         const p = a.pts[i];
         const q = a.pts[i + 1];
         const along = Math.atan2(q.y - p.y, q.x - p.x);
-        // Not a chevron on a wire. Four identical fans pointing down the bolt
-        // turned it into a row of arrowheads; the reference's discharge is
-        // clumps of hair-thin spikes thrown off it at every angle and at
-        // wildly different lengths, crowding where it kinks hardest.
-        // Hair thin is the whole thing: in the reference a spike is twenty
-        // times as long as it is wide, and the moment they fatten up the
-        // discharge turns into a row of black arrowheads.
-        const n = 5 + Math.floor(Math.abs(hashNoise(i * 3, sk.boil)) * 6);
-        const reach = (11 + Math.abs(hashNoise(i, sk.boil)) * 26) * (0.35 + k * 0.9);
+        // One torn *white* clump per kink with a single contour round it. The
+        // shape is right - clusters thrown off at every angle at wildly uneven
+        // lengths, crowding where the bolt kinks hardest - but filling them
+        // solid put more black on the page than anything else in the game.
+        const n = 6 + Math.floor(Math.abs(hashNoise(i * 3, sk.boil)) * 5);
+        const reach = (12 + Math.abs(hashNoise(i, sk.boil)) * 28) * (0.35 + k * 0.9);
         const dir = along + hashNoise(i * 5, sk.boil) * 1.7;
-        sk.tuftPath(p.x, p.y, n, reach * 0.05, reach, 3.4, dir, i * 37 + sk.boil, 0.032);
-        c.fill();
+        sk.inked(
+          () => sk.starPath(p.x, p.y, n, reach * 0.14, reach, TAU, dir, i * 37 + sk.boil),
+          2.4, 0.24, i * 53,
+        );
       }
-      // And a proper tuft where it earthed itself.
+      // And a bigger one where it earthed itself.
       const end = a.pts[a.pts.length - 1];
       const prev = a.pts[a.pts.length - 2];
-      sk.tuftPath(end.x, end.y, 17, 3, (26 + a.width * 5) * (0.4 + k * 0.9), 2.7,
-        Math.atan2(prev.y - end.y, prev.x - end.x), 771, 0.038);
-      c.fill();
+      sk.inked(
+        () => sk.starPath(end.x, end.y, 13, 6, (30 + a.width * 5) * (0.4 + k * 0.9), 2.7,
+          Math.atan2(prev.y - end.y, prev.x - end.x), 771),
+        3, 0.16, 772,
+      );
     }
     c.globalAlpha = 1;
     c.restore();
