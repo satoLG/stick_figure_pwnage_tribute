@@ -219,6 +219,12 @@ export class Stickman {
    * differently from the rest.
    */
   jumpBoost = 1;
+  /**
+   * How hard the thing in his hands lets gravity pull on him on the way down.
+   * One for everything with weight in it; the mage rides a circle of his own
+   * making and comes down at less than half speed.
+   */
+  fallScale = 1;
   private airJumps = 1;
   private maxAirJumps = 1;
   /** Counts down through a wall kick; drives the pose that sells the push-off. */
@@ -464,8 +470,11 @@ export class Stickman {
       // apex lands in exactly the same place; only what happens after differs.
       const rising = this.vel.y < 0;
       const stall = rising ? 0 : this.stallT;
-      const g = (rising ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, stall);
-      this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
+      // A weapon that slows his descent does it here, and only on the way
+      // down: it is a softer landing, never a bigger jump.
+      const carried = rising ? 1 : this.fallScale;
+      const g = (rising ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, stall) * carried;
+      this.vel.y = Math.min(MAX_FALL * carried, this.vel.y + g * dt);
       if (stall > 0.01 && this.vel.y > 0) {
         this.vel.y = Math.min(this.vel.y, lerp(MAX_FALL, AIR_ATTACK_FALL_V, stall));
       }

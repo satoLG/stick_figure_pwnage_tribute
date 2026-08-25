@@ -1003,8 +1003,17 @@ export class ArcaneStaff extends Weapon {
   private power = 1;
   private cast = 0;
   private sfxTimer = 0;
+  /** 0..1 how far the circle under his boots has faded in. */
+  private glow = 0;
   /** Sets of summoned orbs waiting to go in. Several can be up at once. */
   private sigils: Sigil[] = [];
+
+  /**
+   * He does not fall like the rest of them. There is a circle turning under
+   * his boots holding him up, and coming down at less than half speed is the
+   * whole reason it is drawn.
+   */
+  override get fallScale(): number { return 0.4; }
 
   override onEquip(): void {
     super.onEquip();
@@ -1036,8 +1045,31 @@ export class ArcaneStaff extends Weapon {
    */
   private staffAngle(ctx: WeaponCtx): number {
     const f = ctx.sm.facing;
-    const k = Math.max(this.charge, this.beam > 0 ? 1 : 0, this.cast);
-    return -Math.PI / 2 + f * (0.13 + k * 0.16);
+    // Charging or firing, and *only* then, the whole thing comes up and points
+    // where he is pointing. Every other moment it is planted.
+    const k = clamp(Math.max(this.charge * 1.6, this.beam > 0 ? 1 : 0), 0, 1);
+    const stood = -Math.PI / 2 + f * 0.1;
+    if (k < 0.01) return stood;
+    // The head swings to the aim; the angle is measured from his fist, so this
+    // is where the *top* of it has to go for the point to land on the target.
+    const aimed = ctx.sm.pose.aim;
+    return stood + angleDelta(stood, aimed) * easeOutCubic(k);
+  }
+
+  /**
+   * Where his fist sits on the shaft.
+   *
+   * Planted, the butt of the staff has to reach the floor - a wizard leans on
+   * his staff, he does not carry it at port arms - so the grip is placed by
+   * measuring *down* from his hand to the ground and holding the shaft there.
+   * Aiming it lifts the butt clear again.
+   */
+  private staffGrip(ctx: WeaponCtx): number {
+    const sm = ctx.sm;
+    const drop = ctx.terrain.groundBelow(sm.pos.x, sm.pos.y - 6, 200);
+    const foot = sm.pos.y + Math.min(drop, 40);
+    const hand = sm.pose.handR.y;
+    return clamp(foot - hand, 20, 120);
   }
 
   /** The head of the staff, where everything comes out of: the top of it. */
@@ -1133,6 +1165,7 @@ export class ArcaneStaff extends Weapon {
 
   protected override tick(ctx: WeaponCtx): void {
     this.cast = Math.max(0, this.cast - ctx.dt * 3.4);
+    this.glow = damp(this.glow, ctx.sm.onGround ? 0 : 1, ctx.sm.onGround ? 9 : 6, ctx.dt);
     this.runSigils(ctx);
     if (this.beam <= 0) return;
     this.beam = Math.max(0, this.beam - ctx.dt);
@@ -1239,19 +1272,84 @@ export class ArcaneStaff extends Weapon {
     c.restore();
   }
 
+  /**
+   * The circle he is standing on.
+   *
+   * Drawn flat under his boots the moment his feet leave the floor, as two
+   * counter-turning rings with a scatter of marks between them and four points
+   * standing off the rim. It is the only thing in the game that says *why* he
+   * comes down slower than everyone else, and it has to be plainly under him
+   * rather than round him - so it is squashed hard, the way a disc lying on
+   * the ground is when you are looking at it from the side.
+   */
+  private drawCircle(sk: Sketch, ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    if (sm.onGround) return;
+    const k = clamp(this.glow, 0, 1);
+    if (k < 0.02) return;
+    const c = sk.ctx;
+    const cx = sm.pos.x;
+    const cy = sm.pos.y + 4;
+    const R = 62 * k;
+    const squash = 0.3;
+    const ell = (r: number, rot: number, n: number): Vec2[] => {
+      const pts: Vec2[] = [];
+      for (let i = 0; i < n; i++) {
+        const ang = rot + (i / n) * TAU;
+        pts.push({ x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r * squash });
+      }
+      return pts;
+    };
+    c.save();
+    c.globalAlpha = 0.55 + k * 0.45;
+    c.strokeStyle = '#000';
+    c.lineWidth = 3.2;
+    sk.polyPath(ell(R, ctx.time * 0.8, 20), 1);
+    c.stroke();
+    c.lineWidth = 2;
+    sk.polyPath(ell(R * 0.62, -ctx.time * 1.3, 16), 0.9);
+    c.stroke();
+    // Marks between the rings: ticks round the band, uneven, hand-drawn.
+    c.lineWidth = 2.2;
+    for (let i = 0; i < 12; i++) {
+      const ang = -ctx.time * 0.8 + (i / 12) * TAU;
+      const r0 = R * 0.68, r1 = R * (0.84 + Math.abs(hashNoise(i, sk.boil)) * 0.14);
+      sk.line(
+        { x: cx + Math.cos(ang) * r0, y: cy + Math.sin(ang) * r0 * squash },
+        { x: cx + Math.cos(ang) * r1, y: cy + Math.sin(ang) * r1 * squash },
+        2.2, 1, 0.4,
+      );
+    }
+    // Four points standing off the rim, so the disc has a direction.
+    for (let i = 0; i < 4; i++) {
+      const ang = ctx.time * 0.8 + (i / 4) * TAU;
+      const p0 = { x: cx + Math.cos(ang) * R, y: cy + Math.sin(ang) * R * squash };
+      sk.line(p0, { x: p0.x + Math.cos(ang) * 12, y: p0.y + Math.sin(ang) * 12 * squash - 7 },
+        2.6, 1, 0.5);
+    }
+    c.restore();
+  }
+
   draw(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
     const a = this.staffAngle(ctx);
+    this.drawCircle(sk, ctx);
     const ca = Math.cos(a), sa = Math.sin(a);
     const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
 
     this.drawHat(sk, ctx);
 
-    // --- the staff, standing up in his fist ---------------------------------
+    // --- the staff, its butt on the floor -----------------------------------
+    //
+    // Planted, not carried: the shaft runs from his fist all the way down to
+    // the ground, and the length below his hand is measured to the floor he is
+    // actually standing on. Aiming it lifts the butt clear.
+    const aimed = clamp(Math.max(this.charge * 1.6, this.beam > 0 ? 1 : 0), 0, 1);
+    const butt = -this.staffGrip(ctx) * (1 - easeOutCubic(aimed)) - 20 * easeOutCubic(aimed);
     c.strokeStyle = '#000';
-    sk.line(at(-46, 0), at(STAFF_HEAD - 16, 0), 4.2, 3, 0.7);
-    sk.line(at(-46, -4), at(-46, 4), 3.4, 1, 0.4);
+    sk.line(at(butt, 0), at(STAFF_HEAD - 16, 0), 4.2, 3, 0.7);
+    sk.line(at(butt, -4), at(butt, 4), 3.4, 1, 0.4);
     // The head: two horns curling forward round the space the orb sits in.
     for (const side of [-1, 1]) {
       sk.curve(at(STAFF_HEAD - 16, side * 3), at(STAFF_HEAD - 2, side * 15),

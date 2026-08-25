@@ -261,6 +261,12 @@ export abstract class Weapon {
    */
   get jumpBoost(): number { return 1; }
 
+  /**
+   * How hard gravity pulls him on the way down. One for everything with weight
+   * in it; a weapon that holds him up as he descends says so here.
+   */
+  get fallScale(): number { return 1; }
+
   onEquip(): void {
     this.charge = 0;
     this.anim = 0;
