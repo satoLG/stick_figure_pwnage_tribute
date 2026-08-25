@@ -1,5 +1,5 @@
 import {
-  clamp, damp, hashNoise, rand, TAU, type Vec2,
+  clamp, damp, easeOutCubic, hashNoise, lerp, rand, TAU, type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
@@ -25,8 +25,22 @@ export type { WeaponCtx };
 const BARRAGE_HOLD = 0.6;
 /** How long it can run before he is out of it. */
 const BARRAGE_MAX = 5;
-/** Seconds between blows. Fast enough that you cannot count them. */
-const BARRAGE_RATE = 0.075;
+/**
+ * The barrage is a *ramp*, not a switch.
+ *
+ * It opens with punches you can count, thrown with the arms plainly drawn, and
+ * every one of them lands sooner than the last. Somewhere around a second in
+ * they are coming faster than fifteen frames a second can say anything about,
+ * the arms stop being drawn and the field of drags takes over. Letting go runs
+ * the same thing backwards: the blows slow down, the drags thin out and the
+ * arms come back. Snapping straight into the storm was the thing that made it
+ * read as a different weapon rather than as the same one, wound up.
+ */
+const RAMP_IN = 1.05;
+const RAMP_OUT = 0.85;
+/** Seconds between blows at the start of the ramp, and at full speed. */
+const BARRAGE_SLOW = 0.2;
+const BARRAGE_RATE = 0.055;
 /** How far in front of his chest the barrage can find a wall to hit. */
 const BARRAGE_REACH = 235;
 
@@ -62,49 +76,70 @@ interface Smear {
   seed: number;
 }
 const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  // Punches. Only punches - no spin kicks, no axe kicks, nothing that turns
+  // him over in the middle of a combination. A boxer plants and drives; every
+  // strike here is a fist going out on a line, and what sells it is the body
+  // moving under it rather than the figure pirouetting round it. Each carries
+  // its own stance, so the hips and shoulders load and unload with the arm.
   ground: [
-    { kind: 'thrust', from: 0, to: 0, wind: 0.26, strike: 0.24, anim: 0.17, cooldown: 0.16, reach: 0.9, thick: 15, shake: 4, name: 'JAB' },
-    { kind: 'thrust', from: 0, to: 0, wind: 0.24, strike: 0.24, anim: 0.18, cooldown: 0.17, reach: 0.95, thick: 17, shake: 5, name: 'CROSS' },
     {
-      from: -0.95, to: 0.8, wind: 0.32, strike: 0.22, anim: 0.28, cooldown: 0.28, reach: 1, thick: 26,
-      dash: 90, hitSfx: 'punch', shake: 9, name: 'HOOK',
+      kind: 'thrust', from: 0, to: 0, wind: 0.2, strike: 0.26, anim: 0.15, cooldown: 0.13,
+      reach: 0.92, thick: 16, dash: 46, shake: 5,
+      stance: 'brace', stanceLean: 0.16, stanceHip: -4, stanceOut: 0.1, name: 'JAB',
     },
     {
-      from: 1.25, to: -1.35, wind: 0.34, strike: 0.2, anim: 0.34, cooldown: 0.4, reach: 0.95, thick: 30,
-      lift: 130, heavy: true, hitSfx: 'punch', hitPitch: 0.78, flash: 0.14, shake: 13, name: 'UPPERCUT',
+      kind: 'thrust', from: 0, to: 0, wind: 0.2, strike: 0.26, anim: 0.17, cooldown: 0.15,
+      reach: 0.98, thick: 19, dash: 70, shake: 7, hitSfx: 'punch', hitPitch: 1.05,
+      stance: 'brace', stanceLean: 0.22, stanceHip: -6, stanceOut: 0.1, name: 'CROSS',
+    },
+    {
+      from: -0.95, to: 0.8, wind: 0.28, strike: 0.24, anim: 0.24, cooldown: 0.22, reach: 1, thick: 26,
+      dash: 120, hitSfx: 'punch', hitPitch: 0.92, shake: 10,
+      stance: 'brace', stanceLean: 0.26, stanceHip: -10, stanceOut: 0.12, name: 'HOOK',
+    },
+    {
+      from: 1.25, to: -1.35, wind: 0.3, strike: 0.22, anim: 0.3, cooldown: 0.36, reach: 0.95, thick: 32,
+      lift: 150, dash: 60, heavy: true, hitSfx: 'punch', hitPitch: 0.78, flash: 0.14, shake: 14,
+      stance: 'brace', stanceLean: -0.2, stanceHip: -14, stanceOut: 0.16, name: 'UPPERCUT',
     },
   ],
   run: [
     {
-      kind: 'thrust', from: 0, to: 0, wind: 0.24, strike: 0.24, anim: 0.3, cooldown: 0.34, reach: 1.15, thick: 26,
-      dash: 300, slide: 0.2, stance: 'lunge', stanceHip: -10, stanceLean: 0.14, heavy: true,
+      kind: 'thrust', from: 0, to: 0, wind: 0.22, strike: 0.26, anim: 0.28, cooldown: 0.3, reach: 1.15, thick: 26,
+      dash: 320, slide: 0.2, stance: 'lunge', stanceHip: -10, stanceLean: 0.16, heavy: true,
       hitSfx: 'punch', hitPitch: 0.8, shake: 14, name: 'SHOULDER CHARGE',
     },
     {
-      from: 2.2, to: -0.9, wind: 0.28, strike: 0.2, anim: 0.4, cooldown: 0.42, reach: 1.05, thick: 28,
-      spin: 1, hop: 150, dash: 120, hitSfx: 'punch', hitPitch: 0.7, flash: 0.16, shake: 15, name: 'SPIN KICK',
+      // Still a punch: he keeps running and throws the far hand across, so the
+      // whole body turns into it without ever leaving the floor.
+      kind: 'thrust', from: 0, to: 0, wind: 0.2, strike: 0.26, anim: 0.3, cooldown: 0.32, reach: 1.1, thick: 28,
+      dash: 220, slide: 0.16, heavy: true, hitSfx: 'punch', hitPitch: 0.74, flash: 0.12, shake: 15,
+      stance: 'lunge', stanceHip: -12, stanceLean: 0.24, name: 'RUNNING CROSS',
     },
   ],
   air: [
     {
-      kind: 'thrust', from: 0, to: 0, wind: 0.22, strike: 0.24, anim: 0.26, cooldown: 0.28, reach: 1.05, thick: 22,
-      dash: 110, lift: -240, hitSfx: 'punch', hitPitch: 0.85, shake: 10, name: 'DIVE PUNCH',
+      kind: 'thrust', from: 0, to: 0, wind: 0.2, strike: 0.26, anim: 0.24, cooldown: 0.26, reach: 1.05, thick: 22,
+      dash: 130, lift: -240, hitSfx: 'punch', hitPitch: 0.85, shake: 10, name: 'DIVE PUNCH',
     },
     {
-      from: -2.3, to: 1.2, wind: 0.26, strike: 0.2, anim: 0.36, cooldown: 0.38, reach: 1, thick: 26,
-      spin: 1, hitSfx: 'punch', hitPitch: 0.72, shake: 12, name: 'AXE KICK',
+      // A hammer of a punch straight down, not a kick and not a somersault.
+      from: -1.5, to: 1.15, wind: 0.24, strike: 0.22, anim: 0.3, cooldown: 0.34, reach: 1, thick: 28,
+      lift: -120, heavy: true, hitSfx: 'punch', hitPitch: 0.72, shake: 13, name: 'FALLING HAMMER',
     },
   ],
   hold: [
     {
-      from: -1.5, to: 1.05, wind: 0.48, strike: 0.16, anim: 0.5, cooldown: 0.5, reach: 1.05, thick: 40,
-      dash: 130, heavy: true, hitSfx: 'punch', hitPitch: 0.62, flash: 0.24, invert: 0.04, shake: 20,
-      quake: 0.7, name: 'HAYMAKER',
+      from: -1.5, to: 1.05, wind: 0.42, strike: 0.18, anim: 0.44, cooldown: 0.42, reach: 1.05, thick: 40,
+      dash: 160, heavy: true, hitSfx: 'punch', hitPitch: 0.62, flash: 0.24, invert: 0.04, shake: 20,
+      quake: 0.7, stance: 'brace', stanceLean: 0.3, stanceHip: -12, name: 'HAYMAKER',
     },
     {
-      from: 2.5, to: -1.2, wind: 0.42, strike: 0.18, anim: 0.54, cooldown: 0.56, reach: 1.05, thick: 42,
-      spin: 1, hop: 170, heavy: true, hitSfx: 'punch', hitPitch: 0.58, flash: 0.28, invert: 0.05,
-      shake: 22, name: 'BACKFIST',
+      // The other hand, thrown just as hard. It used to be a spinning backfist,
+      // which put a somersault in the middle of a punching combination.
+      from: 1.5, to: -1.0, wind: 0.4, strike: 0.2, anim: 0.46, cooldown: 0.46, reach: 1.05, thick: 42,
+      dash: 150, heavy: true, hitSfx: 'punch', hitPitch: 0.58, flash: 0.28, invert: 0.05,
+      shake: 22, stance: 'brace', stanceLean: 0.28, stanceHip: -12, name: 'OVERHAND',
     },
   ],
 };
@@ -118,6 +153,18 @@ export class Fists extends MeleeWeapon {
 
   /** Seconds the barrage has been running; zero when it is not. */
   private barrageT = 0;
+  /**
+   * 0..1 how far into the blur it is: 0 is countable punches with the arms
+   * drawn, 1 is the storm with no arms at all. It chases the ramp on the way
+   * in and unwinds on the way out, which is what makes the transition a change
+   * of speed rather than a change of weapon.
+   */
+  private blur = 0;
+  /** Runs on while the trigger is up, so the arms come back rather than snap back. */
+  private winddown = 0;
+  /** Alternates the driving arm through the ramp, and drives the piston pose. */
+  private armPhase = 0;
+  private armSide = 1;
   /** Set when it has run its full length: no more until the trigger comes up. */
   private spent = false;
   /** Rate limiter for the blows themselves. */
@@ -141,6 +188,8 @@ export class Fists extends MeleeWeapon {
     this.barrageT = 0;
     this.spent = false;
     this.punchT = 0;
+    this.blur = 0;
+    this.winddown = 0;
   }
 
   /**
@@ -149,7 +198,7 @@ export class Fists extends MeleeWeapon {
    * limbs vibrating in place read as a mistake; the storm of impacts in front
    * of his chest is the whole action, and it should be the only thing there.
    */
-  override get hidesArms(): boolean { return this.barrageT > 0.08; }
+  override get hidesArms(): boolean { return this.blur > 0.62; }
 
   override get comboLabel(): string | null {
     if (this.barrageT > 0) {
@@ -157,6 +206,7 @@ export class Fists extends MeleeWeapon {
       // resource and the player should be able to see it going.
       return `BARRAGE  ${Math.max(0, BARRAGE_MAX - this.barrageT).toFixed(1)}`;
     }
+    if (this.winddown > 0) return 'BARRAGE';
     return super.comboLabel;
   }
 
@@ -181,42 +231,65 @@ export class Fists extends MeleeWeapon {
       if (this.smears[i].life <= 0) this.smears.splice(i, 1);
     }
 
-    if (!held || this.heldFor <= BARRAGE_HOLD) {
-      if (this.barrageT > 0 || this.spent) this.endBarrage();
-      return;
-    }
-    if (this.spent) return;
-
-    this.barrageT += ctx.dt;
-    if (this.barrageT >= BARRAGE_MAX) {
-      // Out of it. A real recovery, so the last blow lands and then nothing
-      // does for a moment.
-      this.spent = true;
+    const running = held && this.heldFor > BARRAGE_HOLD && !this.spent;
+    if (running) {
+      this.barrageT += ctx.dt;
+      this.winddown = RAMP_OUT;
+      if (this.barrageT >= BARRAGE_MAX) {
+        // Out of it. A real recovery, so the last blow lands and then nothing
+        // does for a moment.
+        this.spent = true;
+        this.barrageT = 0;
+        this.cooldown = 0.8;
+        this.timer = 0.8;
+        ctx.sfx('heavyswing', 0.6);
+      }
+    } else {
       this.barrageT = 0;
-      this.cooldown = 0.8;
-      this.timer = 0.8;
-      ctx.sfx('heavyswing', 0.6);
+      if (!held) this.spent = false;
+      this.winddown = Math.max(0, this.winddown - ctx.dt);
+    }
+    if (this.winddown <= 0 && this.blur <= 0.002) {
+      if (this.blur !== 0) this.blur = 0;
+      if (this.armPhase !== 0) this.armPhase = 0;
       return;
     }
-    // He is leaning into it, so the whole figure creeps forward as it runs,
-    // and the arms are moving fast enough to smear.
-    ctx.sm.dash(ctx.sm.facing * 26 * ctx.dt);
-    ctx.sm.addGhostBurst(0.12);
-    ctx.shake(2.5);
 
-    // The smears are the effect, and they come out far faster than the blows
-    // do - forty a second, so a fifth of a second of them is twenty on the
-    // paper at once, which is what the reference frames actually hold.
-    this.smearAcc += ctx.dt * 58;
-    while (this.smearAcc >= 1) {
-      this.smearAcc -= 1;
-      this.addSmear(ctx);
+    // --- the ramp ------------------------------------------------------------
+    //
+    // On the way in, how far through the wind-up he is; on the way out, how
+    // much of the wind-up is left. `blur` chases it, so nothing about the
+    // handover between drawn arms and drags happens on a single frame.
+    const wants = running ? clamp(this.barrageT / RAMP_IN, 0, 1) : 0;
+    this.blur = damp(this.blur, wants, wants > this.blur ? 5.5 : 2.6, ctx.dt);
+    const speed = this.blur;
+
+    if (running) {
+      // He is leaning into it, so the whole figure creeps forward as it runs.
+      ctx.sm.dash(ctx.sm.facing * (10 + speed * 26) * ctx.dt);
+      if (speed > 0.5) ctx.sm.addGhostBurst(0.12);
+      ctx.shake(0.8 + speed * 2.2);
     }
 
+    // The drags only start once the arms are actually going too fast to draw,
+    // and they thin out again the moment they are not.
+    const field = clamp((this.blur - 0.3) / 0.7, 0, 1);
+    if (field > 0.01) {
+      this.smearAcc += ctx.dt * 105 * field;
+      while (this.smearAcc >= 1) {
+        this.smearAcc -= 1;
+        this.addSmear(ctx, field);
+      }
+    }
+
+    // The blows themselves, arriving sooner every time.
+    const rate = lerp(BARRAGE_SLOW, BARRAGE_RATE, easeOutCubic(speed));
+    this.armPhase += ctx.dt / Math.max(0.02, rate);
     this.punchT -= ctx.dt;
-    if (this.punchT > 0) return;
-    this.punchT = BARRAGE_RATE;
-    this.throwPunch(ctx);
+    if (!running || this.punchT > 0) return;
+    this.punchT = rate;
+    this.armSide = -this.armSide;
+    this.throwPunch(ctx, speed);
   }
 
   /**
@@ -224,7 +297,7 @@ export class Fists extends MeleeWeapon {
    * these are the arms smearing, not the punches landing - fanned a little
    * either side of the line he is punching along.
    */
-  private addSmear(ctx: WeaponCtx): void {
+  private addSmear(ctx: WeaponCtx, field: number): void {
     const sm = ctx.sm;
     const c = sm.pose.chest;
     const f = sm.facing;
@@ -239,8 +312,13 @@ export class Fists extends MeleeWeapon {
     // Spread right out behind and around him. They are where his arms have
     // *been*, not where his shoulders are, so they cover a wide field - and
     // starting them all on his sternum blots one spot solid black.
-    const off = rand(-110, 70);
-    const fwd = rand(-230, 90);
+    // In front of him and across his middle, not trailing off behind. These are
+    // the arms working in the space between his chest and the wall, and the
+    // field has to be big enough to very nearly bury him: parking it behind
+    // his shoulders left the busiest part of the drawing where nothing was
+    // happening and the figure standing clear in front of it.
+    const off = rand(-98, 88);
+    const fwd = rand(-96, 178);
     this.smears.push({
       x: c.x + f * fwd,
       y: c.y + off,
@@ -249,15 +327,15 @@ export class Fists extends MeleeWeapon {
       // Short and chunky. Drags that cross the whole paper read as spears;
       // the reference's longest is about a third of the frame and most are
       // half that again.
-      len: 110 + Math.pow(Math.random(), 1.7) * 400,
-      width: rand(9, 26),
+      len: (58 + Math.pow(Math.random(), 1.8) * 200) * (0.55 + field * 0.45),
+      width: rand(11, 30) * (0.6 + field * 0.4),
       bow: rand(-0.16, 0.16),
       hollow: Math.random() < 0.16,
-      life: rand(0.14, 0.26),
-      max: 0.26,
+      life: rand(0.2, 0.36),
+      max: 0.36,
       seed: Math.floor(rand(0, 9999)),
     });
-    if (this.smears.length > 34) this.smears.shift();
+    if (this.smears.length > 52) this.smears.shift();
   }
 
   /**
@@ -266,7 +344,7 @@ export class Fists extends MeleeWeapon {
    * several times the size of his own, which is exactly how the reference
    * draws a flurry that matters.
    */
-  private throwPunch(ctx: WeaponCtx): void {
+  private throwPunch(ctx: WeaponCtx, speed: number): void {
     const sm = ctx.sm;
     const c = sm.pose.chest;
     const a = sm.pose.aim + rand(-0.34, 0.34);
@@ -275,8 +353,8 @@ export class Fists extends MeleeWeapon {
     const at = hit ?? { x: c.x + ca * 150, y: c.y + sa * 150 };
     // Every fifth or so lands properly, so the flurry has a beat in it instead
     // of being one continuous noise.
-    const big = Math.random() < 0.28;
-    const size = (big ? 74 : 48) * rand(0.85, 1.25);
+    const big = Math.random() < 0.18 + speed * 0.2;
+    const size = (big ? 74 : 48) * rand(0.85, 1.25) * (0.72 + speed * 0.28);
 
     if (hit) {
       // Wide and shallow. The reference draws its ink on *paper* - the wall
@@ -295,10 +373,10 @@ export class Fists extends MeleeWeapon {
     });
     if (this.punches.length > 9) this.punches.shift();
 
-    ctx.sfx('punch', (big ? 0.68 : 1) * rand(0.9, 1.2));
-    ctx.shake(big ? 8 : 3.5);
-    if (big) ctx.flash(0.1);
-    sm.applyRecoil(0.14, a, 0);
+    ctx.sfx('punch', (big ? 0.68 : 1) * rand(0.9, 1.2) * (0.9 + speed * 0.3));
+    ctx.shake((big ? 8 : 3.5) * (0.6 + speed * 0.4));
+    if (big && speed > 0.5) ctx.flash(0.1);
+    sm.applyRecoil(0.2 + speed * 0.12, a, 0);
   }
 
   /** Leaning bodily into the flurry for as long as it lasts. */
@@ -321,9 +399,23 @@ export class Fists extends MeleeWeapon {
   override hands(ctx: WeaponCtx): HandTargets | null {
     const t = this.t;
     const f = ctx.sm.facing;
-    // Through the barrage the arms are not drawn at all, so there is nothing
-    // to place: the pose is the lean, and the effect does the rest.
-    if (this.barrageT > 0) return null;
+    // Through the barrage the arms are pistoning: one out along the line he is
+    // punching along, the other cocked right back, swapping every blow. They
+    // are only dropped once they are moving too fast for the drawing to say
+    // anything about them - `hidesArms` takes them off then, and until it does
+    // you can watch them speed up.
+    if (this.blur > 0.001 || this.winddown > 0) {
+      const phase = this.armPhase % 1;
+      // A hard drive out and a slower pull back, so the punch has a snap in it.
+      const drive = phase < 0.42 ? Math.pow(phase / 0.42, 0.45) : 1 - (phase - 0.42) / 0.58;
+      const lead = this.armSide > 0;
+      const ext = 30 + drive * 20;
+      const back = 26 - drive * 8;
+      return {
+        main: grip(ctx, lead ? ext : back, lead ? -5 : 13),
+        off: grip(ctx, lead ? back : ext, lead ? 15 : -5),
+      };
+    }
     // Between punches the arms are released back to the gait, so running with
     // bare hands swings them instead of carrying a frozen guard around.
     if (this.anim <= 0 && Math.abs(ctx.sm.vel.x) > 45) return null;
@@ -412,7 +504,7 @@ export class Fists extends MeleeWeapon {
 
     c.fillStyle = '#fff';
     for (const g of geom) {
-      c.globalAlpha = clamp(g.k * 2, 0, 1);
+      c.globalAlpha = clamp(g.k * 3.4, 0, 1);
       const { m, L, at } = g;
       const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
       let d = 0;
@@ -422,7 +514,7 @@ export class Fists extends MeleeWeapon {
         const t = d / L;
         const w = g.w * (1 - t * 0.45) + 2.6;
         const o0 = m.bow * d, o1 = m.bow * d1;
-        sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.22, 0.95);
+        sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.3, 0.72);
         c.fill();
         d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
       }
@@ -430,7 +522,7 @@ export class Fists extends MeleeWeapon {
 
     for (const g of geom) {
       const { m, k, L, at } = g;
-      c.globalAlpha = clamp(k * 2, 0, 1);
+      c.globalAlpha = clamp(k * 3.4, 0, 1);
       // Not a black blob: a white-bellied drag walled in by a heavy rim that
       // is only drawn part of the way round it. Where the drag runs thin the
       // two sides of the rim meet and it reads solid black, and where it runs
@@ -446,8 +538,8 @@ export class Fists extends MeleeWeapon {
         const w = g.w * (1 - t * 0.45);
         const o0 = m.bow * d, o1 = m.bow * d1;
         const trace = (): void =>
-          sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.22, 0.95);
-        sk.inked(trace, 4.4, m.hollow ? 0.7 : 0.22, m.seed + sgi * 13);
+          sk.ribbonPath(at(d, o0), at((d + d1) / 2, (o0 + o1) / 2), at(d1, o1), w, 0.3, 0.72);
+        sk.inked(trace, 4.4, m.hollow ? 0.6 : 0.14, m.seed + sgi * 13);
         // The lift-off before the brush comes back down.
         d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
       }
@@ -459,15 +551,22 @@ export class Fists extends MeleeWeapon {
       }
     }
 
-    // And the ink where the blows are actually landing: small dense clumps of
-    // hair-thin spikes on the face of the wall, nothing more.
-    c.fillStyle = '#000';
+    // And the ink where the blows are actually landing.
+    //
+    // Not a clump of separate black spikes with a line round every one of
+    // them: *one* torn white shape with a single contour round the whole set,
+    // the way the reference draws a hit. Drawn as one closed zigzag - tips out
+    // at wildly uneven lengths, valleys pulled back in near the point of
+    // contact - so there is exactly one outline and the paper shows through
+    // the middle of it.
     for (const p of this.punches) {
       const k = clamp(p.life / p.max, 0, 1);
       c.globalAlpha = clamp(k * 1.8, 0, 1);
-      sk.tuftPath(p.x, p.y, 14, p.size * 0.06, p.size * (0.7 + (1 - k) * 0.5),
-        2.9, p.ang + Math.PI, p.seed, 0.05);
-      c.fill();
+      const r1 = p.size * (0.72 + (1 - k) * 0.55);
+      sk.inked(
+        () => sk.starPath(p.x, p.y, 11, p.size * 0.1, r1, 3.0, p.ang + Math.PI, p.seed),
+        3.2, 0.12, p.seed + 5,
+      );
     }
     c.globalAlpha = 1;
     c.restore();

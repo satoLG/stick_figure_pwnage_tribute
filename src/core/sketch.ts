@@ -304,6 +304,47 @@ export class Sketch {
   }
 
   /**
+   * The mark a blow leaves, as ONE shape.
+   *
+   * `tuftPath` traces a spike per subpath, which is right when they are meant
+   * to be flicks of solid ink - but the moment you want the white-bellied
+   * treatment on them it gives you a separate outline round every single
+   * spike, and a landed punch turns into a bag of little leaves. This traces
+   * the same cluster as a single closed zigzag: tips at wildly uneven lengths,
+   * valleys pulled back in near the point of contact, one continuous contour
+   * round the lot. Fill it white and stroke it once.
+   *
+   * A partial `spread` closes back through the centre, so a fan is still one
+   * shape rather than an open ribbon.
+   */
+  starPath(
+    cx: number, cy: number, count: number, r0: number, r1: number,
+    spread = Math.PI * 2, dir = 0, seed = 0,
+  ): void {
+    const full = spread >= Math.PI * 2 - 0.01;
+    const n = Math.max(3, count);
+    const pts: Vec2[] = [];
+    const span = full ? Math.PI * 2 : spread;
+    for (let i = 0; i < n; i++) {
+      const t = full ? i / n : i / (n - 1);
+      const a = dir + (full ? t * span : (t - 0.5) * span);
+      const half = span / (full ? n * 2 : (n - 1) * 2);
+      // The valley leading into this spike, then the spike itself. Lengths run
+      // over more than a factor of three and lean short, so a handful stick
+      // right out of a lot of stubs.
+      const g = Math.abs(hashNoise(seed + i * 3, this.boil));
+      const vr = r0 * (0.7 + Math.abs(hashNoise(seed + i * 7, this.boil + 1)) * 0.9);
+      const tr = r0 + (r1 - r0) * (0.14 + g * g * 1.5);
+      const va = a - half * (0.75 + hashNoise(seed + i * 11, this.boil) * 0.3);
+      const ta = a + hashNoise(seed + i * 5, this.boil + 2) * half * 0.5;
+      pts.push({ x: cx + Math.cos(va) * vr, y: cy + Math.sin(va) * vr });
+      pts.push({ x: cx + Math.cos(ta) * tr, y: cy + Math.sin(ta) * tr });
+    }
+    if (!full) pts.push({ x: cx, y: cy });
+    this.polyPath(pts, 0.9);
+  }
+
+  /**
    * The reference's only grey, as a fill you can pour into any shape.
    *
    * `halftone` below shades whatever is clipped, which is fine for a box but
