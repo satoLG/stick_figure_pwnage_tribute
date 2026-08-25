@@ -14,7 +14,7 @@ import type { Sketch } from '../core/sketch';
 import { MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
-import { grip, gripAt, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
+import { grip, gripAt, headTilt, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
 
 /** A rough ring, the way everything round in this game is drawn. */
 function ring(x: number, y: number, r: number, n: number, rot: number): Vec2[] {
@@ -1198,7 +1198,7 @@ export class ArcaneStaff extends Weapon {
     const f = sm.facing;
     const R = HEAD_R;
     // The brim sits across the top third of the skull and tips with the lean.
-    const tilt = -0.14 * f + sm.pose.bodyAngle * 0.5;
+    const tilt = -0.14 * f + headTilt(sm);
     const cs = Math.cos(tilt), sn = Math.sin(tilt);
     const at = (dx: number, dy: number): Vec2 =>
       ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
@@ -1675,7 +1675,7 @@ export class Shinobi extends Weapon {
     const p = sm.pose.head;
     const f = sm.facing;
     const R = HEAD_R;
-    const tilt = sm.pose.bodyAngle * 0.6;
+    const tilt = headTilt(sm);
     const cs = Math.cos(tilt), sn = Math.sin(tilt);
     const at = (dx: number, dy: number): Vec2 =>
       ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });

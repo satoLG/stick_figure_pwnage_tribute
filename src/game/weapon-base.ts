@@ -49,6 +49,24 @@ export function gripAt(ctx: WeaponCtx, ang: number, fwd: number, side = 0): Vec2
   return { x: chest.x + c * d - s * side, y: chest.y + s * d + c * side - 5 };
 }
 
+/**
+ * How far a piece of headgear leans.
+ *
+ * The figure somersaults - a wall kick, an air jump, half the heavy swings -
+ * and while he is turning over, `pose.bodyAngle` runs all the way round. A hat
+ * or a headband drawn at that angle spends half of every flip upside down on
+ * top of his head, which is the one thing that reads as broken rather than as
+ * acrobatic. So headgear takes the *lean* out of the body angle and throws the
+ * rest away: it tips with him up to about a third of a turn and no further,
+ * and the head can orbit the pelvis all it likes underneath it.
+ */
+export function headTilt(sm: Stickman, amount = 0.55): number {
+  let a = sm.pose.bodyAngle % TAU;
+  if (a > Math.PI) a -= TAU;
+  if (a < -Math.PI) a += TAU;
+  return clamp(a, -1, 1) * amount;
+}
+
 /** Mirrors a world-space angle when the figure turns around. */
 export function mirror(a: number, facing: number): number {
   return facing > 0 ? a : Math.PI - a;

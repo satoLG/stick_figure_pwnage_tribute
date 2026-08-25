@@ -5,7 +5,7 @@ import type { Sketch } from '../core/sketch';
 import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { applyBlast, BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
-import { grip, gripAt, mirror, Weapon, type WeaponCtx } from './weapon-base';
+import { grip, gripAt, headTilt, mirror, Weapon, type WeaponCtx } from './weapon-base';
 import { Shout, SplitHead, Titan } from './weapons-forms';
 import { ArcaneStaff, Mecha, MissilePods, Shinobi, Thunderbolt, Wind } from './weapons-video';
 
@@ -1535,7 +1535,7 @@ export class EnergyBeam extends Weapon {
     const f = sm.facing;
     const R = HEAD_R;
     const k = this.aura;
-    const tilt = sm.pose.bodyAngle * 0.6;
+    const tilt = headTilt(sm);
     const cs = Math.cos(tilt), sn = Math.sin(tilt);
     const at = (dx: number, dy: number): Vec2 =>
       ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
