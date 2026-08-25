@@ -994,8 +994,11 @@ type Gun = 'magnum' | 'shotgun' | 'rifle' | 'bazooka';
 const CLOSE_RANGE = 250;
 /** Seconds of held trigger before the bazooka comes off his back. */
 const SLING_HOLD = 0.42;
-/** How long the grenades hang before the rifle starts working on them. */
-const FUSE = 0.34;
+/** When the grenades leave his hand, and when the rifle comes off his back. */
+const GRENADE_AT = 0.34;
+const RIFLE_AT = 0.72;
+/** How little air has to be left in front of a grenade before he shoots it. */
+const SNIPE_AT = 210;
 
 export class Gunslinger extends Weapon {
   readonly id = 5;
@@ -1015,6 +1018,8 @@ export class Gunslinger extends Weapon {
   private volley = 0;
   /** Grenades in the air that the rifle still owes a bullet to. */
   private live: Projectile[] = [];
+  /** Rate limiter on the sniping, so three rounds are three drawings. */
+  private snipeT = 0;
   /** How far through the swap the hands are, so a gun does not teleport. */
   private swapT = 0;
 
@@ -1090,40 +1095,76 @@ export class Gunslinger extends Weapon {
   protected override onLetGo(ctx: WeaponCtx): void {
     if (this.heldFor <= SLING_HOLD || this.volley > 0) return;
     const a = this.aimFrom(ctx, grip(ctx, 96));
-    this.volley = FUSE + 0.62;
-    this.timer = 1.9;
+    this.volley = 3.2;
+    this.timer = 2.4;
     this.gun = 'bazooka';
     this.swapT = 1;
     this.live.length = 0;
 
+    // 1. The rocket. One, out of the tube on his shoulder, and it goes off
+    //    against the wall on its own - it is not part of the trick, it is what
+    //    opens the door for the rest of it.
+    const muzzle = grip(ctx, 96);
+    ctx.projectiles.push(new Projectile({
+      x: muzzle.x, y: muzzle.y,
+      vx: Math.cos(a) * 1080, vy: Math.sin(a) * 1080,
+      kind: 'rocket', gravity: 190, radius: 8, life: 5, blast: BLASTS.bazooka,
+    }));
+    this.fireT = 0.18;
+    ctx.sfx('launch', 0.8);
+    ctx.shake(12);
+    ctx.flash(0.2);
+    ctx.sm.applyRecoil(1.2, a, 170);
+    const back = grip(ctx, -26);
+    ctx.particles.smoke(back.x, back.y, 9, 12);
+    ctx.particles.streaks(back.x, back.y, 7, a + Math.PI, 0.8, 80);
+
+    // 2. Three grenades, thrown by hand after it down the same line at three
+    //    speeds so they string out instead of arriving as one lump. Nobody
+    //    else in the arsenal has these; they are his party piece.
     for (let i = 0; i < 3; i++) {
-      ctx.after(i * 0.11, () => {
-        const muzzle = grip(ctx, 96);
-        // All three down the same line, at three speeds, so they string out
-        // instead of arriving as one lump.
-        const speed = 700 + i * 210;
+      ctx.after(GRENADE_AT + i * 0.13, () => {
+        const from = grip(ctx, 46, -6);
+        // Fastest first, so they stay strung out instead of the tail catching
+        // the head and all three arriving together.
+        const speed = 900 - i * 130;
         const p = new Projectile({
-          x: muzzle.x, y: muzzle.y,
-          vx: Math.cos(a) * speed, vy: Math.sin(a) * speed - 40,
-          kind: 'rocket', gravity: 260, radius: 8, life: 5, blast: BLASTS.bazooka,
+          x: from.x, y: from.y,
+          vx: Math.cos(a) * speed, vy: Math.sin(a) * speed - 150,
+          kind: 'grenade', gravity: 620, radius: 9, life: 6, blast: BLASTS.grenade,
         });
         this.live.push(p);
         ctx.projectiles.push(p);
-        this.fireT = 0.18;
-        ctx.sfx('launch', 0.82 + i * 0.06);
-        ctx.shake(9);
-        ctx.sm.applyRecoil(0.9, a, 120);
-        const back = grip(ctx, -26);
-        ctx.particles.smoke(back.x, back.y, 7, 12);
-        ctx.particles.streaks(back.x, back.y, 6, a + Math.PI, 0.8, 80);
+        ctx.sfx('swing', 1.25 + i * 0.06);
+        ctx.sm.applyRecoil(0.3, a, 14);
       });
     }
 
-    // And then the rifle, one round per grenade, as fast as he can swap to it.
-    ctx.after(FUSE, () => { this.gun = 'rifle'; this.swapT = 1; ctx.sfx('ui', 1.5); });
-    for (let i = 0; i < 3; i++) {
-      ctx.after(FUSE + 0.08 + i * 0.16, () => this.shootOne(ctx));
-    }
+    // 3. And the rifle comes off his back to meet them there.
+    ctx.after(RIFLE_AT, () => { this.gun = 'rifle'; this.swapT = 1; ctx.sfx('ui', 1.5); });
+  }
+
+  /**
+   * Waiting on the grenades.
+   *
+   * The rifle does not fire on a stopwatch: it fires when a grenade is nearly
+   * on the wall, so the three explosions land *there* rather than halfway
+   * across the room. Every frame the front one is cast along its own flight,
+   * and the moment there is less than a body's length of air left in front of
+   * it he puts a round through it.
+   */
+  private watchGrenades(ctx: WeaponCtx): void {
+    this.snipeT = Math.max(0, this.snipeT - ctx.dt);
+    if (this.gun !== 'rifle' || this.snipeT > 0) return;
+    while (this.live.length > 0 && this.live[0].dead) this.live.shift();
+    const g = this.live[0];
+    if (!g) return;
+    const sp = Math.hypot(g.vx, g.vy) || 1;
+    const ahead = ctx.terrain.strikePoint(g.x, g.y, g.vx / sp, g.vy / sp, SNIPE_AT, 3);
+    // Or it has run out of air time and is about to bury itself in the floor.
+    if (!ahead && g.life > 0.35) return;
+    this.snipeT = 0.09;
+    this.shootOne(ctx);
   }
 
   /** One rifle round, aimed at the oldest grenade still up. */
@@ -1160,6 +1201,9 @@ export class Gunslinger extends Weapon {
     if (!held) this.heat = Math.max(0, this.heat - ctx.dt * 1.6);
     if (this.volley > 0) {
       this.volley -= ctx.dt;
+      this.watchGrenades(ctx);
+      // The sequence is not over while anything is still in the air.
+      if (this.volley <= 0 && this.live.some((g) => !g.dead)) this.volley = 0.4;
       if (this.volley <= 0) { this.live.length = 0; this.gun = 'magnum'; this.swapT = 1; }
       return;
     }

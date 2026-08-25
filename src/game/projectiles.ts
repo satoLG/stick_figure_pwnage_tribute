@@ -14,7 +14,7 @@ export interface Blast {
 
 export type ProjectileKind =
   | 'rocket' | 'shell' | 'missile' | 'orb' | 'fireball' | 'kunai' | 'shuriken'
-  | 'bolt' | 'pellet';
+  | 'grenade' | 'bolt' | 'pellet';
 
 export class Projectile {
   x: number; y: number;
@@ -257,6 +257,31 @@ export class Projectile {
         sk.line({ x: -r * 2.6, y: r * 0.5 }, { x: -r * 5.4, y: r * 0.8 }, 1.6, 1, 0.4);
         break;
       }
+      case 'grenade': {
+        // A little bomb turning over as it flies: a rough ball, a collar, a
+        // lever off the side of it and a fuse throwing sparks. Nobody else in
+        // the arsenal throws one, so it wants to be legible at a glance.
+        const r = this.radius;
+        c.rotate(-this.angle + this.spin * 1.6);
+        sk.polyPath(ring(r, 10, 0), 0.9);
+        c.fillStyle = '#fff';
+        c.fill();
+        sk.rim(3, 0.16, 4501);
+        // Collar and lever.
+        c.strokeStyle = '#000';
+        sk.line({ x: -r * 0.5, y: -r * 0.95 }, { x: r * 0.5, y: -r * 0.95 }, 2.6, 1, 0.4);
+        sk.poly([
+          { x: r * 0.42, y: -r * 0.95 }, { x: r * 1.05, y: -r * 0.7 },
+          { x: r * 0.95, y: -r * 0.3 },
+        ], 2.2, false, 0.4);
+        // One band round it, and the fuse.
+        sk.line({ x: -r * 0.85, y: -r * 0.2 }, { x: r * 0.85, y: -r * 0.2 }, 1.8, 1, 0.4);
+        c.fillStyle = '#000';
+        sk.tuftPath(0, -r * 1.1, 5, r * 0.2, r * 1.5, 1.9, -Math.PI / 2,
+          Math.floor(this.spin * 7), 0.07);
+        c.fill();
+        break;
+      }
       case 'shuriken': {
         // The big one. Four points round a hole, turning hard - the one thing
         // in his hand that is *supposed* to spin.
@@ -416,6 +441,8 @@ export const BLASTS: Record<string, Blast> = {
   orb: { radius: 31, shake: 7, flash: 0.2, debris: 16, sfx: 'explosion', bites: 5 },
   /** A thrown blade: barely a mark, but there are always two of them. */
   kunai: { radius: 15, shake: 4, flash: 0.08, debris: 7, sfx: 'explosion', bites: 3 },
+  // Shot out of the air by his own rifle, so it goes off big and untidy.
+  grenade: { radius: 78, shake: 20, flash: 0.32, debris: 40, sfx: 'explosion', bites: 8 },
   // Every third throw. It is not a bigger kunai - it is the reason you counted
   // the first two.
   shuriken: { radius: 62, shake: 15, flash: 0.24, debris: 30, sfx: 'explosion', bites: 6 },
