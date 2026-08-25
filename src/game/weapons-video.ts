@@ -651,7 +651,7 @@ export class Wind extends MeleeWeapon {
 }
 
 // ---------------------------------------------------------------------------
-// 9. MISSILE PODS
+// 9. ROCKETEER
 // ---------------------------------------------------------------------------
 /** Seconds of held trigger before the pods stop firing singles and load a salvo. */
 const SALVO_HOLD = 0.5;
@@ -660,7 +660,7 @@ const SALVO_SIZE = 10;
 
 export class MissilePods extends Weapon {
   readonly id = 9;
-  readonly name = 'MISSILE PODS';
+  readonly name = 'ROCKETEER';
   readonly tagline = 'three out the front, or ten off his back';
   override auto = true;
   override cooldown = 0.9;
@@ -699,8 +699,8 @@ export class MissilePods extends Weapon {
   // that contrast is how you read at a glance which end is which.
 
   /** How long the shoulder block is, and how deep it stands. */
-  private readonly blockLen = 42;
-  private readonly blockHalf = 17;
+  private readonly blockLen = 78;
+  private readonly blockHalf = 18;
 
   /** Perpendicular offset of front port `i` on the face of the block. */
   private frontOffset(i: number): number { return (i - 1) * 8 + 3; }
@@ -727,7 +727,7 @@ export class MissilePods extends Weapon {
 
   /** How long back rail `i` runs. They are long, and no two are the same. */
   private backLen(i: number): number {
-    return (96 + (i % 2) * 26 - i * 6) * this.open;
+    return (104 + (i % 2) * 26 - i * 6) * this.open;
   }
 
   /** The mouth of back rail `i`. */
@@ -852,17 +852,26 @@ export class MissilePods extends Weapon {
       const a = this.backAxis(ctx, i);
       const len = this.backLen(i);
       const ca = Math.cos(a), sa = Math.sin(a);
-      const half = 4.4 - (i % 2) * 0.9;
+      // Thick enough that you can believe a rocket comes out of one. They
+      // were rails; they are tubes, and a tube has a bore.
+      const half = 12 - (i % 2) * 2.2;
       const at = (d: number, o: number): Vec2 =>
         ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
-      const rail = [at(4, -half), at(len, -half * 0.72), at(len, half * 0.72), at(4, half)];
+      const rail = [at(4, -half), at(len, -half * 0.88), at(len, half * 0.88), at(4, half)];
       c.fillStyle = '#fff';
       sk.polyPath(rail, 0.9);
       c.fill();
       sk.poly(rail, 2.6, false, 0.9);
-      // One line down the length of it and a cap on the far end.
-      sk.line(at(10, 0), at(len - 4, 0), 1.5, 2, 0.5);
-      sk.line(at(len, -half * 0.9), at(len, half * 0.9), 2.6, 1, 0.4);
+      // A band or two down it, and the open mouth at the far end - a black
+      // slot, because a tube you can see into is a tube something leaves by.
+      sk.line(at(len * 0.34, -half), at(len * 0.34, half), 2, 1, 0.5);
+      sk.line(at(len * 0.68, -half * 0.94), at(len * 0.68, half * 0.94), 2, 1, 0.5);
+      c.fillStyle = '#000';
+      sk.polyPath([at(len - 5, -half * 0.62), at(len + 1, -half * 0.62),
+        at(len + 1, half * 0.62), at(len - 5, half * 0.62)], 0.6);
+      c.fill();
+      c.strokeStyle = '#000';
+      sk.line(at(len - 6, -half * 0.95), at(len - 6, half * 0.95), 2.8, 1, 0.4);
     }
     // The yoke it is all hung off, across his back.
     const a0 = this.backAxis(ctx, 0), a3 = this.backAxis(ctx, 3);
