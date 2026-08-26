@@ -188,6 +188,36 @@ after the first run — navigations go to the network first and fall back to the
 cache, so a deploy is never pinned behind a stale copy, while the fingerprinted
 assets are cached on first use.
 
+### On iOS
+
+There is no install prompt on any iOS browser — Chrome, Firefox and Edge there
+are WebKit underneath, so none of them fires `beforeinstallprompt`. The only
+route is the share sheet:
+
+- **Safari** — Share in the bottom bar → **Add to Home Screen**.
+- **Chrome, Edge, Firefox** — the share button beside the address bar →
+  **Add to Home Screen**. Their own entry only exists on **iOS 16.4 or newer**;
+  on anything older the item is simply not in the sheet and Safari is the way
+  in. The recipe card names whichever button the browser in hand actually has.
+
+Two manifest details are load-bearing here and easy to get wrong:
+
+- `display` is **`standalone`**, not `fullscreen`. WebKit ignores `fullscreen`
+  and falls back to a plain browser window, so a home-screen icon set from a
+  `fullscreen` manifest opens the site in a tab instead of as an app. Android
+  still gets the fullscreen treatment through `display_override`, which lists
+  `fullscreen` first.
+- every URL in the manifest — `id`, `start_url`, `scope`, every icon — is
+  written **relative to the manifest**, and the worker registers from
+  `document.baseURI` rather than `/sw.js`. Served from a project subdirectory
+  (GitHub Pages and friends), the old absolute `/` paths put `start_url`
+  outside the document's scope, which voids the manifest for installation and
+  404s the icons and the worker along with it.
+
+The status bar is `black-translucent`, which is what lets the game paint under
+the clock; the HUD keeps clear of it through the `env(safe-area-inset-*)` probe
+in `index.html`.
+
 ## The arsenal
 
 Fourteen slots in two groups. **Main** is the set the source film actually

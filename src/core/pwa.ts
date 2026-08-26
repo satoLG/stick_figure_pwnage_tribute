@@ -4,8 +4,10 @@
  * Two worlds, and no pretending otherwise. Chrome and the rest fire
  * `beforeinstallprompt`, which can be held onto and fired later from a real
  * press - so the offer only appears where it will actually work. iOS has no
- * such event and never will: there, the only route is Share > Add to Home
- * Screen, so the button opens a card that says exactly that.
+ * such event and never will, in any browser: every engine on the phone is
+ * WebKit underneath, so Chrome and Firefox there are as event-less as Safari.
+ * The only route is Share > Add to Home Screen, and where that button sits
+ * differs per browser - so the card names the one the player is holding.
  */
 
 interface InstallPromptEvent extends Event {
@@ -46,6 +48,37 @@ class Installer {
       || (/Macintosh/.test(ua) && (navigator.maxTouchPoints ?? 0) > 1);
   }
 
+  /**
+   * Which iOS browser this is. They all run WebKit, but they hang Add to Home
+   * Screen off different buttons, and a recipe that names the wrong one is
+   * worse than no recipe at all.
+   */
+  get iosBrowser(): 'chrome' | 'firefox' | 'edge' | 'opera' | 'safari' {
+    const ua = navigator.userAgent;
+    if (/CriOS/.test(ua)) return 'chrome';
+    if (/FxiOS/.test(ua)) return 'firefox';
+    if (/EdgiOS/.test(ua)) return 'edge';
+    if (/OPT|OPiOS/.test(ua)) return 'opera';
+    return 'safari';
+  }
+
+  /** The three lines of the iOS recipe, worded for the browser in hand. */
+  get iosSteps(): string[] {
+    const share = this.iosBrowser === 'safari'
+      ? 'TAP THE SHARE BUTTON IN THE BOTTOM BAR'
+      : 'TAP THE SHARE BUTTON NEXT TO THE ADDRESS';
+    return [
+      share,
+      'SCROLL DOWN TO "ADD TO HOME SCREEN"',
+      'IT THEN OPENS FULL SCREEN, LIKE AN APP',
+    ];
+  }
+
+  /** Only Safari could do this before iOS 16.4; the rest need the newer OS. */
+  get iosNeedsSafariNote(): boolean {
+    return this.iosBrowser !== 'safari';
+  }
+
   /** A press would open the browser's own install flow. */
   get canPrompt(): boolean {
     return this.deferred !== null;
@@ -79,8 +112,12 @@ export const installer = new Installer();
 /** Registers the offline worker. Never in dev, where it would cache the HMR. */
 export function registerWorker(): void {
   if (!('serviceWorker' in navigator) || import.meta.env.DEV) return;
+  // Resolved against the page, not the host root: served from a project
+  // subdirectory, an absolute '/sw.js' is a 404 and there is no offline play.
+  const url = new URL('sw.js', document.baseURI).href;
+  const scope = new URL('./', document.baseURI).href;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    navigator.serviceWorker.register(url, { scope }).catch(() => {
       /* Offline play is a bonus; the game does not depend on it. */
     });
   });
