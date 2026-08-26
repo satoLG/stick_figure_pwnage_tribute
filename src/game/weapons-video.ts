@@ -1609,7 +1609,10 @@ export class Shinobi extends Weapon {
     // Sized so the ball and its flames together come out about twice his
     // height across - which is what "bigger than he is" has to mean when the
     // tongues around it are half the silhouette.
-    const r = clamp(sm.height * 0.46, 50, 78) * (0.78 + power * 0.22);
+    // What he has been holding goes into the size of it: a tap on the seals is
+    // a fat ball, a full wind-up is one twice that across - which is the whole
+    // reason for standing there making them.
+    const r = clamp(sm.height * 0.4, 44, 66) * (0.75 + power * 1.25);
     const d = r * 1.5 + 26;
     const mouth = { x: head.x + Math.cos(a) * d, y: head.y + Math.sin(a) * d };
     ctx.projectiles.push(new Projectile({
@@ -1679,6 +1682,8 @@ export class Shinobi extends Weapon {
   draw(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const sm = ctx.sm;
+
+    this.drawBand(sk, ctx);
 
     // --- the seals, as an inset ---------------------------------------------
     if (this.charge > 0.02) {
@@ -1815,6 +1820,38 @@ export class Shinobi extends Weapon {
     ], 0.8);
     c.fill();
 
+    c.restore();
+  }
+
+
+  /**
+   * Two hands folding through hand seals, drawn as hands.
+   *
+   * Every seal in the sequence is the same pair of palms with different
+   * fingers up, which is exactly how the real thing works and is why the inset
+   * exists at all - at figure scale you would see nothing.
+   */
+  /**
+   * The band itself, drawn *over* the figure.
+   *
+   * It is worn on his forehead, so it has to be in front of his head, full
+   * stop - drawing it behind him put the skull's outline through it the moment
+   * the charge pose moved his head, and a headband you can see the head
+   * through is a headband nobody is wearing.
+   */
+  private drawBand(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+    const p = sm.pose.head;
+    const f = sm.facing;
+    const R = HEAD_R;
+    const tilt = headTilt(sm);
+    const cs = Math.cos(tilt), sn = Math.sin(tilt);
+    const at = (dx: number, dy: number): Vec2 =>
+      ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
+    c.save();
+    c.strokeStyle = '#000';
+    c.lineJoin = 'round';
     // --- the band -----------------------------------------------------------
     //
     // Dark and heavy: it is a strip of cloth round his forehead, and drawn in
@@ -1844,13 +1881,6 @@ export class Shinobi extends Weapon {
     c.restore();
   }
 
-  /**
-   * Two hands folding through hand seals, drawn as hands.
-   *
-   * Every seal in the sequence is the same pair of palms with different
-   * fingers up, which is exactly how the real thing works and is why the inset
-   * exists at all - at figure scale you would see nothing.
-   */
   private drawSeal(sk: Sketch, ctx: WeaponCtx, cx: number, cy: number, s: number): void {
     const c = sk.ctx;
     const seal = Math.floor(ctx.time * 5) % 4;

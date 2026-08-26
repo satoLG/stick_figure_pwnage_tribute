@@ -376,6 +376,29 @@ export class Projectile {
         break;
       }
       case 'fireball': {
+        // The trail first, in world space and under everything else: a short
+        // string of torn white puffs over screen tone, shrinking back down the
+        // path it has flown. Fire this size leaves some of itself behind.
+        if (this.trail.length > 3) {
+          c.rotate(-this.angle);
+          c.translate(-this.x, -this.y);
+          const n = this.trail.length;
+          for (let i = 0; i < n; i += 2) {
+            const p = this.trail[i];
+            const u = i / (n - 1);
+            const pr = this.radius * (0.14 + u * 0.5)
+              * (0.75 + Math.abs(hashNoise(4300 + i, sk.boil)) * 0.5);
+            sk.ragPath(p.x, p.y, pr * 1.25, 11, 0.34, 4300 + i);
+            c.fillStyle = '#fff';
+            c.fill();
+            c.fillStyle = sk.screenTone();
+            c.fill();
+            sk.inked(() => sk.ragPath(p.x, p.y, pr, 11, 0.28, 4301 + i), 2.6, 0.5, 4302 + i);
+          }
+          c.translate(this.x, this.y);
+          c.rotate(this.angle);
+        }
+
         // Fire, not a sea urchin.
         //
         // Paper is the flame here: a big torn white body with a light rim, a
