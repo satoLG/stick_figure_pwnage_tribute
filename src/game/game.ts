@@ -332,6 +332,11 @@ export class Game {
    */
   private get aimMode(): AimMode {
     if (this.device === 'pad') return 'eased';
+    // A finger already *is* a position. On touch there is nothing to gain by
+    // reading a swing as a direction the way a thumbstick has to be read - you
+    // put your finger where you want the blow to land and it lands there - so
+    // every power points at the touch point, melee included.
+    if (this.device === 'touch') return 'point';
     return this.weapon.ranged ? 'point' : 'direct';
   }
 
@@ -601,6 +606,11 @@ export class Game {
    */
   private resolveAim(t: TouchState, padAim: Vec2 | null): Vec2 {
     if (this.device === 'desk') return this.pointerWorld();
+    // A finger under a spot is a crosshair on that spot. Everything that wants
+    // a target rather than a heading - a homing salvo, a summoned orb, the
+    // place a punch is thrown at - gets exactly where the thumb is, and melee
+    // swings at it too rather than reading the drag as a direction.
+    if (this.device === 'touch' && t.aimAt) return t.aimAt;
     const dir = (this.device === 'pad' ? padAim : t.aimDir) ?? { x: this.sm.facing, y: 0 };
     const eye = this.eye;
     const far = Math.max(this.view.w, this.view.h);

@@ -30,6 +30,14 @@ export interface TouchState {
   jumpHeld: boolean;
   /** Unit vector the aiming thumb has swung to; null until it is first used. */
   aimDir: Vec2 | null;
+  /**
+   * Where the aiming thumb actually is, in world units, while it is down.
+   *
+   * A finger is a *place*, not a direction, and everything that wants a target
+   * rather than a heading - a homing salvo, a summoned orb, the point a punch
+   * is thrown at - should get the place. Null when nothing is touching.
+   */
+  aimAt: Vec2 | null;
   firing: boolean;
   firePressed: boolean;
   wheelOpen: boolean;
@@ -87,7 +95,7 @@ export class TouchControls {
 
     const out: TouchState = {
       axis: 0, crouch: false, jump: false, jumpHeld: false,
-      aimDir: null, firing: false, firePressed: false,
+      aimDir: null, aimAt: null, firing: false, firePressed: false,
       wheelOpen: false, wheelPointer: this.pad, wheelReleased: false,
     };
 
@@ -206,6 +214,7 @@ export class TouchControls {
       nx: dx / AIM_R, ny: dy / AIM_R, dead: AIM_DEAD / AIM_R,
       world: here, eye,
     });
+    if (attack) out.aimAt = { x: here.x, y: here.y };
     this.aimFade += ((this.aimStick ? 1 : 0) - this.aimFade) * Math.min(1, dt * 14);
 
     // --- weapon pad ---------------------------------------------------------
