@@ -172,6 +172,18 @@ export abstract class MeleeWeapon extends Weapon {
     this.chain++;
     // A multi-step hold chain holds the mode until it wraps back to its start.
     this.holdLock = mode === 'hold' && list.length > 1 && this.chain % list.length !== 0;
+    this.startMove(ctx, mv);
+  }
+
+  /**
+   * Run one named strike, whatever the chain was going to do.
+   *
+   * A weapon whose held trigger is a *wind-up* rather than a chain - the
+   * smasher, which stores it and then batters the wall with it once you let
+   * go - drives its own sequence through here, so the timing, the impulses and
+   * the sound of a swing all stay in one place.
+   */
+  protected startMove(ctx: WeaponCtx, mv: MeleeMove): void {
     this.combo++;
     this.move = mv;
     this.struck = false;

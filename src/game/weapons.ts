@@ -809,35 +809,44 @@ const HAMMER_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
       hitSfx: 'slam', hitPitch: 0.76, name: 'METEOR',
     },
   ],
-  // Held, the ceremony goes out of it. He stops winding up and just beats the
-  // wall with the thing - forward, back, forward - three times as fast as a
-  // head this size has any right to move, with barely a frame of coil between
-  // them. It is the least dignified attack in the game and the point.
+  // Holding the trigger does not swing anything - it *stores* it. What comes
+  // out when you let go is the frenzy: he beats the wall with the thing left,
+  // right, left, right, faster than a head that size has any business moving,
+  // and only the last one is a proper wind-up. See `FRENZY` below.
   hold: [
     {
-      from: -2.1, to: 1.15, wind: 0.16, strike: 0.15, anim: 0.34, cooldown: 0.03, reach: 0.98, thick: 84,
-      blast: MAUL_LIGHT, heavy: true, impact: 1.8, flash: 0.4, invert: 0.05, shake: 26, quake: 1.2,
+      from: -2.1, to: 1.15, wind: 0.1, strike: 0.16, anim: 0.24, cooldown: 0.02, reach: 0.98, thick: 84,
+      blast: MAUL_LIGHT, heavy: true, impact: 1.8, flash: 0.34, invert: 0.04, shake: 24, quake: 1.1,
       hitSfx: 'slam', hitPitch: 1.02, name: 'BATTER',
     },
     {
-      from: 2.1, to: -1.1, wind: 0.14, strike: 0.15, anim: 0.32, cooldown: 0.03, reach: 0.98, thick: 84,
-      blast: MAUL_LIGHT, heavy: true, impact: 1.8, flash: 0.4, invert: 0.05, shake: 26, quake: 1.2,
+      from: 2.1, to: -1.1, wind: 0.1, strike: 0.16, anim: 0.24, cooldown: 0.02, reach: 0.98, thick: 84,
+      blast: MAUL_LIGHT, heavy: true, impact: 1.8, flash: 0.34, invert: 0.04, shake: 24, quake: 1.1,
       hitSfx: 'slam', hitPitch: 0.94, name: 'BATTER BACK',
     },
     {
-      from: -2.4, to: 1.3, wind: 0.16, strike: 0.18, anim: 0.46, cooldown: 0.6, reach: 1, thick: 104,
+      from: -2.4, to: 1.3, wind: 0.16, strike: 0.18, anim: 0.46, cooldown: 0.6, reach: 1, thick: 108,
       blast: MAUL_BIG, heavy: true, impact: 2, flash: 0.6, invert: 0.085, shake: 34, quake: 1.7,
       hitSfx: 'slam', hitPitch: 0.68, name: 'AND THE LAST ONE',
     },
   ],
 };
 
+/** Seconds of held trigger before letting go sets the frenzy off. */
+const FRENZY_HOLD = 0.4;
+/** How many blows it lands, and how far apart. */
+const FRENZY_BLOWS = 7;
+const FRENZY_RATE = 0.19;
+
 export class Warhammer extends MeleeWeapon {
   readonly id = 3;
   readonly name = 'SMASHER';
   readonly tagline = 'the head is bigger than he is';
-  protected readonly len = 236;
+  protected readonly len = 268;
   protected readonly sets = HAMMER_SETS;
+  /** Blows left in the frenzy, and the clock between them. */
+  private frenzy = 0;
+  private frenzyT = 0;
 
   /**
    * Half the height of the striking face, and how long the drum runs back off
@@ -845,8 +854,8 @@ export class Warhammer extends MeleeWeapon {
    * as tall as the figure and nearly as long, with a stick out of the back of
    * it, and no bands, cheeks or claws anywhere on it.
    */
-  private readonly headW = 74;
-  private readonly headD = 140;
+  private readonly headW = 92;
+  private readonly headD = 214;
 
   private dragT = 0;
   private scraped = 0;
@@ -857,6 +866,44 @@ export class Warhammer extends MeleeWeapon {
     this.cooldown = 1.15;
     this.gripFwd = 34;
     this.gripLead = 0.3;
+  }
+
+  /**
+   * Nothing comes out while the trigger is down.
+   *
+   * The whole point of the hold is that he is *storing* it - heaving the thing
+   * back over his shoulder - and running the chain meanwhile turned the wind-up
+   * into just another combo. Letting go is what sets it off.
+   */
+  protected override suppressFire(): boolean {
+    return this.frenzy > 0 || this.heldFor > FRENZY_HOLD;
+  }
+
+  protected override onLetGo(ctx: WeaponCtx): void {
+    if (this.heldFor <= FRENZY_HOLD || this.frenzy > 0) return;
+    this.frenzy = FRENZY_BLOWS;
+    this.frenzyT = 0;
+    ctx.sfx('heavyswing', 0.5);
+  }
+
+  protected override tick(ctx: WeaponCtx, held: boolean): void {
+    super.tick(ctx, held);
+    if (this.frenzy <= 0) return;
+    this.frenzyT -= ctx.dt;
+    if (this.frenzyT > 0) return;
+    // Left, right, left, right - and the last one is the only one he winds up
+    // for, so the burst finishes on a bang rather than trailing off.
+    const list = this.sets.hold;
+    const mv = this.frenzy === 1 ? list[2] : list[(FRENZY_BLOWS - this.frenzy) % 2];
+    this.frenzy--;
+    this.frenzyT = this.frenzy === 1 ? FRENZY_RATE * 1.6 : FRENZY_RATE;
+    this.startMove(ctx, mv);
+  }
+
+  override get comboLabel(): string | null {
+    if (this.frenzy > 0) return `FRENZY  x${FRENZY_BLOWS - this.frenzy + 1}`;
+    if (this.heldFor > FRENZY_HOLD) return 'WINDING UP';
+    return super.comboLabel;
   }
 
   /**
@@ -911,38 +958,55 @@ export class Warhammer extends MeleeWeapon {
     const D = this.headD;
 
     c.strokeStyle = '#000';
-    // Haft: one plain stroke into the back of the drum. Thin, and short next
-    // to what is on the end of it - in the source it is almost an afterthought.
-    sk.line(at(-38, 0), at(L - D + 10, 0), 5.5, 2, 0.6);
+    // Haft: one plain stroke into the back of the head. Short and thin - in
+    // the source it is almost an afterthought next to what is on the end of it.
+    sk.line(at(-30, 0), at(L - D + 6, 0), 5.5, 2, 0.6);
 
-    // The head. Not a slab and not a warhammer: a great smooth *drum*, seen
-    // end-on, that tapers slightly from the striking face back to the haft.
-    // White inside with one heavy line round it, because a black block this
-    // size would swallow the figure every time it swung past him and a bare
-    // outline would vanish into the wall exactly where it lands.
-    const back = W * 0.82;
-    const body = [at(L - D, -back), at(L, -W), at(L, W), at(L - D, back)];
-    c.fillStyle = '#fff';
-    sk.polyPath(body, 1.4);
-    c.fill();
-    sk.poly(body, 5.4, false, 1.4);
-    // The striking face: the far end of the cylinder, so an ellipse. This one
-    // shape is what turns a rectangle into a mallet.
-    const face: Vec2[] = [];
-    for (let i = 0; i < 16; i++) {
-      const a2 = (i / 16) * TAU;
-      face.push(at(L + Math.cos(a2) * W * 0.3, Math.sin(a2) * W));
+    // The head.
+    //
+    // Not a drum with a flat cap on it - that is a lampshade, and that is what
+    // it read as. The source's mallet is a great smooth *capsule*: parallel
+    // sides that barely swell, and a striking end that is fully domed over.
+    // The whole thing is about twice his height long and very nearly as wide
+    // as he is tall.
+    const back = L - D;
+    const pts: Vec2[] = [];
+    pts.push(at(back, -W * 0.9));
+    pts.push(at(back + D * 0.42, -W));
+    // The dome. A half capsule, slightly squashed along its own axis so the
+    // end reads as rounded rather than as half a circle stuck on.
+    const domeX = L - W * 0.62;
+    for (let i = 0; i <= 10; i++) {
+      const th = -Math.PI / 2 + (i / 10) * Math.PI;
+      pts.push(at(domeX + Math.cos(th) * W * 0.66, Math.sin(th) * W));
     }
+    pts.push(at(back + D * 0.42, W));
+    pts.push(at(back, W * 0.9));
     c.fillStyle = '#fff';
-    sk.polyPath(face, 1.2);
+    sk.polyPath(pts, 1.4);
     c.fill();
-    sk.poly(face, 4.6, false, 1.2);
+    sk.poly(pts, 5.4, false, 1.4);
+
+    // The collar: a wide curved lip flaring off the back of the head where the
+    // haft goes in. It is the one piece of the source's mallet that is not the
+    // barrel, and without it the barrel is just a barrel.
+    for (const side of [-1, 1]) {
+      const lip = [
+        at(back + 12, side * W * 0.86),
+        at(back - 6, side * W * 1.5),
+        at(back - 24, side * W * 1.34),
+        at(back - 6, side * W * 0.5),
+      ];
+      c.fillStyle = '#fff';
+      sk.polyPath(lip, 1.2);
+      c.fill();
+      sk.poly(lip, 4, false, 1.2);
+    }
+
     // Two lengthwise strokes down the barrel and nothing else. The source has
     // no bands, no rivets and no cheeks on this thing.
-    sk.line(at(L - D + 12, -back * 0.5), at(L - 6, -W * 0.52), 2.4, 2, 0.8);
-    sk.line(at(L - D + 16, back * 0.42), at(L - 6, W * 0.46), 2.2, 2, 0.8);
-    // The rim the drum is capped off at the back with.
-    sk.line(at(L - D, -back), at(L - D, back), 3.4, 1, 0.8);
+    sk.line(at(back + 26, -W * 0.52), at(L - W * 0.9, -W * 0.56), 2.4, 2, 0.8);
+    sk.line(at(back + 34, W * 0.44), at(L - W, W * 0.5), 2.2, 2, 0.8);
 
     // A flash of impact on landing, sized off the head rather than off nothing.
     if (this.striking > 0.55 && this.striking < 0.95) {
