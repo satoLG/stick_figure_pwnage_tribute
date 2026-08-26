@@ -5,7 +5,7 @@ import type { Sketch } from '../core/sketch';
 import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { applyBlast, BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
-import { grip, gripAt, headTilt, mirror, Weapon, type WeaponCtx } from './weapon-base';
+import { grip, gripAt, headTilt, mirror, throwArms, Weapon, type WeaponCtx } from './weapon-base';
 import { Shout, SplitHead, Titan } from './weapons-forms';
 import { ArcaneStaff, Mecha, MissilePods, Shinobi, Thunderbolt, Wind } from './weapons-video';
 
@@ -284,7 +284,8 @@ export class Fists extends MeleeWeapon {
 
     // The blows themselves, arriving sooner every time.
     const rate = lerp(BARRAGE_SLOW, BARRAGE_RATE, easeOutCubic(speed));
-    this.armPhase += ctx.dt / Math.max(0.02, rate);
+    if (this.blur > 0.08) this.armPhase += ctx.dt / Math.max(0.02, rate);
+    else this.armPhase = 0;
     this.punchT -= ctx.dt;
     if (!running || this.punchT > 0) return;
     this.punchT = rate;
@@ -404,18 +405,15 @@ export class Fists extends MeleeWeapon {
     // are only dropped once they are moving too fast for the drawing to say
     // anything about them - `hidesArms` takes them off then, and until it does
     // you can watch them speed up.
-    if (this.blur > 0.001 || this.winddown > 0) {
-      const phase = this.armPhase % 1;
-      // A hard drive out and a slower pull back, so the punch has a snap in it.
-      const drive = phase < 0.42 ? Math.pow(phase / 0.42, 0.45) : 1 - (phase - 0.42) / 0.58;
-      const lead = this.armSide > 0;
-      const ext = 30 + drive * 20;
-      const back = 26 - drive * 8;
-      return {
-        main: grip(ctx, lead ? ext : back, lead ? -5 : 13),
-        off: grip(ctx, lead ? back : ext, lead ? 15 : -5),
-      };
+    if (this.blur > 0.08) {
+      // Same throw, over and over, faster and faster - so the ramp is plainly
+      // the ordinary punch speeding up rather than a different motion. It stops
+      // the moment the blur is nearly gone: an arm reappearing out of the storm
+      // still hammering away at nothing reads as a glitch, so what comes back
+      // is a guard, and it comes back *still*.
+      return throwArms(ctx, this.armPhase % 1, this.armSide > 0, 46);
     }
+    if (this.winddown > 0.001) return this.restHands(ctx);
     // Between punches the arms are released back to the gait, so running with
     // bare hands swings them instead of carrying a frozen guard around.
     if (this.anim <= 0 && Math.abs(ctx.sm.vel.x) > 45) return null;
@@ -423,15 +421,10 @@ export class Fists extends MeleeWeapon {
 
     const mv = this.move;
     if (mv.kind === 'thrust') {
-      // An ease-out thrust followed by a slower recovery.
-      const push = t < 0.45 ? Math.pow(t / 0.45, 0.55) : 1 - (t - 0.45) / 0.55;
-      const lead = this.swap > 0;
-      const ext = 33 + push * 14;
-      const back = 30 - push * 4;
-      return {
-        main: grip(ctx, lead ? ext : back, lead ? -4 : 12),
-        off: grip(ctx, lead ? back : ext, lead ? 14 : -4),
-      };
+      // A punch is a throw. The fist comes from behind the shoulder and whips
+      // through - the same drive every hand-thrown thing in the game uses -
+      // rather than pistoning in and out on the aim line.
+      return throwArms(ctx, t, this.swap > 0, 48);
     }
     // A swinging punch: the fist comes in from outside the shoulder line.
     const ba = this.bladeAngle(ctx);
@@ -999,6 +992,8 @@ const GRENADE_AT = 0.34;
 const RIFLE_AT = 0.72;
 /** How little air has to be left in front of a grenade before he shoots it. */
 const SNIPE_AT = 210;
+/** How long an over-arm throw takes to play out. */
+const THROW_TIME = 0.26;
 
 export class Gunslinger extends Weapon {
   readonly id = 5;
@@ -1020,6 +1015,8 @@ export class Gunslinger extends Weapon {
   private live: Projectile[] = [];
   /** Rate limiter on the sniping, so three rounds are three drawings. */
   private snipeT = 0;
+  /** Counts down through an over-arm throw. */
+  private throwT = 0;
   /** How far through the swap the hands are, so a gun does not teleport. */
   private swapT = 0;
 
@@ -1135,6 +1132,7 @@ export class Gunslinger extends Weapon {
         });
         this.live.push(p);
         ctx.projectiles.push(p);
+        this.throwT = THROW_TIME;
         ctx.sfx('swing', 1.25 + i * 0.06);
         ctx.sm.applyRecoil(0.3, a, 14);
       });
@@ -1198,6 +1196,7 @@ export class Gunslinger extends Weapon {
     this.kick = Math.max(0, this.kick - ctx.dt * 3.4);
     this.fireT = Math.max(0, this.fireT - ctx.dt);
     this.swapT = Math.max(0, this.swapT - ctx.dt * 4);
+    this.throwT = Math.max(0, this.throwT - ctx.dt);
     if (!held) this.heat = Math.max(0, this.heat - ctx.dt * 1.6);
     if (this.volley > 0) {
       this.volley -= ctx.dt;
@@ -1216,6 +1215,9 @@ export class Gunslinger extends Weapon {
   }
 
   hands(ctx: WeaponCtx): HandTargets {
+    // The grenades go over-arm. They are the one thing in this slot that
+    // leaves his hand rather than a barrel, and they should look like it.
+    if (this.throwT > 0) return throwArms(ctx, 1 - this.throwT / THROW_TIME, true, 48);
     switch (this.gun) {
       case 'magnum':
         // One hand on it; the other swings with the gait.
@@ -1641,12 +1643,9 @@ export class EnergyBeam extends Weapon {
   hands(ctx: WeaponCtx): HandTargets | null {
     const f = ctx.sm.facing;
     if (this.orbT > 0 && this.beam <= 0 && this.charge < 0.05) {
-      // The hand that just threw is out along the aim; the other is cocked
-      // back at the hip with the next one already in it.
-      const k = this.orbT / 0.2;
-      const out = grip(ctx, 40 + k * 6, this.orbSide * 12);
-      const back = gripAt(ctx, ctx.sm.pose.aim + 2.3 * f, 26, -this.orbSide * 10);
-      return this.orbSide > 0 ? { main: out, off: back } : { main: back, off: out };
+      // The hand that just threw swings through from behind the shoulder; the
+      // other is cocked back with the next one already in it.
+      return throwArms(ctx, 1 - this.orbT / 0.2, this.orbSide > 0, 46);
     }
     if (this.beam > 0) {
       // Thrust out along the beam, one hand stacked on the other.

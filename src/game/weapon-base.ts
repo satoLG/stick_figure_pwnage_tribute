@@ -1,5 +1,5 @@
 import type { SfxName } from '../core/audio';
-import { clamp, easeOutCubic, rand, TAU, type Vec2 } from '../core/math';
+import { clamp, easeOutCubic, easeOutQuint, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Particles } from './particles';
 import type { Projectile } from './projectiles';
@@ -65,6 +65,34 @@ export function headTilt(sm: Stickman, amount = 0.55): number {
   if (a > Math.PI) a -= TAU;
   if (a < -Math.PI) a += TAU;
   return clamp(a, -1, 1) * amount;
+}
+
+/**
+ * The arm that throws.
+ *
+ * A hand-thrown thing - a punch, a kunai, a grenade, a ball of light - is not
+ * a gun. A gun is held out and goes off; an arm has to *come from somewhere*,
+ * and the whole read of the throw is the travel: cocked right back behind the
+ * shoulder, whipped through fast, and settling out along the line at the end,
+ * with the other hand doing the opposite so the shoulders turn with it. Every
+ * power here that throws rather than fires drives its arms through this, so
+ * they all move the same way.
+ *
+ * `t` is 0..1 through the throw and `lead` says which hand is doing it.
+ */
+export function throwArms(ctx: WeaponCtx, t: number, lead: boolean, reach = 44): HandTargets {
+  const f = ctx.sm.facing;
+  const a = ctx.sm.pose.aim;
+  const k = clamp(t, 0, 1);
+  // -1 is fully cocked behind the shoulder, +1 fully through and out in front.
+  // A short coil, then a whip that is nearly over by halfway - which is where
+  // the snap in a throw lives.
+  const drive = k < 0.28
+    ? -1 + (k / 0.28) * 0.25
+    : -0.75 + easeOutQuint((k - 0.28) / 0.72) * 1.75;
+  const out = gripAt(ctx, a + f * (1.55 - drive * 1.75), 24 + (drive + 1) * 0.5 * (reach - 24), -6 * f);
+  const back = gripAt(ctx, a + f * (1.55 + drive * 1.2), 22 + (1 - drive) * 5, 9 * f);
+  return lead ? { main: out, off: back } : { main: back, off: out };
 }
 
 /** Mirrors a world-space angle when the figure turns around. */

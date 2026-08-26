@@ -14,7 +14,7 @@ import type { Sketch } from '../core/sketch';
 import { MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
-import { grip, gripAt, headTilt, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
+import { grip, gripAt, headTilt, throwArms, wallPoint, Weapon, type WeaponCtx } from './weapon-base';
 
 /** A rough ring, the way everything round in this game is drawn. */
 function ring(x: number, y: number, r: number, n: number, rot: number): Vec2[] {
@@ -1670,8 +1670,8 @@ export class Shinobi extends Weapon {
       return { main: grip(ctx, 30 - k * 3, 5), off: grip(ctx, 30 - k * 3, -5) };
     }
     if (this.throwT > 0) {
-      const k = this.throwT / 0.26;
-      return { main: grip(ctx, 30 + (1 - k) * 16, -4), off: grip(ctx, 28, 14) };
+      // Over-arm: the blade comes from behind his shoulder and whips through.
+      return throwArms(ctx, 1 - this.throwT / 0.34, true, 50);
     }
     return null;
   }
@@ -2121,8 +2121,9 @@ export class Thunderbolt extends Weapon {
       };
     }
     if (this.anim > 0) {
-      const push = Math.sin(clamp(this.t / 0.4, 0, 1) * Math.PI);
-      return { main: grip(ctx, 32 + push * 14, -4), off: grip(ctx, 28, 14) };
+      // Flung, not fired: the same over-arm drive as every other hand-thrown
+      // thing in the game.
+      return throwArms(ctx, this.t, true, 46);
     }
     return null;
   }
