@@ -58,7 +58,7 @@ Nothing is shown until you touch it, so the picture stays clean.
 | Where | Action |
 | --- | --- |
 | Left side | A floating analog stick appears under your thumb. Its **direction** is the whole control: sideways moves, up jumps, down crouches. Drag past the edge and the stick follows your thumb. How far you push it picks the gait — a small tilt strolls, most of the travel runs, the last quarter sprints. |
-| Right side | Aim and attack. **With a gun** the aim goes exactly where you touch, and follows your thumb as it slides. **With a blade or your fists** it is a floating stick instead: press to swing along the aim you already have, drag to swing the aim itself round. |
+| Right side | Aim and attack. The aim goes exactly where you touch and follows your thumb as it slides — every power, guns and blades and fists alike. Put your finger where you want the blow to land and it lands there. |
 | Pad at bottom centre | Hold it and the weapons fan out above; slide onto one and lift to equip. |
 
 ## Controls — gamepad
@@ -93,8 +93,7 @@ degrees of aim. So each pairing gets what suits it (`src/ui/aim.ts`):
 
 | Device and weapon | Reading |
 | --- | --- |
-| Touch, ranged | **Point** — the aim goes to the spot under the thumb. There is no stick to wobble, so a shot lands where you put your finger. |
-| Touch, melee | **Direct** — the raw angle of the floating stick, instantly. Fastest and most forgiving, which is what a swing wants. |
+| Touch, any weapon | **Point** — the aim goes to the spot under the thumb. A finger already *is* a position, so there is nothing to gain by reading a swing as a direction the way a thumbstick has to be read: melee points at the touch too. |
 | Gamepad | **Eased** — the aim *swings* towards the stick at a capped speed instead of snapping to it, rising with the square of the push, so the first degrees of travel place a shot and the rim spins him round. A real stick springs back, and needs it. |
 | Mouse | The cursor is the aim. It is drawn as a difference against whatever is under it, so it inverts to white the moment it crosses the wall instead of disappearing into it. |
 
@@ -201,7 +200,7 @@ thing in his hands came out of.
 | # | Key | Power | Behaviour |
 | --- | --- | --- | --- |
 | 1 | `1` | Brawler | Punches and only punches — jab, cross, hook, uppercut, a shoulder charge out of a run, haymakers if you lean on it — each with its own stance so the body moves under the arm. Keep leaning and it winds up into the barrage: the blows arrive sooner and sooner until the arms stop being drawn at all and a field of drags buries him, and letting go runs the same thing backwards |
-| 2 | `2` | Swordsman | Too heavy to lift at all: standing or walking the point stays on the floor behind him, and a run rips it back up through everything in front. Hold it and he throws himself the width of a room forward turning over twice, lands on the wall and puts three full-weight cuts through it |
+| 2 | `2` | Swordsman | A slab too heavy to lift: standing or walking it trails behind him on a slant with the point skimming the floor, and a run rips it back up through everything in front. Nothing it does is a flick — every cut comes round from behind the far shoulder through most of a half circle and drags him along with it, taking out three times the ground the old one did. Hold it and he throws himself the width of a room forward turning over twice, lands on the wall and puts three full-weight cuts through it |
 | 3 | `3` | Smasher | The source's mallet: a smooth barrel as tall as he is with a stick out of the back and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
 | 4 | `4` | Windslash | Nothing in his hands: every swing throws curved blades of air four hundred units out in front, and what they leave is separate scores with wall still standing between them. There is weather round him whether or not the trigger is down, and the air carries him half again as high as anyone else jumps. Hold it and he pulls the storm in; letting go throws a whirlwind whose base stays in his hands |
 | 5 | `5` | Gunslinger | Four guns and he chooses. The three he is not holding ride on his back where you can see them; the one in his hands is whatever the range calls for — the revolver out past 250 units, the shotgun inside it. Hold the trigger and the tube comes off his back: one rocket, then three grenades thrown after it, then the rifle, which waits until a grenade is nearly on the wall before putting a round through it |
@@ -424,10 +423,16 @@ of lines the blow converges on. The hammer asks for the top of that range, and
 gets the sheet of speed lines the reference draws under a hit that big.
 
 `dragAngle` solves for the angle that puts the far end of a weapon flat on the
-floor behind the figure. The greatsword never comes up off it at all — standing
-or walking, the point is down — and the warhammer ploughs along behind him the
-moment he moves. Dragging one along the ground throws sparks and grit; the
-running attack rips it straight back up out of the floor.
+floor behind the figure, and the warhammer ploughs along behind him the moment
+he moves. The greatsword wants something slightly different: aiming its point
+*exactly* at the ground buries it, and on a rise the angle goes vertical and it
+reads as a post he is leaning on. So its drag lifts the tip a hand's breadth
+clear and clamps the angle into a band — whatever the ground does underneath,
+the slab stays a diagonal you can see the whole length of. The same drag holds
+through the short hops a run takes over bumps, or the sword would flick up over
+his shoulder and back every few strides. Hauling one along throws sparks and
+grit off the floor under the point; the running attack rips it straight back up
+out of the floor.
 
 ### Two groups, and one slot that is four weapons
 

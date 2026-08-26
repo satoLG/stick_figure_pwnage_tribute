@@ -5,7 +5,9 @@ import type { Sketch } from '../core/sketch';
 import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { applyBlast, BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
-import { grip, gripAt, headTilt, mirror, throwArms, Weapon, type WeaponCtx } from './weapon-base';
+import {
+  grip, gripAt, headTilt, mirror, throwArms, toward, Weapon, type WeaponCtx,
+} from './weapon-base';
 import { Shout, SplitHead, Titan } from './weapons-forms';
 import { ArcaneStaff, Mecha, MissilePods, Shinobi, Thunderbolt, Wind } from './weapons-video';
 
@@ -586,42 +588,50 @@ export class Fists extends MeleeWeapon {
  * thing up: the tip drags along the floor and throws sparks the whole way.
  */
 const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
+  // Everything here is a *heave*. A blade this heavy does not flick: it comes
+  // round from behind the far shoulder, travels most of a half circle, and
+  // carries him with it - which is why every one of these has a stance, a real
+  // step in it and a shove back afterwards. The arcs are long because the reach
+  // is: the cut opens far wider than the blade, and it should look as though
+  // the weight is what did it.
   ground: [
     {
-      from: -1.8, to: 0.8, wind: 0.44, strike: 0.16, anim: 0.8, cooldown: 0.95, reach: 0.82, thick: 54,
-      heavy: true, flash: 0.4, invert: 0.06, shake: 24, quake: 1, hitSfx: 'slam', hitPitch: 0.85,
-      stance: 'brace', stanceLean: -0.16, stanceHip: -8, name: 'CLEAVE',
+      from: -2.5, to: 1.1, wind: 0.4, strike: 0.18, anim: 0.72, cooldown: 0.72, reach: 1.35, thick: 80,
+      heavy: true, impact: 1.8, dash: 130, recover: 40, flash: 0.4, invert: 0.06, shake: 24, quake: 1,
+      hitSfx: 'slam', hitPitch: 0.85,
+      stance: 'brace', stanceLean: -0.24, stanceHip: -12, stanceOut: 0.16, name: 'CLEAVE',
     },
     {
-      from: 2.0, to: -0.9, wind: 0.4, strike: 0.16, anim: 0.78, cooldown: 0.9, reach: 0.84, thick: 54,
-      heavy: true, dash: 70, flash: 0.34, invert: 0.05, shake: 22, hitSfx: 'slam', hitPitch: 0.9,
-      stance: 'brace', stanceLean: -0.14, stanceHip: -8, name: 'SWEEP',
+      from: 2.6, to: -1.15, wind: 0.36, strike: 0.18, anim: 0.7, cooldown: 0.7, reach: 1.4, thick: 82,
+      heavy: true, impact: 1.8, dash: 150, recover: 40, flash: 0.34, invert: 0.05, shake: 22,
+      quake: 1, hitSfx: 'slam', hitPitch: 0.9,
+      stance: 'brace', stanceLean: -0.22, stanceHip: -12, stanceOut: 0.16, name: 'SWEEP',
     },
     {
       // The whole body turns with the sword and everything in front of him goes.
-      from: -2.7, to: 1.5, wind: 0.34, strike: 0.18, anim: 0.9, cooldown: 1.1, reach: 0.95, thick: 62,
-      heavy: true, spin: 1, hop: 215, dash: 110, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
+      from: -3.1, to: 1.75, wind: 0.32, strike: 0.2, anim: 0.84, cooldown: 0.95, reach: 1.5, thick: 96,
+      heavy: true, spin: 1, hop: 215, dash: 170, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
       hitSfx: 'slam', hitPitch: 0.78, name: 'WHIRLWIND',
     },
   ],
   run: [
     {
-      // Out of the drag: the tip is already on the floor, so he just keeps
+      // Out of the drag: the tip is already down by the floor, so he just keeps
       // running and rips it up through everything in the way.
-      from: 1.4, to: -1.35, wind: 0.3, strike: 0.18, anim: 0.62, cooldown: 0.7, reach: 0.9, thick: 50,
-      heavy: true, dash: 230, slide: 0.26, lift: 90, flash: 0.3, shake: 20, quake: 0.8,
+      from: 1.6, to: -1.55, wind: 0.28, strike: 0.2, anim: 0.58, cooldown: 0.6, reach: 1.45, thick: 78,
+      heavy: true, impact: 1.8, dash: 260, slide: 0.26, lift: 90, flash: 0.3, shake: 20, quake: 0.8,
       hitSfx: 'slam', hitPitch: 0.95, name: 'RISING DRAG',
     },
     {
-      from: -2.2, to: 1.0, wind: 0.32, strike: 0.16, anim: 0.68, cooldown: 0.78, reach: 0.88, thick: 52,
-      heavy: true, dash: 150, slide: 0.16, flash: 0.34, invert: 0.04, shake: 22, quake: 1,
+      from: -2.6, to: 1.25, wind: 0.3, strike: 0.18, anim: 0.62, cooldown: 0.66, reach: 1.4, thick: 78,
+      heavy: true, impact: 1.8, dash: 190, slide: 0.16, flash: 0.34, invert: 0.04, shake: 22, quake: 1,
       hitSfx: 'slam', hitPitch: 0.85, stance: 'lunge', stanceHip: -12, name: 'RUNNING CLEAVE',
     },
   ],
   air: [
     {
-      from: -1.6, to: 1.45, wind: 0.3, strike: 0.16, anim: 0.5, cooldown: 0.66, reach: 0.92, thick: 58,
-      heavy: true, lift: -430, flash: 0.45, invert: 0.06, shake: 26, quake: 1.4,
+      from: -1.9, to: 1.7, wind: 0.28, strike: 0.18, anim: 0.48, cooldown: 0.6, reach: 1.45, thick: 88,
+      heavy: true, impact: 2, lift: -430, flash: 0.45, invert: 0.06, shake: 26, quake: 1.4,
       hitSfx: 'slam', hitPitch: 0.7, name: 'PLUNGE',
     },
   ],
@@ -632,39 +642,48 @@ const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
   // for and not just a flourish.
   hold: [
     {
-      from: -2.8, to: 1.6, wind: 0.3, strike: 0.18, anim: 0.86, cooldown: 0.1, reach: 1, thick: 66,
+      from: -3.1, to: 1.8, wind: 0.3, strike: 0.18, anim: 0.86, cooldown: 0.1, reach: 1.5, thick: 84,
       heavy: true, spin: 2, hop: 250, dash: 1250, slide: 0.5, flash: 0.5, invert: 0.07,
       shake: 28, quake: 1.3, hitSfx: 'slam', hitPitch: 0.66, name: 'LEAPING WHIRL',
     },
     {
-      from: -2.5, to: 1.35, wind: 0.16, strike: 0.16, anim: 0.34, cooldown: 0.04, reach: 1, thick: 70,
-      heavy: true, impact: 1.7, dash: 90, flash: 0.4, invert: 0.05, shake: 24, quake: 1,
+      from: -2.8, to: 1.5, wind: 0.16, strike: 0.16, anim: 0.34, cooldown: 0.04, reach: 1.45, thick: 88,
+      heavy: true, impact: 1.7, dash: 120, flash: 0.4, invert: 0.05, shake: 24, quake: 1,
       hitSfx: 'slam', hitPitch: 0.8, name: 'CUT ONE',
     },
     {
-      from: 2.4, to: -1.3, wind: 0.14, strike: 0.16, anim: 0.32, cooldown: 0.04, reach: 1, thick: 70,
-      heavy: true, impact: 1.7, dash: 80, flash: 0.4, invert: 0.05, shake: 24, quake: 1,
+      from: 2.7, to: -1.45, wind: 0.14, strike: 0.16, anim: 0.32, cooldown: 0.04, reach: 1.45, thick: 88,
+      heavy: true, impact: 1.7, dash: 110, flash: 0.4, invert: 0.05, shake: 24, quake: 1,
       hitSfx: 'slam', hitPitch: 0.88, name: 'CUT TWO',
     },
     {
-      from: -2.6, to: 1.5, wind: 0.16, strike: 0.18, anim: 0.44, cooldown: 0.72, reach: 1.05, thick: 82,
-      heavy: true, impact: 2, dash: 110, flash: 0.55, invert: 0.075, shake: 30, quake: 1.5,
+      from: -2.9, to: 1.7, wind: 0.16, strike: 0.18, anim: 0.44, cooldown: 0.72, reach: 1.55, thick: 104,
+      heavy: true, impact: 2, dash: 140, flash: 0.55, invert: 0.075, shake: 30, quake: 1.5,
       hitSfx: 'slam', hitPitch: 0.7, name: 'CUT THREE',
     },
   ],
 };
 
+/** How far clear of the floor the point rides while he only carries it. */
+const DRAG_LIFT = 26;
+/** The band the drag settles into, radians off the horizontal. */
+const DRAG_LOW = 0.24, DRAG_HIGH = 0.66;
+/** He may be off the floor this long before it comes up over the shoulder. */
+const DRAG_COYOTE = 0.3;
+
 export class Greatsword extends MeleeWeapon {
   readonly id = 2;
   readonly name = 'SWORDSMAN';
-  readonly tagline = 'drags on the floor, lands like a truck';
-  protected readonly len = 158;
+  readonly tagline = 'rides the floor, lands like a truck';
+  protected readonly len = 196;
   protected readonly sets = GREATSWORD_SETS;
 
   /** 0..1 blend into the "too heavy to carry" drag pose. */
   private dragT = 0;
   /** Metres of floor dragged since the last scrape, so sparks track speed. */
   private scraped = 0;
+  /** Seconds since his feet last touched, so a bump mid-run keeps the drag. */
+  private airT = 0;
 
   constructor() {
     super();
@@ -674,7 +693,7 @@ export class Greatsword extends MeleeWeapon {
     this.gripLead = 0.34;
   }
 
-  override onEquip(): void { super.onEquip(); this.dragT = 0; }
+  override onEquip(): void { super.onEquip(); this.dragT = 0; this.airT = 0; }
 
   /**
    * He never lifts it. Standing or walking, the point is on the floor behind
@@ -685,16 +704,38 @@ export class Greatsword extends MeleeWeapon {
   protected restAngle(ctx: WeaponCtx): number {
     const shoulder = mirror(-2.45 + Math.sin(ctx.time * 1.1) * 0.05, ctx.sm.facing);
     if (this.dragT < 0.01) return shoulder;
-    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - 4, ctx.sm.facing);
-    return drag === null ? shoulder : shoulder + (drag - shoulder) * this.dragT;
+    return toward(shoulder, this.dragPose(ctx), this.dragT);
+  }
+
+  /**
+   * Where the slab lies when he is only carrying it: trailing behind him on a
+   * slant with the point riding a hand's breadth clear of the floor, so you can
+   * see the whole length of it. Aiming the tip *exactly* at the ground buries
+   * it - on a rise the angle goes vertical and it reads as a post he is leaning
+   * on - so the tip is lifted and the angle held inside a band. Whatever the
+   * ground does, it stays a diagonal.
+   */
+  private dragPose(ctx: WeaponCtx): number {
+    const sm = ctx.sm;
+    const h = sm.pose.handR;
+    const drop = ctx.terrain.groundBelow(h.x - sm.facing * this.len * 0.7, h.y, 320);
+    const fall = drop >= 320 ? this.len * 0.5 : drop - DRAG_LIFT;
+    const a = clamp(Math.asin(clamp(fall / this.len, -0.98, 0.98)), DRAG_LOW, DRAG_HIGH);
+    // A slow heave with the stride: the weight swings, it does not track him.
+    const sway = Math.sin(ctx.time * 5.2) * 0.06 * Math.min(1, Math.abs(sm.vel.x) / 220);
+    return mirror(Math.PI - a + sway, sm.facing);
   }
 
   /** The drag itself: sparks, grit and a scraping edge for as long as he walks. */
   protected override idleTick(ctx: WeaponCtx): void {
     const sm = ctx.sm;
     const speed = Math.abs(sm.vel.x);
-    // On the ground it is always down, whether he is moving or not.
-    const wants = sm.onGround ? 1 : 0;
+    // On the ground it is always down, whether he is moving or not - and a
+    // bump in the run that lifts his feet for two frames must not throw the
+    // sword up over his shoulder and back, so the drag holds through short
+    // hops and only lets go once he is properly airborne.
+    this.airT = sm.onGround ? 0 : this.airT + ctx.dt;
+    const wants = this.airT < DRAG_COYOTE ? 1 : 0;
     this.dragT = damp(this.dragT, wants, wants > 0 ? 7 : 5, ctx.dt);
     // Standing still it just lies there; the noise and the sparks are what
     // dragging it *along* costs.
@@ -706,9 +747,13 @@ export class Greatsword extends MeleeWeapon {
     this.scraped += speed * ctx.dt;
     if (this.scraped < 26) return;
     this.scraped = 0;
+    // The point rides clear of the floor, so the grit it throws up comes off
+    // the floor under it rather than out of thin air.
+    const gap = ctx.terrain.groundBelow(tip.x, tip.y, 90);
+    const fy = tip.y + Math.min(gap, 90);
     const back = sm.vel.x > 0 ? Math.PI : 0;
-    ctx.particles.sparks(tip.x, tip.y - 2, 2, 90 + speed * 0.6, back, 1.5);
-    ctx.particles.dust(tip.x, tip.y, 1, back, 0.5);
+    ctx.particles.sparks(tip.x, fy - 2, 2, 90 + speed * 0.6, back, 1.5);
+    ctx.particles.dust(tip.x, fy, 1, back, 0.5);
     ctx.sfx('scrape', clamp(0.7 + speed / 500, 0.7, 1.5));
   }
 
@@ -745,10 +790,11 @@ export class Greatsword extends MeleeWeapon {
     // is being hauled along it.
     if (this.anim <= 0 && this.dragT > 0.5 && Math.abs(ctx.sm.vel.x) > 26) {
       const tip = at(L, 0);
+      const fy = tip.y + Math.min(ctx.terrain.groundBelow(tip.x, tip.y, 90), 90);
       c.save();
       c.globalAlpha = this.dragT;
       c.lineWidth = 2;
-      sk.burst(tip.x, tip.y - 2, 4, 3, 14, 2, 1.5, ctx.sm.vel.x > 0 ? Math.PI : 0, 4141);
+      sk.burst(tip.x, fy - 2, 4, 3, 14, 2, 1.5, ctx.sm.vel.x > 0 ? Math.PI : 0, 4141);
       c.restore();
     }
   }
