@@ -1,5 +1,5 @@
 import type { SfxName } from '../core/audio';
-import { clamp, easeOutCubic, TAU, type Vec2 } from '../core/math';
+import { clamp, easeOutCubic, easeOutQuint, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import type { Particles } from './particles';
 import type { Projectile } from './projectiles';
@@ -47,6 +47,52 @@ export function gripAt(ctx: WeaponCtx, ang: number, fwd: number, side = 0): Vec2
   // The torso got shorter, so the grip is lifted to keep the swing arc on the
   // wall instead of sweeping through the indestructible floor.
   return { x: chest.x + c * d - s * side, y: chest.y + s * d + c * side - 5 };
+}
+
+/**
+ * How far a piece of headgear leans.
+ *
+ * The figure somersaults - a wall kick, an air jump, half the heavy swings -
+ * and while he is turning over, `pose.bodyAngle` runs all the way round. A hat
+ * or a headband drawn at that angle spends half of every flip upside down on
+ * top of his head, which is the one thing that reads as broken rather than as
+ * acrobatic. So headgear takes the *lean* out of the body angle and throws the
+ * rest away: it tips with him up to about a third of a turn and no further,
+ * and the head can orbit the pelvis all it likes underneath it.
+ */
+export function headTilt(sm: Stickman, amount = 0.55): number {
+  let a = sm.pose.bodyAngle % TAU;
+  if (a > Math.PI) a -= TAU;
+  if (a < -Math.PI) a += TAU;
+  return clamp(a, -1, 1) * amount;
+}
+
+/**
+ * The arm that throws.
+ *
+ * A hand-thrown thing - a punch, a kunai, a grenade, a ball of light - is not
+ * a gun. A gun is held out and goes off; an arm has to *come from somewhere*,
+ * and the whole read of the throw is the travel: cocked right back behind the
+ * shoulder, whipped through fast, and settling out along the line at the end,
+ * with the other hand doing the opposite so the shoulders turn with it. Every
+ * power here that throws rather than fires drives its arms through this, so
+ * they all move the same way.
+ *
+ * `t` is 0..1 through the throw and `lead` says which hand is doing it.
+ */
+export function throwArms(ctx: WeaponCtx, t: number, lead: boolean, reach = 44): HandTargets {
+  const f = ctx.sm.facing;
+  const a = ctx.sm.pose.aim;
+  const k = clamp(t, 0, 1);
+  // -1 is fully cocked behind the shoulder, +1 fully through and out in front.
+  // A short coil, then a whip that is nearly over by halfway - which is where
+  // the snap in a throw lives.
+  const drive = k < 0.28
+    ? -1 + (k / 0.28) * 0.25
+    : -0.75 + easeOutQuint((k - 0.28) / 0.72) * 1.75;
+  const out = gripAt(ctx, a + f * (1.55 - drive * 1.75), 24 + (drive + 1) * 0.5 * (reach - 24), -6 * f);
+  const back = gripAt(ctx, a + f * (1.55 + drive * 1.2), 22 + (1 - drive) * 5, 9 * f);
+  return lead ? { main: out, off: back } : { main: back, off: out };
 }
 
 /** Mirrors a world-space angle when the figure turns around. */
@@ -126,6 +172,23 @@ export class SlashFx {
   }
 }
 
+/**
+ * A point on whatever masonry is still standing, for weapons that pick their
+ * own targets rather than firing where the player points - the missile salvo,
+ * mostly. Falls back to the middle of what is left, and to the crosshair once
+ * there is nothing left at all.
+ */
+export function wallPoint(ctx: WeaponCtx, tries = 26): Vec2 {
+  const b = ctx.terrain.wallBounds();
+  if (!b) return { ...ctx.aimPoint };
+  for (let i = 0; i < tries; i++) {
+    const x = rand(b.x0, b.x1);
+    const y = rand(b.y0, b.y1);
+    if (ctx.terrain.solidAt(x, y)) return { x, y };
+  }
+  return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
+}
+
 /** Debris, sparks and speed lines wherever something bites into the wall. */
 export function impact(ctx: WeaponCtx, x: number, y: number, dir: number, power: number): void {
   ctx.particles.debris(x, y, Math.round(4 + power * 16), 90 + power * 320, dir + Math.PI, 2.4);
@@ -133,10 +196,20 @@ export function impact(ctx: WeaponCtx, x: number, y: number, dir: number, power:
   ctx.particles.streaks(x, y, Math.round(2 + power * 6), dir + Math.PI, 1.9, 16 + power * 40);
 }
 
+/**
+ * Which half of the arsenal a weapon belongs to.
+ *
+ * `main` is the set the source film actually shows him using. `extra` is
+ * everything built on top of it, kept in its own group on the wheel so the two
+ * never get confused for one another.
+ */
+export type WeaponGroup = 'main' | 'extra';
+
 export abstract class Weapon {
   abstract readonly id: number;
   abstract readonly name: string;
   abstract readonly tagline: string;
+  readonly group: WeaponGroup = 'main';
 
   /**
    * Whether this fires down a line rather than swinging through an arc. It
@@ -153,6 +226,14 @@ export abstract class Weapon {
 
   protected timer = 0;
   charge = 0;
+  /**
+   * Seconds the trigger has been down without a break. Weapons whose held
+   * behaviour is a different move rather than more of the same one - the melee
+   * chains, the mecha's rod array, the missile salvo - read it instead of
+   * running a clock of their own.
+   */
+  protected heldFor = 0;
+  private wasHeld = false;
   /** Attack animation clock, counting down. */
   protected anim = 0;
   protected animLen = 0.2;
@@ -181,12 +262,62 @@ export abstract class Weapon {
   /** Melee weapons report their running combo here; everything else is silent. */
   get comboLabel(): string | null { return null; }
 
-  onEquip(): void { this.charge = 0; this.anim = 0; this.timer = Math.min(this.timer, 0.12); }
-  onUnequip(_ctx: WeaponCtx): void { this.charge = 0; this.chargeSfx = false; }
+  /**
+   * True while this weapon's own effect has taken over the arms entirely - the
+   * fist barrage, where what you should be looking at is the storm of impacts
+   * in front of him, not two limbs vibrating.
+   */
+  get hidesArms(): boolean { return false; }
+
+  /** True while the weapon is drawing its own head - one that opens, say. */
+  get hidesHead(): boolean { return false; }
+
+  /**
+   * True while the weapon has replaced the figure outright. The titan is a
+   * machine he is standing inside, so for as long as it is up he is simply not
+   * drawn and the weapon draws everything, posed off the same skeleton.
+   */
+  get hidesBody(): boolean { return false; }
+
+  /** How big the head should be drawn; a shout swells it. */
+  get headScale(): number { return 1; }
+
+  /**
+   * How much of a jump this weapon gives him. One for everything with weight
+   * in it; the wind is carrying him rather than being carried, so it is the
+   * one thing here that gets to leave the ground differently from the rest.
+   */
+  get jumpBoost(): number { return 1; }
+
+  /**
+   * How hard gravity pulls him on the way down. One for everything with weight
+   * in it; a weapon that holds him up as he descends says so here.
+   */
+  get fallScale(): number { return 1; }
+
+  onEquip(): void {
+    this.charge = 0;
+    this.anim = 0;
+    this.heldFor = 0;
+    this.wasHeld = false;
+    this.timer = Math.min(this.timer, 0.12);
+  }
+  onUnequip(_ctx: WeaponCtx): void {
+    this.charge = 0;
+    this.chargeSfx = false;
+    this.heldFor = 0;
+    this.wasHeld = false;
+  }
 
   update(ctx: WeaponCtx, held: boolean, pressed: boolean): void {
     this.timer -= ctx.dt;
     if (this.anim > 0) this.anim = Math.max(0, this.anim - ctx.dt);
+    // The frame the trigger comes up is handled before the hold clock is
+    // cleared, so a weapon letting go of something it was winding up can still
+    // see how long it had.
+    if (this.wasHeld && !held) this.onLetGo(ctx);
+    this.wasHeld = held;
+    this.heldFor = held ? this.heldFor + ctx.dt : 0;
     this.tick(ctx, held);
 
     if (this.chargeTime > 0) {
@@ -203,7 +334,7 @@ export abstract class Weapon {
     }
 
     const wants = this.auto ? held : pressed;
-    if (wants && this.timer <= 0) {
+    if (wants && this.timer <= 0 && !this.suppressFire(ctx)) {
       this.timer = this.cooldown;
       this.startAnim();
       this.swap = -this.swap;
@@ -213,6 +344,16 @@ export abstract class Weapon {
 
   /** Per-frame hook for weapons with continuous effects (fire, beam). */
   protected tick(_ctx: WeaponCtx, _held: boolean): void {}
+
+  /**
+   * "Not right now." A weapon whose held trigger means something other than
+   * more shots - a rod array unfolding, a salvo loading - says so here, and the
+   * ordinary attack stops coming out while it does.
+   */
+  protected suppressFire(_ctx: WeaponCtx): boolean { return false; }
+
+  /** The frame the trigger comes back up; where a held-up attack goes off. */
+  protected onLetGo(_ctx: WeaponCtx): void {}
 
   /** Fires. `power` is the charge fraction for charged weapons, else 1. */
   protected abstract release(ctx: WeaponCtx, power: number): void;
@@ -278,11 +419,12 @@ export abstract class Weapon {
   /** Shared: muzzle flash drawn as a star of ink at the barrel tip. */
   protected muzzle(sk: Sketch, x: number, y: number, size: number, seed: number): void {
     const c = sk.ctx;
-    c.lineWidth = 2.6;
-    sk.burst(x, y, 7, size * 0.25, size, 2.6, TAU, 0, seed);
-    sk.poly([
-      { x: x + size * 0.9, y }, { x: x + size * 0.15, y: y - size * 0.5 },
-      { x: x - size * 0.2, y }, { x: x + size * 0.15, y: y + size * 0.5 },
-    ], 2.2, true, 0.8);
+    // A flash in the reference is a torn puff of *paper* with a line round
+    // part of it, not a solid diamond: white is what a light source is on a
+    // white page, and the ink is only there to say where it stops.
+    sk.inked(() => sk.ragPath(x, y, size * 0.62, 11, 0.44, seed), 4.2, 0.15, seed + 5);
+    c.fillStyle = '#000';
+    sk.tuftPath(x, y, 9, size * 0.55, size * 1.7, TAU, 0, seed, 0.05);
+    c.fill();
   }
 }

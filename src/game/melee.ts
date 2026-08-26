@@ -44,6 +44,12 @@ export interface MeleeMove {
   stanceOut?: number;
   /** A second bite mirrored about the aim: the X cut. */
   cross?: boolean;
+  /**
+   * Claws. Instead of one solid wedge the sweep leaves this many separate
+   * parallel gouges, which is the whole reading of a raking hit: the wall is
+   * not cut through, it is scored, and you can count the marks.
+   */
+  rake?: number;
   /** Craters instead of slicing - the hammer. */
   blast?: Blast;
   /** Bigger recovery, louder hit, more screen. */
@@ -54,6 +60,13 @@ export interface MeleeMove {
   ghost?: number;
   /** Kicks dust and a ring out along the floor where it lands. */
   quake?: number;
+  /**
+   * How big the fan of lines converging on the point of contact comes out,
+   * 0.3..2. The default is a light or a heavy hit; a weapon whose whole point
+   * is the size of the blow - the hammer - asks for the top of the range, and
+   * gets a sheet of speed lines across a third of the screen.
+   */
+  impact?: number;
   /** Shown in the HUD while the chain is running. */
   name?: string;
 }
@@ -102,15 +115,24 @@ export abstract class MeleeWeapon extends Weapon {
 
   private chain = 0;
   private idle = 0;
-  private heldFor = 0;
   private struck = false;
+  /**
+   * A held chain, once it has started, is a committed sequence.
+   *
+   * Without this the swordsman's charge falls apart the instant it leaves the
+   * ground: the leap that opens it makes him airborne, `pickMode` reads that
+   * as the air chain, the chain counter resets, and the three cuts he jumped
+   * across the room to land never come out. A hold chain therefore keeps hold
+   * of the mode until it has run all the way round.
+   */
+  private holdLock = false;
 
   override onEquip(): void {
     super.onEquip();
     this.chain = 0;
     this.combo = 0;
+    this.holdLock = false;
     this.mode = 'ground';
-    this.heldFor = 0;
     this.move = this.sets.ground[0] ?? FALLBACK;
   }
 
@@ -118,6 +140,7 @@ export abstract class MeleeWeapon extends Weapon {
     super.onUnequip(ctx);
     this.combo = 0;
     this.chain = 0;
+    this.holdLock = false;
   }
 
   override get comboLabel(): string | null {
@@ -133,6 +156,7 @@ export abstract class MeleeWeapon extends Weapon {
    * a real run, then a held trigger; standing still is the default chain.
    */
   private pickMode(ctx: WeaponCtx): MeleeMode {
+    if (this.holdLock) return 'hold';
     if (!ctx.sm.onGround) return 'air';
     if (Math.abs(ctx.sm.vel.x) > RUN_ATTACK_SPEED) return 'run';
     if (this.heldFor > HOLD_TIME) return 'hold';
@@ -146,6 +170,20 @@ export abstract class MeleeWeapon extends Weapon {
     const mv = list[this.chain % list.length] ?? FALLBACK;
 
     this.chain++;
+    // A multi-step hold chain holds the mode until it wraps back to its start.
+    this.holdLock = mode === 'hold' && list.length > 1 && this.chain % list.length !== 0;
+    this.startMove(ctx, mv);
+  }
+
+  /**
+   * Run one named strike, whatever the chain was going to do.
+   *
+   * A weapon whose held trigger is a *wind-up* rather than a chain - the
+   * smasher, which stores it and then batters the wall with it once you let
+   * go - drives its own sequence through here, so the timing, the impulses and
+   * the sound of a swing all stay in one place.
+   */
+  protected startMove(ctx: WeaponCtx, mv: MeleeMove): void {
     this.combo++;
     this.move = mv;
     this.struck = false;
@@ -177,14 +215,13 @@ export abstract class MeleeWeapon extends Weapon {
   /** Called every frame the weapon is at rest; where weapon idles live. */
   protected idleTick(_ctx: WeaponCtx): void {}
 
-  protected override tick(ctx: WeaponCtx, held: boolean): void {
-    this.heldFor = held ? this.heldFor + ctx.dt : 0;
-
+  protected override tick(ctx: WeaponCtx, _held: boolean): void {
     if (this.anim <= 0) {
       this.idle += ctx.dt;
       if (this.idle > COMBO_WINDOW && (this.chain !== 0 || this.combo !== 0)) {
         this.chain = 0;
         this.combo = 0;
+        this.holdLock = false;
       }
       this.idleTick(ctx);
       return;
@@ -236,10 +273,27 @@ export abstract class MeleeWeapon extends Weapon {
       // stone the edge gets, which is the only thing that should separate a
       // greatsword from a jab.
       const bite = thick * 0.22;
-      const cut = ctx.terrain.carveSector(h.x, h.y, 0, reach, from, to, bite);
-      removed = cut.removed;
-      // Fragments the cut stranded and knocked loose fall as real debris.
-      for (const p of cut.edges.slice(0, 5)) ctx.particles.debris(p.x, p.y, 1, 190, a + Math.PI, 2.2);
+      if (mv.rake) {
+        // Claws: a handful of thin concentric arcs at different radii, so what
+        // is left in the masonry is a set of parallel scores rather than one
+        // missing wedge. The gaps between them are the effect.
+        const n = mv.rake;
+        const band = reach * 0.5;
+        const gouge = Math.max(4, band / (n * 2.1));
+        for (let i = 0; i < n; i++) {
+          const r0 = reach - band * (i / Math.max(1, n - 1)) - gouge;
+          const cut = ctx.terrain.carveSector(h.x, h.y, r0, r0 + gouge, from, to, bite * 1.5);
+          removed += cut.removed;
+          for (const p of cut.edges.slice(0, 2)) {
+            ctx.particles.debris(p.x, p.y, 1, 220, a + Math.PI, 2.2);
+          }
+        }
+      } else {
+        const cut = ctx.terrain.carveSector(h.x, h.y, 0, reach, from, to, bite);
+        removed = cut.removed;
+        // Fragments the cut stranded and knocked loose fall as real debris.
+        for (const p of cut.edges.slice(0, 5)) ctx.particles.debris(p.x, p.y, 1, 190, a + Math.PI, 2.2);
+      }
       if (mv.cross) {
         const from2 = a - mv.from * f, to2 = a - mv.to * f;
         removed += ctx.terrain.carveSector(h.x, h.y, 0, reach, from2, to2, bite).removed;
@@ -274,7 +328,7 @@ export abstract class MeleeWeapon extends Weapon {
     const bit = removed > 0;
     const shake = mv.shake ?? (heavy ? 17 : 6);
     ctx.shake(bit ? shake : shake * 0.4);
-    ctx.hit(at.x, at.y, a, heavy ? 1.6 : 0.85);
+    ctx.hit(at.x, at.y, a, mv.impact ?? (heavy ? 1.6 : 0.85));
     // Inverting the whole screen is the loudest thing this game can do, so it
     // is spent only on a charged special - the held chain's heavy finishers.
     if (heavy && this.mode === 'hold') ctx.invert(0.16);

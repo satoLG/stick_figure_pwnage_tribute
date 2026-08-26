@@ -97,6 +97,17 @@ const SETTLE = 26;
 const STRIDE_WALK = 50, STRIDE_RUN = 84, STRIDE_SPRINT = 112;
 
 /**
+ * Wing-borne flight, which is a different thing from the beam's hover: the
+ * hover is a power holding him up while he does something else, and this is
+ * actually flying. Gravity all but goes away and the jump key stops being a
+ * jump - held, it climbs; crouch dives; letting go of both leaves him sinking
+ * gently, so he drifts down instead of hanging in the air like a balloon.
+ */
+const FLY_CLIMB = 330;
+const FLY_DIVE = 470;
+const FLY_SINK = 64;
+
+/**
  * A gait is written as poses, not as a formula: each key says where the thigh
  * points, how hard the knee is folded, and how far the hips have dropped. The
  * cycle below is a real run - heel strike, absorb, drive, then the heel snapping
@@ -152,11 +163,12 @@ export interface HandTargets {
  * pose. `hover` also switches gravity off, which is what lets the beam be
  * charged and fired in mid-air before the figure drops back to the floor.
  */
-export type StanceKind = 'brace' | 'hover' | 'crouch' | 'lunge';
+export type StanceKind = 'brace' | 'hover' | 'fly' | 'crouch' | 'lunge';
 
 export interface Stance {
   /**
-   * `brace` plants and coils, `hover` switches gravity off, `crouch` drops the
+   * `brace` plants and coils, `hover` switches gravity off, `fly` hands him
+   * the sky outright (wings: jump climbs, crouch dives), `crouch` drops the
    * whole figure to the floor (the ninja slash), `lunge` throws the front leg
    * out ahead and drives off the back one.
    */
@@ -200,6 +212,19 @@ export class Stickman {
 
   private coyote = 0;
   private jumpBuffer = 0;
+  /**
+   * How much of a jump the thing in his hands gives him. One, for everything
+   * that is not the wind: what carries him up there is the air itself, and it
+   * should be visible from the first press that this one leaves the ground
+   * differently from the rest.
+   */
+  jumpBoost = 1;
+  /**
+   * How hard the thing in his hands lets gravity pull on him on the way down.
+   * One for everything with weight in it; the mage rides a circle of his own
+   * making and comes down at less than half speed.
+   */
+  fallScale = 1;
   private airJumps = 1;
   private maxAirJumps = 1;
   /** Counts down through a wall kick; drives the pose that sells the push-off. */
@@ -252,6 +277,8 @@ export class Stickman {
   private stanceKind: StanceKind = 'brace';
   private stanceW = 0;
   private hoverT = 0;
+  /** 0..1 blend into wing-borne flight; only ever above zero off the ground. */
+  private flyT = 0;
   /** Seconds of low-friction ground travel left; what makes a slash slide. */
   private slideT = 0;
 
@@ -260,6 +287,20 @@ export class Stickman {
   private ghostTimer = 0;
   /** Seconds of forced afterimages; weapons bump this on their big swings. */
   private ghostBurst = 0;
+
+  /**
+   * Set while an attack is moving the arms faster than a drawing can follow.
+   * The reference simply stops drawing them at that point and lets the effect
+   * in front of the body carry the whole action, which reads far better than
+   * any amount of blur.
+   */
+  armsHidden = false;
+  /** Set while a weapon is drawing its own head - one that opens, say. */
+  headHidden = false;
+  /** Set while a weapon has replaced the whole figure, as the titan does. */
+  bodyHidden = false;
+  /** Scales the head. A shout can swell it; nothing else touches it. */
+  headScale = 1;
 
   state: MoveState = 'idle';
   /** Set by game.ts when a landing should make noise. */
@@ -285,12 +326,17 @@ export class Stickman {
     this.stance = null;
     this.stanceW = 0;
     this.hoverT = 0;
+    this.flyT = 0;
     this.slideT = 0;
     this.wallKick = 0;
     this.airStallT = 0;
     this.stallT = 0;
     this.ghosts.length = 0;
     this.ghostBurst = 0;
+    this.armsHidden = false;
+    this.headHidden = false;
+    this.bodyHidden = false;
+    this.headScale = 1;
     this.sprintT = 0;
     this.gaitPower = 0;
   }
@@ -320,6 +366,13 @@ export class Stickman {
     if (floating && this.hoverT < 0.05 && this.vel.y > 0) this.vel.y *= 0.22;
     this.hoverT = damp(this.hoverT, floating ? 1 : 0, floating ? 15 : 5, dt);
 
+    // Wings, which are a different animal: the moment his feet leave the floor
+    // they take over, and the jump key stops being a jump.
+    const flying = !!this.stance && this.stance.kind === 'fly'
+      && this.stance.weight > 0.05 && !this.onGround;
+    this.flyT = damp(this.flyT, flying ? 1 : 0, flying ? 14 : 6, dt);
+    const airborneOnWings = this.flyT > 0.4 && !this.onGround;
+
     // --- horizontal acceleration ------------------------------------------
     const topSpeed = this.groundTopSpeed(push);
     const accel = this.onGround ? ACCEL : AIR_ACCEL;
@@ -339,9 +392,11 @@ export class Stickman {
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     this.coyote = this.onGround ? COYOTE : Math.max(0, this.coyote - dt);
 
-    if (this.jumpBuffer > 0 && this.hoverT < 0.5) {
+    // On the wing there is nothing to jump off and nothing to jump to: the same
+    // key is the throttle, handled with gravity below.
+    if (this.jumpBuffer > 0 && this.hoverT < 0.5 && !airborneOnWings) {
       if (this.coyote > 0) {
-        this.vel.y = -JUMP_V;
+        this.vel.y = -JUMP_V * this.jumpBoost;
         this.jumpBuffer = 0; this.coyote = 0;
         this.onGround = false;
         this.justJumped = true;
@@ -351,7 +406,7 @@ export class Stickman {
         // which is nearly all lift and only a nudge of push. The nudge is
         // deliberately small - see WALL_JUMP_PUSH - so he can steer straight
         // back into the wall and take another one, and climb the whole face.
-        this.vel.y = -WALL_JUMP_V;
+        this.vel.y = -WALL_JUMP_V * this.jumpBoost;
         this.vel.x = -this.onWall * WALL_JUMP_PUSH;
         this.jumpBuffer = 0;
         // The air jumps come back with it, so a kick and a somersault stack.
@@ -368,7 +423,7 @@ export class Stickman {
         this.addGhostBurst(0.22);
       } else if (this.airJumps > 0) {
         this.airJumps--;
-        this.vel.y = -AIR_JUMP_V;
+        this.vel.y = -AIR_JUMP_V * this.jumpBoost;
         this.jumpBuffer = 0;
         this.justJumped = true;
         // A full somersault on the second jump.
@@ -390,6 +445,18 @@ export class Stickman {
       this.flipSpin *= Math.exp(-9 * dt);
       // The beam's float outranks the swing float; let the latter ease out.
       this.stallT = damp(this.stallT, 0, 7, dt);
+    } else if (this.flyT > 0.01) {
+      // Flying. What is left of gravity is only there so the transition into
+      // and out of the wings is not a switch being thrown; the vertical speed
+      // is asked for, not fallen into.
+      const g = GRAVITY * lerp(1, 0.05, this.flyT);
+      this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
+      const want = ctrl.jumpHeld ? -FLY_CLIMB
+        : ctrl.down ? FLY_DIVE
+          : FLY_SINK + Math.sin(this.breathe * 1.7) * 20;
+      this.vel.y = damp(this.vel.y, want, 11 * this.flyT, dt);
+      this.flipSpin *= Math.exp(-9 * dt);
+      this.stallT = damp(this.stallT, 0, 7, dt);
     } else {
       // Swinging in mid-air all but takes the floor away: gravity drops to a
       // trickle and the fall is capped at a crawl, so a combo started off a
@@ -403,14 +470,18 @@ export class Stickman {
       // apex lands in exactly the same place; only what happens after differs.
       const rising = this.vel.y < 0;
       const stall = rising ? 0 : this.stallT;
-      const g = (rising ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, stall);
-      this.vel.y = Math.min(MAX_FALL, this.vel.y + g * dt);
+      // A weapon that slows his descent does it here, and only on the way
+      // down: it is a softer landing, never a bigger jump.
+      const carried = rising ? 1 : this.fallScale;
+      const g = (rising ? GRAVITY * 0.86 : GRAVITY) * lerp(1, AIR_ATTACK_GRAVITY, stall) * carried;
+      this.vel.y = Math.min(MAX_FALL * carried, this.vel.y + g * dt);
       if (stall > 0.01 && this.vel.y > 0) {
         this.vel.y = Math.min(this.vel.y, lerp(MAX_FALL, AIR_ATTACK_FALL_V, stall));
       }
     }
 
-    if (this.onWall !== 0 && this.vel.y > 0 && Math.sign(dir) === this.onWall && push > 0.3) {
+    if (this.onWall !== 0 && this.flyT < 0.4 && this.vel.y > 0
+      && Math.sign(dir) === this.onWall && push > 0.3) {
       this.vel.y = Math.min(this.vel.y, WALL_SLIDE_V);
     }
 
@@ -441,7 +512,8 @@ export class Stickman {
     // --- state selection ---------------------------------------------------
     const speed = Math.abs(this.vel.x);
     if (!this.onGround) {
-      this.state = this.onWall !== 0 && this.vel.y > 0 ? 'wallslide' : (this.vel.y < 0 ? 'jump' : 'fall');
+      this.state = this.onWall !== 0 && this.vel.y > 0 && this.flyT < 0.4
+        ? 'wallslide' : (this.vel.y < 0 ? 'jump' : 'fall');
     } else if (this.crouching) this.state = 'crouch';
     else if (speed <= 20) this.state = 'idle';
     else if (speed > RUN_SPEED * 0.95) this.state = 'sprint';
@@ -651,6 +723,8 @@ export class Stickman {
   }
 
   get hovering(): number { return this.hoverT; }
+  /** 0..1 how much of him the wings are currently carrying. */
+  get flightBlend(): number { return this.flyT; }
   /** Which side the wall he last kicked off was on: -1 left, +1 right. */
   get wallKickSide(): number { return this.wallKickDir; }
   get stanceBlend(): number { return this.stanceW; }
@@ -821,7 +895,8 @@ export class Stickman {
     // committing to a cut.
     const braceUp = this.stanceKind === 'brace' ? this.stanceW
       : this.stanceKind === 'hover' ? this.stanceW * 0.5
-        : -this.stanceW * 0.7;
+        : this.stanceKind === 'fly' ? this.flyT * 0.4
+          : -this.stanceW * 0.7;
     const headOff = rotate({ x: 0, y: -HEAD_R * 1.02 }, this.lean * 0.5);
     const head = {
       x: neck.x + headOff.x + Math.cos(look) * 3.2,
@@ -1001,11 +1076,13 @@ export class Stickman {
     let bend: number;
 
     if (!this.onGround) {
-      const rise = clamp(-this.vel.y / 600, -1, 1) * (1 - this.hoverT);
+      const rise = clamp(-this.vel.y / 600, -1, 1) * (1 - this.hoverT) * (1 - this.flyT);
       const spin = clamp(Math.abs(this.flipSpin) / 3, 0, 1);
       // Arms throw up on the way up and out for balance on the way down - and
-      // clamp in tight around the knees through a somersault.
-      upper = lerp((front ? 1 : -1) * (26 + rise * 34) - rise * 26 + this.hoverT * 30, 52, spin);
+      // clamp in tight around the knees through a somersault. On the wing they
+      // are swept back out of the way of them.
+      upper = lerp((front ? 1 : -1) * (26 + rise * 34) - rise * 26
+        + this.hoverT * 30 - this.flyT * 26, 52, spin);
       bend = lerp(52 + Math.abs(rise) * 26, 132, spin);
       if (this.wallKick > 0) {
         // One arm reaches back at the wall he is leaving, the other is flung
@@ -1051,6 +1128,17 @@ export class Stickman {
       // Everything committed forward: the step a heavy swing lands on.
       return onFloor(front ? px + f * 54 : px - f * 44);
     }
+    if (this.stanceKind === 'fly') {
+      // Feet up and trailing, and they lead the climb: nosing up pulls them
+      // back and under, diving throws them out behind. On the floor the wings
+      // are only scenery, so he simply stands there.
+      if (this.onGround || this.flyT < 0.02) return onFloor(front ? px + f * 24 : px - f * 26);
+      const bob = Math.sin(this.breathe * 1.9 + (front ? 0 : 0.7)) * 3.2;
+      const pitch = clamp(this.vel.y / 380, -1, 1);
+      return front
+        ? { x: px + f * (18 - pitch * 12), y: py + 32 + bob }
+        : { x: px - f * (26 + pitch * 10), y: py + 50 + bob };
+    }
     if (this.stanceKind === 'hover' && !this.onGround) {
       // Floating: the front leg folds up, the back leg trails, both drifting
       // with a slow bob. Nothing touches the ground, and it should look like it.
@@ -1085,6 +1173,8 @@ export class Stickman {
 
   draw(sk: Sketch): void {
     const c = sk.ctx;
+    // A weapon that has replaced him outright draws everything itself.
+    if (this.bodyHidden) return;
 
     // Afterimages first: thin, pale copies of where he just was.
     for (const g of this.ghosts) {
@@ -1148,7 +1238,7 @@ export class Stickman {
 
     sk.begin(LIMB, color);
     this.limb(sk, bl.hip, bl.knee, bl.foot, LIMB * 0.92);
-    this.limb(sk, p.shL, p.elbowL, p.handL, LIMB * 0.9);
+    if (!this.armsHidden) this.limb(sk, p.shL, p.elbowL, p.handL, LIMB * 0.9);
 
     // Torso, drawn as two segments so the curl in the back actually shows.
     sk.line(p.pelvis, p.mid, BODY, 1, 0.7);
@@ -1156,10 +1246,13 @@ export class Stickman {
     sk.line(p.chest, p.neck, BODY * 0.85, 1, 0.7);
 
     this.limb(sk, fl.hip, fl.knee, fl.foot, LIMB);
-    this.limb(sk, p.shR, p.elbowR, p.handR, LIMB);
+    if (!this.armsHidden) this.limb(sk, p.shR, p.elbowR, p.handR, LIMB);
 
     // Head, drawn as a rough polygon the way these figures always are.
-    sk.head(p.head.x, p.head.y, HEAD_R, p.aim * 0.12 + p.bodyAngle, 4.4 * weight, 10);
+    if (!this.headHidden) {
+      sk.head(p.head.x, p.head.y, HEAD_R * this.headScale,
+        p.aim * 0.12 + p.bodyAngle, 4.4 * weight, 10);
+    }
 
     // Hips and shoulders get a short bar so the joints do not look pinched.
     sk.line(p.hipL, p.hipR, BODY * 0.8, 1, 0.5);

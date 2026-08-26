@@ -25,7 +25,10 @@ export const AIM_SPEEDS = [
   { name: 'FAST', k: 1.8 },
 ];
 
-const DEFAULTS: Settings = { music: 2, sfx: 3, aimSpeed: 2 };
+// Music sits under everything else rather than over it: the sound this game
+// is actually made of is the wall coming apart, so the track starts at a
+// quarter and the player turns it up if they want it.
+const DEFAULTS: Settings = { music: 1, sfx: 3, aimSpeed: 2 };
 const STORE = 'pwnage.settings.v1';
 
 const pick = (v: unknown, len: number, fallback: number): number =>

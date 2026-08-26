@@ -32,11 +32,11 @@ const WIN_THRESHOLD = 0.994;
 const SWING_ON = 0.62;
 const SWING_OFF = 0.42;
 
-/** Slots 11 and 12 run off the two keys sitting right after the number row. */
+/** Past the number row the slots carry on along the top of the keyboard. */
 const NUMBER_KEYS = [
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0',
-  'Minus', 'Equal',
+  'Minus', 'Equal', 'BracketLeft', 'BracketRight',
 ];
 
 /** Everything the player is asking for this frame, whatever device said it. */
@@ -332,6 +332,11 @@ export class Game {
    */
   private get aimMode(): AimMode {
     if (this.device === 'pad') return 'eased';
+    // A finger already *is* a position. On touch there is nothing to gain by
+    // reading a swing as a direction the way a thumbstick has to be read - you
+    // put your finger where you want the blow to land and it lands there - so
+    // every power points at the touch point, melee included.
+    if (this.device === 'touch') return 'point';
     return this.weapon.ranged ? 'point' : 'direct';
   }
 
@@ -601,6 +606,11 @@ export class Game {
    */
   private resolveAim(t: TouchState, padAim: Vec2 | null): Vec2 {
     if (this.device === 'desk') return this.pointerWorld();
+    // A finger under a spot is a crosshair on that spot. Everything that wants
+    // a target rather than a heading - a homing salvo, a summoned orb, the
+    // place a punch is thrown at - gets exactly where the thumb is, and melee
+    // swings at it too rather than reading the drag as a direction.
+    if (this.device === 'touch' && t.aimAt) return t.aimAt;
     const dir = (this.device === 'pad' ? padAim : t.aimDir) ?? { x: this.sm.facing, y: 0 };
     const eye = this.eye;
     const far = Math.max(this.view.w, this.view.h);
@@ -679,7 +689,7 @@ export class Game {
     const wasOpen = this.wheel.open > 0.01;
     const changed = this.wheel.update(
       rawDt, intent.wheelOpen, intent.wheelPointer, this.wheelLayout(),
-      this.weapons.length, intent.numberKey,
+      this.weapons, intent.numberKey,
     );
     if (changed) audio.play('wheel', 0.9 + this.wheel.hovered * 0.05);
     if (intent.wheelOpen && !wasOpen) audio.play('wheel', 0.7);
@@ -732,6 +742,14 @@ export class Game {
       this.sm.stallFall(0.22);
     }
     this.sm.setHands(this.weapon.hands(wctx));
+    // A weapon whose effect has swallowed the arms says so every frame, so
+    // putting it away is just not saying it any more.
+    this.sm.armsHidden = this.weapon.hidesArms;
+    this.sm.headHidden = this.weapon.hidesHead;
+    this.sm.bodyHidden = this.weapon.hidesBody;
+    this.sm.headScale = this.weapon.headScale;
+    this.sm.jumpBoost = this.weapon.jumpBoost;
+    this.sm.fallScale = this.weapon.fallScale;
     // Weapons that own the whole body - a charge-up, a heavy wind-up - say so
     // here, every frame, so dropping the stance is just saying nothing.
     this.sm.setStance(this.weapon.stance(wctx));
@@ -833,6 +851,12 @@ export class Game {
       { x: this.sm.pos.x + 300, y: this.sm.pos.y - 120 });
     this.sm.setHands(null);
     this.sm.setStance(null);
+    this.sm.armsHidden = false;
+    this.sm.headHidden = false;
+    this.sm.bodyHidden = false;
+    this.sm.headScale = 1;
+    this.sm.jumpBoost = 1;
+    this.sm.fallScale = 1;
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.update(dt, this.terrain);
@@ -969,6 +993,10 @@ export class Game {
     const nameSize = clamp(w * 0.02, 15, 24);
     inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85, color: ink });
     inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left', color: ink });
+    // Which half of the arsenal this came out of, set small after the name.
+    inkText(sk, w2.group === 'extra' ? 'EXTRA' : 'MAIN',
+      left + nameSize * 1.35 + measureText(sk, w2.name, nameSize) + 12, baseY + 1,
+      nameSize * 0.5, { align: 'left', alpha: 0.4, color: ink });
     if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55, color: ink });
 
     const barX = left + nameSize * 1.35;
@@ -1024,7 +1052,7 @@ export class Game {
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip, at a wall to kick off it)',
           'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
-          'HOLD TAB  WEAPON WHEEL     1-0 - =  QUICK SWAP',
+          'HOLD TAB  WEAPON WHEEL     TOP ROW OF KEYS  QUICK SWAP',
         ];
         const y0 = h - 96 - this.safe.bottom;
         const hintInk = y0 > this.terrain.groundTop ? '#fff' : '#000';
@@ -1124,7 +1152,7 @@ export class Game {
 
     inkText(sk, 'A PLAYABLE TRIBUTE', w / 2, h * 0.4, clamp(w * 0.022, 14, 19),
       { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.72, wobble: 0.6 });
-    inkText(sk, 'ONE STICK FIGURE, TWELVE WEAPONS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
+    inkText(sk, 'ONE STICK FIGURE, FOURTEEN POWERS, ONE VERY DOOMED WALL', w / 2, h * 0.4 + 26,
       clamp(w * 0.019, 12, 17), { alpha: clamp((t - 0.5) / 0.5, 0, 1) * 0.55, wobble: 0.5 });
 
     const press = this.input.pointer;
@@ -1174,7 +1202,7 @@ export class Game {
           ['SPACE', 'jump — again in the air to somersault'],
           ['SPACE AT A WALL', 'kick off it — chain them to climb'],
           ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
-          ['HOLD TAB', 'weapon wheel   ·   1-0 - = to quick swap'],
+          ['HOLD TAB', 'weapon wheel   ·   the top row of keys quick-swaps'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
     const rowSize = clamp(w * 0.019, 11, 16);
