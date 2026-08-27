@@ -1280,6 +1280,8 @@ export class Game {
   /**
    * What to do on iOS, where there is no install prompt to fire and never will
    * be - only Share, then Add to Home Screen, which nobody finds by accident.
+   * The wording follows the browser in hand: the share button is in the bottom
+   * bar in Safari and up beside the address in every other one.
    */
   private drawInstallCard(): void {
     const sk = this.sk;
@@ -1287,12 +1289,14 @@ export class Game {
     const { w, h } = this.view;
     const cw = Math.min(w - 40, 620);
     const size = clamp(cw * 0.036, 14, 24);
-    const lines = [
-      'TAP THE SHARE BUTTON IN THE BROWSER BAR',
-      'SCROLL DOWN TO "ADD TO HOME SCREEN"',
-      'IT THEN OPENS FULL SCREEN, LIKE AN APP',
-    ];
-    const ch = size * 3.1 + lines.length * size * 1.7;
+    const lines = installer.iosSteps;
+    // Chrome, Firefox and Edge on iOS only grew an Add to Home Screen of their
+    // own in 16.4. On anything older the item simply is not in their share
+    // sheet, and the player would hunt for it forever without being told.
+    const note = installer.iosNeedsSafariNote
+      ? 'NEEDS IOS 16.4+; OTHERWISE USE SAFARI'
+      : null;
+    const ch = size * 3.1 + lines.length * size * 1.7 + (note ? size * 1.6 : 0);
     const x = (w - cw) / 2;
     // Sat in the open space above the buttons rather than over them: the card
     // is an aside, and covering the front door with it would read as a block.
@@ -1320,6 +1324,10 @@ export class Game {
       inkText(sk, String(i + 1), x + size * 1.6, ly, size * 0.95, { alpha: 0.55 });
       inkText(sk, l, x + size * 2.8, ly, size * 0.86, { align: 'left', alpha: 0.85, wobble: 0.4 });
     });
+    if (note) {
+      inkText(sk, note, x + cw / 2, y + ch - size * 2.1, size * 0.7,
+        { alpha: 0.5, wobble: 0.4 });
+    }
     inkText(sk, 'TAP ANYWHERE TO CLOSE', x + cw / 2, y + ch - size * 0.7, size * 0.7,
       { alpha: 0.4, wobble: 0.35 });
     c.restore();

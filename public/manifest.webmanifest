@@ -2,19 +2,19 @@
   "name": "Stick Figure Pwnage — Tribute",
   "short_name": "Pwnage",
   "description": "A playable tribute to the Stick Figure Pwnage animations: one stick figure, twelve weapons, one very doomed wall.",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
-  "display": "fullscreen",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
   "display_override": ["fullscreen", "standalone"],
   "orientation": "any",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
   "categories": ["games", "entertainment"],
   "icons": [
-    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
-    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
-    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
-    { "src": "/icon-maskable.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+    { "src": "./icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "./icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    { "src": "./icon-maskable.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" },
+    { "src": "./icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
   ]
 }
