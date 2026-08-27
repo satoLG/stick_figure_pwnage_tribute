@@ -321,6 +321,16 @@ export class Projectile {
         c.translate(-this.x, -this.y);
         const seed = Math.floor(this.spin * 5);
         const n = this.trail.length;
+        // The run, its forks and the burst at its head are ONE shape.
+        //
+        // They used to be three drawings: a stroked rope, a couple of black
+        // lines laid across it, and a separately outlined clump at the front -
+        // so a bolt came with a seam round its own head and a pair of hairlines
+        // over its belly, which is precisely the thing a discharge should not
+        // have. Traced as a group and inked as a union, the whole length of it
+        // is one white body with a thin rim round the outside and no line
+        // anywhere inside it.
+        const traces: (() => void)[] = [];
         if (n > 2) {
           const pts: Vec2[] = [];
           for (let i = 0; i < n; i++) {
@@ -335,42 +345,28 @@ export class Projectile {
             pts.push({ x: p0.x - (dy / l) * kick, y: p0.y + (dx / l) * kick });
           }
           pts.push({ x: this.x, y: this.y });
-          const run = (): void => {
-            c.beginPath();
-            c.moveTo(pts[0].x, pts[0].y);
-            for (const p0 of pts) c.lineTo(p0.x, p0.y);
-          };
-          // White down the middle with an ink edge either side, so it reads
-          // over the paper and over the black wall alike.
-          c.lineCap = 'round';
-          c.lineJoin = 'round';
-          c.strokeStyle = '#000';
-          c.lineWidth = r * 1.3;
-          run(); c.stroke();
-          c.strokeStyle = '#fff';
-          c.lineWidth = r * 0.62;
-          run(); c.stroke();
-          // A fork or two off the middle of it.
-          c.strokeStyle = '#000';
-          c.lineWidth = 2.2;
+          // Thin where it started and swelling towards the head, so the whole
+          // run reads as travelling rather than as a length of rope.
+          traces.push(() => sk.trailPath(pts, r * 0.55, r * 1.5));
+          // A fork or two off the middle of it, growing out of the same body.
           for (let k = 0; k < 2; k++) {
             const i = Math.floor((0.35 + k * 0.3) * (n - 1));
             const p0 = pts[i];
             const a = Math.atan2(this.vy, this.vx) + hashNoise(seed + k * 17, 3) * 1.5;
             const l2 = r * (2 + Math.abs(hashNoise(seed + k * 5, 7)) * 3);
-            c.beginPath();
-            c.moveTo(p0.x, p0.y);
-            c.lineTo(p0.x + Math.cos(a) * l2 * 0.5, p0.y + Math.sin(a) * l2 * 0.5);
-            c.lineTo(p0.x + Math.cos(a + 0.7) * l2, p0.y + Math.sin(a + 0.7) * l2);
-            c.stroke();
+            const branch = [
+              p0,
+              { x: p0.x + Math.cos(a) * l2 * 0.5, y: p0.y + Math.sin(a) * l2 * 0.5 },
+              { x: p0.x + Math.cos(a + 0.7) * l2, y: p0.y + Math.sin(a + 0.7) * l2 },
+            ];
+            traces.push(() => sk.trailPath(branch, r * 1.1, r * 0.35));
           }
         }
-        // And the head of it: one torn white clump with a single contour, not
-        // a bag of black spikes.
-        sk.inked(
-          () => sk.starPath(this.x, this.y, 9, r * 0.5, r * 3.4, Math.PI * 2, 0, seed),
-          2.8, 0.18, seed + 11,
-        );
+        // And the head of it: a few fat spikes rooted inside the body of the
+        // run. Few and fat on purpose - at this size a ring of thin ones is all
+        // rim and no white, and the head comes out as a black burr.
+        traces.push(() => sk.starPath(this.x, this.y, 7, r * 1.15, r * 3.2, TAU, 0, seed));
+        sk.inkedUnion(traces, clamp(r * 0.32, 1.4, 2.2));
         c.translate(this.x, this.y);
         c.rotate(this.angle);
         break;

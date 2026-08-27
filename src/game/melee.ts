@@ -1,6 +1,6 @@
 import type { SfxName } from '../core/audio';
 import {
-  clamp, easeInCubic, easeOutCubic, easeOutQuint, lerpVec, rand, smoothstep, type Vec2,
+  clamp, damp, easeInCubic, easeOutCubic, easeOutQuint, lerpVec, rand, smoothstep, type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
 import { applyBlast, type Blast } from './projectiles';
@@ -72,17 +72,67 @@ export interface MeleeMove {
 }
 
 /**
- * The angle that puts the far end of a `len`-long weapon flat on the floor
- * behind the figure - what "too heavy to carry" looks like. Null when there is
- * no floor under it to drag along.
+ * How much of the weapon's length, measured out from the hand, is allowed to be
+ * inside the scenery before it counts as buried. A hand pressed flat against
+ * the masonry is two drawings overlapping and nothing to fix; a blade halfway
+ * through the floor is.
  */
-export function dragAngle(ctx: WeaponCtx, from: Vec2, len: number, facing: number): number | null {
-  const probeX = from.x - facing * len * 0.9;
-  const drop = ctx.terrain.groundBelow(probeX, from.y, 260);
-  if (drop >= 260) return null;
-  // The tip is `len` from the hand, so the drop straight down fixes the sine.
-  const a = Math.asin(clamp(drop / len, -0.96, 0.96));
-  return facing > 0 ? Math.PI - a : a;
+const CLEAR_FROM = 0.34;
+/** How far the weapon may be turned off its intended angle to get itself out. */
+const CLEAR_LIMIT = 1.5;
+
+/** How much of the weapon, from the hand out, is in open air at this angle. */
+function freeRun(ctx: WeaponCtx, from: Vec2, len: number, ang: number): number {
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const step = len * 0.06;
+  for (let d = len * CLEAR_FROM; d <= len; d += step) {
+    if (ctx.terrain.solidAt(from.x + ca * d, from.y + sa * d)) return d;
+  }
+  return len;
+}
+
+/**
+ * Keeps a weapon out of the scenery.
+ *
+ * A sword or a hammer is drawn as a rigid bar hanging off a hand, and nothing
+ * in the pose knows the floor is there - so a low guard puts a metre of blade
+ * under the pavement, a swing finishes with the head buried in the ground it
+ * cannot break, and a stance up against the wall runs the whole weapon into the
+ * masonry. The figure collides with the world; the thing he is carrying should
+ * too.
+ *
+ * It is not a physics body, and it should not be: what the eye wants is simply
+ * that the weapon never crosses a surface. So the intended angle is tested, and
+ * if the bar is inside anything it is turned - the smallest amount, and
+ * whichever way is nearer - until it is lying clear.
+ *
+ * Standing in the corner between the floor and the wall there may be no clear
+ * angle at all, and the answer there is *not* to give up and take the intended
+ * one: that is the case where a weapon disappears into the masonry entirely.
+ * Instead the angle that keeps the most of the weapon in open air wins, so it
+ * ends up leaning against whatever it has run into, which is what a heavy thing
+ * with a floor under it actually does.
+ */
+export function clearOfTerrain(
+  ctx: WeaponCtx, from: Vec2, len: number, want: number,
+  limit = CLEAR_LIMIT, step = 0.09,
+): number {
+  let best = freeRun(ctx, from, len, want);
+  if (best >= len) return want;
+  let bestAng = want;
+  for (let d = step; d <= limit; d += step) {
+    for (const s of [-1, 1]) {
+      const a = want + s * d;
+      const run = freeRun(ctx, from, len, a);
+      // Fully clear, and the nearest such angle, since the search walks out.
+      if (run >= len) return a;
+      // Otherwise remember whichever leans least far into the material. The
+      // margin keeps it from swapping between two near-equal answers frame to
+      // frame, which is what a weapon flickering between poses looks like.
+      if (run > best + len * 0.04) { best = run; bestAng = a; }
+    }
+  }
+  return bestAng;
 }
 
 const FALLBACK: MeleeMove = {
@@ -104,6 +154,16 @@ export abstract class MeleeWeapon extends Weapon {
   protected abstract readonly len: number;
   /** The four chains. Each is cycled from the top while the player keeps going. */
   protected abstract readonly sets: Record<MeleeMode, readonly MeleeMove[]>;
+
+  /**
+   * Whether the scenery is allowed to stop this weapon.
+   *
+   * On for anything with a real body to it - a slab of a blade, a block of a
+   * head - and off for a fist, which has nothing sticking out of it to bury.
+   */
+  protected readonly collides: boolean = false;
+  /** The damped turn currently keeping it out of the floor and the wall. */
+  private clearAdj = 0;
 
   protected move: MeleeMove = FALLBACK;
   protected mode: MeleeMode = 'ground';
@@ -216,6 +276,19 @@ export abstract class MeleeWeapon extends Weapon {
   protected idleTick(_ctx: WeaponCtx): void {}
 
   protected override tick(ctx: WeaponCtx, _held: boolean): void {
+    // Where the scenery says the weapon may be, worked out once for the frame:
+    // `bladeAngle` is read several times over a drawing - the hands, the carve,
+    // the weapon itself - and all of them must agree on one answer.
+    if (this.collides) {
+      const raw = this.swingAngle(ctx);
+      const want = clearOfTerrain(ctx, ctx.sm.pose.handR, this.len, raw) - raw;
+      // Quick to get out of the way, slower to settle back, so a weapon coming
+      // off a surface eases down onto its intended line rather than snapping.
+      this.clearAdj = damp(this.clearAdj, want, Math.abs(want) > Math.abs(this.clearAdj) ? 26 : 12, ctx.dt);
+    } else {
+      this.clearAdj = 0;
+    }
+
     if (this.anim <= 0) {
       this.idle += ctx.dt;
       if (this.idle > COMBO_WINDOW && (this.chain !== 0 || this.combo !== 0)) {
@@ -366,8 +439,16 @@ export abstract class MeleeWeapon extends Weapon {
   /** Where the weapon points when nothing is happening. */
   protected abstract restAngle(ctx: WeaponCtx): number;
 
-  /** The angle the weapon is held at right now, mid-swing or at rest. */
+  /**
+   * The angle the weapon is held at right now: where the swing wants it, turned
+   * by however much the floor and the wall are refusing to let it be there.
+   */
   protected bladeAngle(ctx: WeaponCtx): number {
+    return this.swingAngle(ctx) + this.clearAdj;
+  }
+
+  /** Where the swing alone would put it, with nothing in the way. */
+  private swingAngle(ctx: WeaponCtx): number {
     const rest = this.restAngle(ctx);
     if (this.anim <= 0) return rest;
     const mv = this.move;

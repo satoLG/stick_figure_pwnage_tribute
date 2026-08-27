@@ -247,6 +247,66 @@ export class Sketch {
   }
 
   /**
+   * A polyline given real width: the outline of a run of segments as one closed
+   * contour, swelling from `w0` at the start to `w1` at the end.
+   *
+   * Stroking a jagged path gives you a rope of even thickness; this gives you a
+   * *shape*, which is the only way a trail can share a belly with the spikes
+   * thrown off it and still read as one drawing. Traces only.
+   */
+  trailPath(pts: readonly Vec2[], w0: number, w1 = w0): void {
+    const c = this.ctx;
+    const n = pts.length;
+    if (n < 2) return;
+    const top: Vec2[] = [], bot: Vec2[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)];
+      const b = pts[Math.min(n - 1, i + 1)];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const l = Math.hypot(dx, dy) || 1;
+      const nx = -dy / l, ny = dx / l;
+      const w = (w0 + (w1 - w0) * (i / (n - 1))) * 0.5;
+      top.push({ x: pts[i].x + nx * w, y: pts[i].y + ny * w });
+      bot.push({ x: pts[i].x - nx * w, y: pts[i].y - ny * w });
+    }
+    c.beginPath();
+    c.moveTo(top[0].x, top[0].y);
+    for (const p of top) c.lineTo(p.x, p.y);
+    for (let i = bot.length - 1; i >= 0; i--) c.lineTo(bot[i].x, bot[i].y);
+    c.closePath();
+  }
+
+  /**
+   * Several shapes drawn as ONE.
+   *
+   * `inked` fills a path white and walks a pen round it, which is right for a
+   * single form and wrong the moment two of them touch: every overlap gets its
+   * own contour and what should have been one gesture turns into a pile of
+   * outlined pieces. That is exactly what a bolt of lightning must not look
+   * like - the trail, the kinks it throws off and the burst where it earths are
+   * one connected thing with ink only round the *outside* of the lot.
+   *
+   * So the whole group is laid down fat and solid black first, and then every
+   * shape is filled white on top of it. What survives is a thin even rim round
+   * the union and unbroken white through the middle, with no seam anywhere two
+   * of them cross. Each shape is filled on its own pass, so their winding
+   * directions never cancel one another out.
+   */
+  inkedUnion(traces: readonly (() => void)[], rim = 3): void {
+    const c = this.ctx;
+    c.save();
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
+    c.fillStyle = '#000';
+    c.strokeStyle = '#000';
+    c.lineWidth = rim * 2;
+    for (const t of traces) { t(); c.fill(); c.stroke(); }
+    c.fillStyle = '#fff';
+    for (const t of traces) { t(); c.fill(); }
+    c.restore();
+  }
+
+  /**
    * A ragged closed blob - the white hole an explosion punches in the picture.
    * Alternating radii, so it is spiky rather than round.
    */

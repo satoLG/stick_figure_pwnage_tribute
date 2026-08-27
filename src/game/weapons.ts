@@ -1,8 +1,8 @@
 import {
-  clamp, damp, easeOutCubic, hashNoise, lerp, rand, TAU, type Vec2,
+  clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU, type Vec2,
 } from '../core/math';
 import type { Sketch } from '../core/sketch';
-import { dragAngle, MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
+import { MeleeWeapon, type MeleeMode, type MeleeMove } from './melee';
 import { applyBlast, BLASTS, Projectile } from './projectiles';
 import { HEAD_R, type HandTargets, type Stance } from './stickman';
 import {
@@ -684,6 +684,7 @@ export class Greatsword extends MeleeWeapon {
   private scraped = 0;
   /** Seconds since his feet last touched, so a bump mid-run keeps the drag. */
   private airT = 0;
+  protected override readonly collides = true;
 
   constructor() {
     super();
@@ -895,16 +896,17 @@ export class Warhammer extends MeleeWeapon {
   private frenzyT = 0;
 
   /**
-   * Half the height of the striking face, and how long the drum runs back off
-   * it. The source's mallet is not a warhammer head on a haft - it is a barrel
-   * as tall as the figure and nearly as long, with a stick out of the back of
-   * it, and no bands, cheeks or claws anywhere on it.
+   * The head, and it is the whole weapon: a rectangle two of him tall and a
+   * third of that deep, with the haft running into the middle of its underside.
+   * `headW` is half its long side, `headT` how far it stands off the end of the
+   * stick. Nothing else - no drum, no dome, no collar, no bands.
    */
-  private readonly headW = 92;
-  private readonly headD = 214;
+  private readonly headW = 122;
+  private readonly headT = 96;
 
   private dragT = 0;
   private scraped = 0;
+  protected override readonly collides = true;
 
   constructor() {
     super();
@@ -953,35 +955,39 @@ export class Warhammer extends MeleeWeapon {
   }
 
   /**
-   * Head resting on the floor in front of him: he has to heave it up off the
-   * ground before anything happens, which is the whole point of the weapon -
-   * and walking, it simply ploughs along behind.
+   * Shouldered, and it has to be.
+   *
+   * It used to rest head-down on the floor in front of him and plough along
+   * behind him at a walk, and with a head this size neither is geometry that
+   * exists: the block is twice as tall as the distance from his fist to the
+   * ground, so "resting the head on the floor" put most of a slab through the
+   * pavement whatever angle it was drawn at. A thing this heavy gets carried
+   * the way anybody carries one - hauled up and back over the shoulder, with
+   * the weight of it swinging against the stride - and the heave he needs to
+   * get it moving is still there, it is just at the top of the arc rather than
+   * the bottom.
    */
   protected restAngle(ctx: WeaponCtx): number {
-    const carried = mirror(0.86 + Math.sin(ctx.time * 1.05) * 0.03, ctx.sm.facing);
-    if (this.dragT < 0.01) return carried;
-    // The head is a block hanging off the end of the shaft, so the tip that
-    // actually finds the floor is a whole head-depth short of the full length.
-    const drag = dragAngle(ctx, ctx.sm.pose.handR, this.len - this.headD * 0.42, ctx.sm.facing);
-    return drag === null ? carried : carried + (drag - carried) * this.dragT;
+    const sm = ctx.sm;
+    // The heave: the weight lags behind the walk and swings through it, harder
+    // and slower the faster he goes, so it reads as mass rather than as a prop.
+    const heave = Math.sin(ctx.time * 3.1) * (0.05 + this.dragT * 0.13)
+      + Math.sin(ctx.time * 1.05) * 0.04;
+    return mirror(-1.94 + heave, sm.facing);
   }
 
   protected override idleTick(ctx: WeaponCtx): void {
     const sm = ctx.sm;
     const speed = Math.abs(sm.vel.x);
-    const wants = sm.onGround && speed > 26 ? 1 : 0;
+    // Not a drag any more: how hard the weight is swinging on his shoulder.
+    const wants = sm.onGround && speed > 26 ? clamp(speed / 520, 0, 1) : 0;
     this.dragT = damp(this.dragT, wants, wants > 0 ? 6 : 5, ctx.dt);
     if (this.dragT < 0.45 || wants === 0) return;
-    const ang = this.restAngle(ctx);
-    const h = sm.pose.handR;
-    const tip = { x: h.x + Math.cos(ang) * this.len, y: h.y + Math.sin(ang) * this.len };
+    // Every so often, the sound of a great weight shifting on a shoulder.
     this.scraped += speed * ctx.dt;
-    if (this.scraped < 34) return;
+    if (this.scraped < 190) return;
     this.scraped = 0;
-    const back = sm.vel.x > 0 ? Math.PI : 0;
-    ctx.particles.dust(tip.x, tip.y, 3, back, 1);
-    ctx.particles.sparks(tip.x, tip.y - 2, 2, 90, back, 1.4);
-    ctx.sfx('scrape', clamp(0.4 + speed / 900, 0.4, 0.85));
+    ctx.sfx('scrape', clamp(0.3 + speed / 1400, 0.3, 0.6));
   }
 
   protected restHands(ctx: WeaponCtx, ba: number): HandTargets {
@@ -994,6 +1000,17 @@ export class Warhammer extends MeleeWeapon {
     };
   }
 
+  /**
+   * A rectangle, and a stick under it.
+   *
+   * That is the entire drawing and it is meant to be. Everything that was here
+   * before - the barrel, the dome on the end of it, the flared collar where the
+   * haft went in - was detail spent making a mallet look like a manufactured
+   * object, and it read as a lampshade on a pole. What the source actually
+   * draws is a slab: a plain hard-cornered block, taller than the figure, with
+   * a plain stick running into the middle of its underside. No dome, no collar,
+   * no bands, no rivets. The weight is all in the proportion.
+   */
   protected drawWeapon(sk: Sketch, ctx: WeaponCtx, ang: number): void {
     const c = sk.ctx;
     const h = ctx.sm.pose.handR;
@@ -1001,76 +1018,54 @@ export class Warhammer extends MeleeWeapon {
     const at = (d: number, o: number): Vec2 => ({ x: h.x + ca * d - sa * o, y: h.y + sa * d + ca * o });
     const L = this.len;
     const W = this.headW;
-    const D = this.headD;
+    const T = this.headT;
+    /** The underside of the block: where the stick stops. */
+    const back = L - T;
 
     c.strokeStyle = '#000';
-    // Haft: one plain stroke into the back of the head. Short and thin - in
-    // the source it is almost an afterthought next to what is on the end of it.
-    sk.line(at(-30, 0), at(L - D + 6, 0), 5.5, 2, 0.6);
 
-    // The head.
-    //
-    // Not a drum with a flat cap on it - that is a lampshade, and that is what
-    // it read as. The source's mallet is a great smooth *capsule*: parallel
-    // sides that barely swell, and a striking end that is fully domed over.
-    // The whole thing is about twice his height long and very nearly as wide
-    // as he is tall.
-    const back = L - D;
-    const pts: Vec2[] = [];
-    pts.push(at(back, -W * 0.9));
-    pts.push(at(back + D * 0.42, -W));
-    // The dome. A half capsule, slightly squashed along its own axis so the
-    // end reads as rounded rather than as half a circle stuck on.
-    const domeX = L - W * 0.62;
-    for (let i = 0; i <= 10; i++) {
-      const th = -Math.PI / 2 + (i / 10) * Math.PI;
-      pts.push(at(domeX + Math.cos(th) * W * 0.66, Math.sin(th) * W));
-    }
-    pts.push(at(back + D * 0.42, W));
-    pts.push(at(back, W * 0.9));
+    // The stick. Drawn with a width rather than as a stroke, so it is plainly a
+    // pole going into a block and not a line touching one.
+    const haft = [at(-36, -8), at(back + 6, -8), at(back + 6, 8), at(-36, 8)];
     c.fillStyle = '#fff';
-    sk.polyPath(pts, 1.4);
+    sk.polyPath(haft, 1);
     c.fill();
-    sk.poly(pts, 5.4, false, 1.4);
+    sk.poly(haft, 4.6, false, 1);
+    sk.line(at(-36, -11), at(-36, 11), 4.4, 1, 0.5);
 
-    // The collar: a wide curved lip flaring off the back of the head where the
-    // haft goes in. It is the one piece of the source's mallet that is not the
-    // barrel, and without it the barrel is just a barrel.
-    for (const side of [-1, 1]) {
-      const lip = [
-        at(back + 12, side * W * 0.86),
-        at(back - 6, side * W * 1.5),
-        at(back - 24, side * W * 1.34),
-        at(back - 6, side * W * 0.5),
-      ];
-      c.fillStyle = '#fff';
-      sk.polyPath(lip, 1.2);
-      c.fill();
-      sk.poly(lip, 4, false, 1.2);
-    }
+    // The block. Four corners.
+    const head = [at(back, -W), at(L, -W), at(L, W), at(back, W)];
+    c.fillStyle = '#fff';
+    sk.polyPath(head, 1.8);
+    c.fill();
+    sk.poly(head, 6.2, false, 1.8);
+    // One line inside it, set in off the far face, which is the only thing that
+    // says which end of the slab does the hitting.
+    sk.line(at(L - T * 0.24, -W * 0.88), at(L - T * 0.24, W * 0.88), 2.8, 2, 1);
 
-    // Two lengthwise strokes down the barrel and nothing else. The source has
-    // no bands, no rivets and no cheeks on this thing.
-    sk.line(at(back + 26, -W * 0.52), at(L - W * 0.9, -W * 0.56), 2.4, 2, 0.8);
-    sk.line(at(back + 34, W * 0.44), at(L - W, W * 0.5), 2.2, 2, 0.8);
-
-    // A flash of impact on landing, sized off the head rather than off nothing.
+    // A flash of impact on landing, thrown off the whole striking face rather
+    // than off a point, since the face is most of a body wide.
     if (this.striking > 0.55 && this.striking < 0.95) {
-      const tip = at(L + 10, 0);
       c.fillStyle = '#000';
-      sk.tuftPath(tip.x, tip.y, 17, W * 0.5, W * 2.4, TAU, 0, 909, 0.05);
-      c.fill();
+      for (const o of [-0.6, 0, 0.6]) {
+        const tip = at(L + 8, o * W);
+        sk.tuftPath(tip.x, tip.y, 11, W * 0.24, W * 1.2, TAU, 0, 909 + o * 31, 0.05);
+        c.fill();
+      }
     }
   }
 
   icon(sk: Sketch, x: number, y: number, s: number): void {
-    // Long haft, and a head that takes up most of the box.
-    sk.line({ x: x - s * 0.42, y: y + s * 0.44 }, { x: x + s * 0.06, y: y - s * 0.12 }, 3, 2, 0.5);
+    // A block, and a stick under it: the weapon at twenty pixels.
     sk.poly([
-      { x: x - s * 0.14, y: y - s * 0.44 }, { x: x + s * 0.42, y: y - s * 0.44 },
-      { x: x + s * 0.42, y: y + s * 0.06 }, { x: x - s * 0.14, y: y + s * 0.06 },
+      { x: x - s * 0.46, y: y - s * 0.46 }, { x: x + s * 0.46, y: y - s * 0.46 },
+      { x: x + s * 0.46, y: y - s * 0.02 }, { x: x - s * 0.46, y: y - s * 0.02 },
     ], 2.8, false, 0.5);
-    sk.line({ x: x + s * 0.3, y: y - s * 0.44 }, { x: x + s * 0.3, y: y + s * 0.06 }, 2, 1, 0.4);
+    sk.line({ x: x + s * 0.28, y: y - s * 0.46 }, { x: x + s * 0.28, y: y - s * 0.02 }, 1.8, 1, 0.4);
+    sk.poly([
+      { x: x - s * 0.09, y: y - s * 0.02 }, { x: x + s * 0.09, y: y - s * 0.02 },
+      { x: x + s * 0.09, y: y + s * 0.46 }, { x: x - s * 0.09, y: y + s * 0.46 },
+    ], 2.4, false, 0.4);
   }
 }
 
@@ -1104,6 +1099,30 @@ const RIFLE_AT = 0.72;
 const SNIPE_AT = 210;
 /** How long an over-arm throw takes to play out. */
 const THROW_TIME = 0.26;
+/**
+ * Half way along each gun, measured from its grip - which is where its drawing
+ * is anchored. Slinging one on his back hangs it by this instead, so a rack of
+ * four very different lengths lies centred rather than fanned off one butt.
+ */
+const SLUNG_MID: Record<Gun, number> = {
+  magnum: 13, shotgun: 14, rifle: 15, bazooka: 21,
+};
+/**
+ * The rough box each gun's drawing fills, again from its grip.
+ *
+ * Three full-size weapons lying across one back overlap, and three sets of open
+ * outlines crossing each other are a scribble - which is what killed the idea
+ * of full-size guns here the first time. Each one is knocked out in white over
+ * whatever is behind it before its own outline goes down, so the rack stacks:
+ * the near gun is plainly in front of the far one, and the whole lot reads over
+ * the black wall as well as over the paper, like every other solid thing here.
+ */
+const SLUNG_BOX: Record<Gun, readonly [number, number, number, number]> = {
+  magnum: [-10, -14, 37, 16],
+  shotgun: [-32, -13, 60, 12],
+  rifle: [-34, -16, 63, 15],
+  bazooka: [-66, -35, 108, 27],
+};
 
 export class Gunslinger extends Weapon {
   readonly id = 5;
@@ -1336,45 +1355,78 @@ export class Gunslinger extends Weapon {
         const pump = this.anim > 0 ? Math.sin(clamp((this.t - 0.15) / 0.7, 0, 1) * Math.PI) : 0;
         return { main: grip(ctx, 30, 3), off: grip(ctx, 45 - pump * 14, 4) };
       }
-      case 'rifle':
-        return { main: grip(ctx, 31, 3), off: grip(ctx, 45, 4) };
-      default:
-        return { main: grip(ctx, 28, 11), off: grip(ctx, 48, 9) };
+      case 'rifle': {
+        // Every round drives the whole rifle back into the shoulder. Held
+        // perfectly still it fires without anything about him moving, which
+        // makes the rounds look like they are leaving a prop rather than a man.
+        const k = Math.min(1, this.flashT * 14);
+        return { main: grip(ctx, 31 - k * 6, 3 - k * 2), off: grip(ctx, 45 - k * 6, 4) };
+      }
+      default: {
+        // The tube kicks harder and slower than anything else he carries.
+        const k = clamp(this.fireT / 0.18, 0, 1);
+        return { main: grip(ctx, 28 - k * 8, 11), off: grip(ctx, 48 - k * 8, 9 - k * 3) };
+      }
     }
   }
 
   // ---------------------------------------------------------------- drawing ---
 
   /**
-   * The three he is not holding, slung across his back.
+   * The three he is not holding, slung across his back - at the size they
+   * actually are.
    *
-   * This is the whole point of the slot: you can see at a glance that he has
-   * the other three on him, and which one has just come off the strap.
+   * They used to be little silhouettes at two thirds scale, on the theory that
+   * three detailed weapons on one back would pile into a smudge. That theory
+   * cost the slot its whole point: a rifle on his back that is half the length
+   * of the rifle in his hands is not the same rifle, and the eye knows it. So
+   * each is the exact drawing it will be when it comes off the strap, at full
+   * size, laid parallel across the spine with the grips down by the hip and the
+   * barrels standing well clear over the far shoulder. He is carrying an
+   * armoury and it should be obviously inconvenient.
    */
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     const p = ctx.sm.pose;
     const f = ctx.sm.facing;
-    // Hung off the spine, angled across the back, fanned so all three read.
+    // Hung off the spine, angled across the back, stacked so all three read.
     const mid = { x: (p.neck.x + p.pelvis.x) * 0.5 - f * 9, y: (p.neck.y + p.pelvis.y) * 0.5 };
     c.save();
     c.strokeStyle = '#000';
     const slung: Gun[] = (['magnum', 'shotgun', 'rifle', 'bazooka'] as Gun[])
       .filter((g) => g !== this.gun);
-    // Stacked *parallel* across his back like a rack, not fanned out of one
-    // point: three silhouettes radiating from the same shoulder piled into one
-    // black scribble, and three lying side by side read instantly as three.
-    // Muzzles up over the far shoulder, grips down by the hip - carried, not
-    // hung. Laid out behind the spine so the barrels clear his own silhouette.
+    // Stacked *parallel* like a rack, not fanned out of one point: three
+    // silhouettes radiating from the same shoulder pile into one black
+    // scribble, and three lying side by side read instantly as three.
     const lay = f > 0 ? Math.PI + 0.74 : -0.74;
     const nx = -Math.sin(lay), ny = Math.cos(lay);
     for (let i = 0; i < slung.length; i++) {
-      const o = (i - 1) * 13;
+      const g = slung[i];
+      // Well apart and fanned a little, since these are now full-size weapons
+      // rather than tokens, and set back off his spine so the rack hangs behind
+      // the body instead of lying across it.
+      const o = (i - 1) * 25;
       c.save();
-      c.translate(mid.x + nx * o - f * 12, mid.y + ny * o + 8);
-      c.rotate(lay);
-      c.scale(0.9, 0.9);
-      this.slungGun(sk, slung[i]);
+      c.translate(mid.x + nx * o - f * 20, mid.y + ny * o + 3);
+      c.rotate(lay + (i - 1) * 0.12);
+      // Each gun is drawn from its grip, and the four are wildly different
+      // lengths, so hanging them all off the same point stacked three butts in
+      // one place and let the barrels straggle off at three different
+      // distances. Slid back by its own half length instead, the rack lies
+      // centred on his spine and reads as three things side by side. Only
+      // half way, though: fully centred hangs the butts of the long ones down
+      // past his back foot, and a weapon whose grip is by his ankle is not
+      // slung, it is dropped.
+      c.translate(-SLUNG_MID[g] * 0.5, 0);
+      // Knocked out first, so the near one is plainly in front of the far one.
+      const [bx, by, bw, bh] = SLUNG_BOX[g];
+      c.fillStyle = '#fff';
+      sk.polyPath([
+        { x: bx, y: by }, { x: bx + bw, y: by },
+        { x: bx + bw, y: by + bh }, { x: bx, y: by + bh },
+      ], 1.4);
+      c.fill();
+      this.drawGun(sk, g, 0);
       c.restore();
     }
     // The strap itself, so they are plainly carried and not floating.
@@ -1388,6 +1440,8 @@ export class Gunslinger extends Weapon {
     const a = this.gun === 'magnum'
       ? ctx.sm.pose.aim - ctx.sm.facing * this.kick * 0.5
       : ctx.sm.pose.aim;
+    this.drawVest(sk, ctx);
+    this.drawScar(sk, ctx);
     c.save();
     c.translate(h.x, h.y);
     c.rotate(a);
@@ -1400,37 +1454,95 @@ export class Gunslinger extends Weapon {
   }
 
   /**
-   * A gun on the strap. Not the same drawing as the one in his hands, and it
-   * must not be: three detailed weapons at two thirds scale piled into one
-   * black smudge. On his back each is a silhouette with the one feature that
-   * names it - a cylinder, a magazine, a pump, a flared tube.
+   * What he is wearing, and the reason he never runs dry.
+   *
+   * A belt of rounds over one shoulder and down across the chest to the far
+   * hip, and a second round the waist. Both are drawn the way everything solid
+   * in this game is - a white band with an ink edge - with the cartridges as
+   * short heavy bars standing out of the outer side of it, which is what reads
+   * as ammunition at this size rather than as a stripe.
    */
-  private slungGun(sk: Sketch, gun: Gun): void {
+  private drawVest(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
+    const p = ctx.sm.pose;
+    const f = ctx.sm.facing;
+    c.save();
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
+
+    /** One belt: a bowed band from `a` to `b`, with `n` rounds across it. */
+    const belt = (a: Vec2, ctrl: Vec2, b: Vec2, w: number, n: number): void => {
+      const pts: Vec2[] = [];
+      for (let i = 0; i <= 12; i++) pts.push(quadPoint(a, ctrl, b, i / 12));
+      sk.trailPath(pts, w, w * 0.86);
+      c.fillStyle = '#fff';
+      c.fill();
+      c.strokeStyle = '#000';
+      c.lineWidth = 2.6;
+      c.stroke();
+      // The rounds, as bars laid *across* the band rather than sticking out of
+      // it. Spaced with paper between them: crowded together they stop being
+      // countable cartridges and turn the whole chest into a black hatch.
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n;
+        const q0 = quadPoint(a, ctrl, b, t);
+        const q1 = quadPoint(a, ctrl, b, Math.min(1, t + 0.03));
+        const dx = q1.x - q0.x, dy = q1.y - q0.y;
+        const l = Math.hypot(dx, dy) || 1;
+        const ux = (-dy / l) * w * 0.44, uy = (dx / l) * w * 0.44;
+        sk.line({ x: q0.x - ux, y: q0.y - uy }, { x: q0.x + ux, y: q0.y + uy }, 2.8, 1, 0.3);
+      }
+    };
+
+    // Over the near shoulder, across the chest, down to the far hip.
+    const top = { x: p.shR.x + f * 2, y: p.shR.y - 1 };
+    const bot = { x: p.pelvis.x - f * 11, y: p.pelvis.y + 3 };
+    belt(top,
+      { x: (top.x + bot.x) * 0.5 + f * 9, y: (top.y + bot.y) * 0.5 + 2 },
+      bot, 10, 5);
+
+    // And round the waist, which is what makes it a vest and not a sash.
+    const hipA = { x: p.pelvis.x - f * 13, y: p.pelvis.y + 5 };
+    const hipB = { x: p.pelvis.x + f * 13, y: p.pelvis.y + 2 };
+    belt(hipA, { x: p.pelvis.x, y: p.pelvis.y + 9 }, hipB, 9, 4);
+    c.restore();
+  }
+
+  /**
+   * The scar. One old cut over the brow with the stitch marks still in it -
+   * three ticks across a line, which at this scale is the entire vocabulary
+   * available for "this one has been shot at before".
+   */
+  private drawScar(sk: Sketch, ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    if (sm.headHidden) return;
+    const c = sk.ctx;
+    const p = sm.pose.head;
+    const f = sm.facing;
+    const R = HEAD_R * sm.headScale;
+    const tilt = headTilt(sm);
+    const cs = Math.cos(tilt), sn = Math.sin(tilt);
+    const at = (dx: number, dy: number): Vec2 =>
+      ({ x: p.x + dx * cs - dy * sn, y: p.y + dx * sn + dy * cs });
+
+    c.save();
     c.strokeStyle = '#000';
-    switch (gun) {
-      case 'magnum':
-        sk.poly([{ x: -4, y: -4 }, { x: 20, y: -4 }, { x: 20, y: 1 }, { x: 1, y: 1 },
-          { x: -1, y: 9 }, { x: -6, y: 9 }], 2, false, 0.5);
-        sk.poly([{ x: 3, y: -4 }, { x: 10, y: -4 }, { x: 10, y: 1 }, { x: 3, y: 1 }], 2, false, 0.4);
-        break;
-      case 'shotgun':
-        sk.poly([{ x: -18, y: 3 }, { x: -13, y: -4 }, { x: 34, y: -5 }, { x: 34, y: -1 },
-          { x: 1, y: 0 }, { x: 0, y: 6 }, { x: -6, y: 6 }, { x: -13, y: 0 }], 2.4, false, 0.5);
-        sk.line({ x: 3, y: -7 }, { x: 32, y: -8 }, 2, 1, 0.4);
-        break;
-      case 'rifle':
-        sk.poly([{ x: -20, y: -2 }, { x: -15, y: -5 }, { x: 28, y: -6 }, { x: 28, y: -1 },
-          { x: 6, y: -1 }, { x: 5, y: 5 }, { x: 0, y: 5 }, { x: 0, y: -1 },
-          { x: -15, y: -1 }], 2.4, false, 0.5);
-        sk.poly([{ x: 9, y: -1 }, { x: 15, y: -1 }, { x: 14, y: 8 }, { x: 10, y: 8 }], 2.1, false, 0.4);
-        break;
-      default:
-        sk.poly([{ x: -26, y: -9 }, { x: -19, y: -6 }, { x: 34, y: -6 }, { x: 34, y: 2 },
-          { x: -19, y: 2 }, { x: -26, y: 6 }], 2.6, false, 0.5);
-        sk.poly([{ x: 34, y: -5 }, { x: 41, y: -2 }, { x: 34, y: 1 }], 2.2, false, 0.4);
-        break;
+    const a = at(f * R * 0.24, -R * 0.74);
+    const b = at(f * R * 0.72, R * 0.1);
+    sk.line(a, b, 3.2, 2, 0.5);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l = Math.hypot(dx, dy) || 1;
+    const nx = -dy / l, ny = dx / l;
+    for (let i = 0; i < 3; i++) {
+      const t = 0.22 + i * 0.28;
+      const q = { x: a.x + dx * t, y: a.y + dy * t };
+      sk.line(
+        { x: q.x - nx * 4.4, y: q.y - ny * 4.4 },
+        { x: q.x + nx * 4.4, y: q.y + ny * 4.4 },
+        2.4, 1, 0.35,
+      );
     }
+    c.restore();
   }
 
   /** One gun in its own local space: hand at the origin, muzzle to +x. */
@@ -1477,21 +1589,27 @@ export class Gunslinger extends Weapon {
         break;
       }
       default: {
+        // The tube is the biggest thing in the slot and it should look it:
+        // half again as long as the rifle and twice its bore, so shouldering it
+        // is plainly a different act from levelling a gun.
         sk.poly([
-          { x: -44, y: -17 }, { x: -32, y: -11 }, { x: 62, y: -11 }, { x: 62, y: 3 },
-          { x: -32, y: 3 }, { x: -44, y: 10 },
-        ], 3.2, false, 0.6);
-        sk.line({ x: -32, y: -11 }, { x: -32, y: 3 }, 2.4, 1, 0.4);
-        sk.poly([{ x: 62, y: -9 }, { x: 74, y: -4 }, { x: 62, y: 1 }], 2.6, false, 0.4);
-        sk.line({ x: 4, y: -11 }, { x: 4, y: -23 }, 2.4, 1, 0.4);
-        sk.line({ x: -4, y: -23 }, { x: 14, y: -23 }, 2.4, 1, 0.4);
-        sk.line({ x: -14, y: 3 }, { x: -16, y: 17 }, 3, 1, 0.5);
-        sk.line({ x: 24, y: 3 }, { x: 26, y: 15 }, 2.8, 1, 0.5);
+          { x: -62, y: -24 }, { x: -45, y: -16 }, { x: 87, y: -16 }, { x: 87, y: 4 },
+          { x: -45, y: 4 }, { x: -62, y: 14 },
+        ], 3.6, false, 0.6);
+        sk.line({ x: -45, y: -16 }, { x: -45, y: 4 }, 2.6, 1, 0.4);
+        sk.line({ x: -20, y: -16 }, { x: -20, y: 4 }, 2.2, 1, 0.4);
+        sk.poly([{ x: 87, y: -13 }, { x: 104, y: -6 }, { x: 87, y: 1 }], 2.8, false, 0.4);
+        // Sight up on top, and two grips under it.
+        sk.line({ x: 6, y: -16 }, { x: 6, y: -32 }, 2.6, 1, 0.4);
+        sk.line({ x: -6, y: -32 }, { x: 20, y: -32 }, 2.6, 1, 0.4);
+        sk.line({ x: -20, y: 4 }, { x: -23, y: 24 }, 3.2, 1, 0.5);
+        // The forward grip sits under where his off hand actually goes.
+        sk.line({ x: 22, y: 4 }, { x: 25, y: 21 }, 3, 1, 0.5);
         if (this.fireT > 0) {
           const k = this.fireT / 0.18;
-          this.muzzle(sk, 78, -4, 34 * k, 404);
+          this.muzzle(sk, 110, -6, 44 * k, 404);
           c.lineWidth = 2.8;
-          sk.burst(-42, -4, 8, 8, 54 * k, 2.8, 1.3, Math.PI, 405);
+          sk.burst(-60, -6, 8, 10, 70 * k, 2.8, 1.3, Math.PI, 405);
         }
         break;
       }

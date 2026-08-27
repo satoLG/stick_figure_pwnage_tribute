@@ -834,7 +834,12 @@ export class MissilePods extends Weapon {
   /** One hand under the front bank, steadying it; the rig does the rest. */
   hands(ctx: WeaponCtx): HandTargets {
     const k = this.load;
-    return { main: grip(ctx, 36 - k * 4, 14 + k * 3), off: null };
+    // The rack is strapped to his chest, so the arm is the only place a launch
+    // can show at all - and something has to move when a round leaves, or the
+    // rounds read as coming out of a prop rather than out of him. Every shot
+    // shoves the steadying hand back and down off the block.
+    const kick = this.launch;
+    return { main: grip(ctx, 36 - k * 4 - kick * 8, 14 + k * 3 + kick * 5), off: null };
   }
 
   /**
@@ -2176,11 +2181,15 @@ export class Thunderbolt extends Weapon {
       const a = joints[Math.abs(Math.floor(hashNoise(i * 3, sk.boil) * joints.length)) % joints.length];
       const b = joints[Math.abs(Math.floor(hashNoise(i * 7 + 3, sk.boil) * joints.length)) % joints.length];
       const pts = Thunderbolt.bolt(a, b, 5, 16 + k * 16, i * 31 + sk.boil);
-      c.lineWidth = 4 + k * 2;
-      c.strokeStyle = '#fff';
-      strokePts(c, pts);
-      c.lineWidth = 2 + k * 1.6;
+      // Ink first and white over it, so what is left is a thin black rim round
+      // a white core - the same grammar as everything else that carries power
+      // in this game. The other way round gives a black line with a white halo,
+      // which is a wire, not a spark.
+      c.lineWidth = 6 + k * 3;
       c.strokeStyle = '#000';
+      strokePts(c, pts);
+      c.lineWidth = 3 + k * 2.2;
+      c.strokeStyle = '#fff';
       strokePts(c, pts);
     }
     // And a halo of it standing off him, bigger the longer he holds.
@@ -2200,59 +2209,68 @@ export class Thunderbolt extends Weapon {
     c.restore();
   }
 
+  /**
+   * A bolt is ONE shape.
+   *
+   * It used to be built the honest way and it was wrong: the path stroked as a
+   * white rope with an ink edge, and then a separate outlined clump dropped on
+   * every kink. Each of those pieces carried its own complete contour, so the
+   * finished bolt was a rope with a row of outlined burrs sitting on top of it -
+   * lines running *through* the middle of the thing everywhere the burrs met
+   * the rope, and a seam round every join.
+   *
+   * Electricity in the reference has no internal lines anywhere. The trail, the
+   * spikes thrown off its bends and the burst where it earths itself are one
+   * continuous white body with a thin black rim round the outside of the lot,
+   * and nothing at all inside. So all of it is traced as a set of overlapping
+   * pieces - a trail with a real belly, a star at every kink whose roots sit
+   * well inside that belly - and handed to `inkedUnion`, which lays the whole
+   * group down fat and black and then fills every piece white on top. What
+   * survives is the outline of the union. No seams, no rope, no burrs.
+   *
+   * It fades by shrinking rather than by going transparent: a half-transparent
+   * white belly over a black underlay would come out grey, and there is no grey
+   * in this film.
+   */
   draw(sk: Sketch, _ctx: WeaponCtx): void {
     if (this.arcs.length === 0) return;
     const c = sk.ctx;
     c.save();
     c.lineCap = 'round';
     c.lineJoin = 'round';
+    // Everything on the page at once, in one union. Not one union per bolt:
+    // the discharge throws twenty-two of them out of the same point and three
+    // more leave his hand down the same line, so per-bolt outlines would put
+    // the seams straight back in wherever two of them lie across each other.
+    // They are all the same discharge and they are drawn as one.
+    const traces: (() => void)[] = [];
     for (const a of this.arcs) {
       const k = a.life / a.max;
-      c.globalAlpha = clamp(k * 1.8, 0, 1);
-      // A white core with a thin ink edge, so the path stays legible over the
-      // black wall without becoming a rope.
-      c.strokeStyle = '#000';
-      c.lineWidth = a.width * (0.34 + k * 0.55) + 2.4;
-      strokePts(c, a.pts);
-      c.strokeStyle = '#fff';
-      c.lineWidth = a.width * (0.34 + k * 0.55);
-      strokePts(c, a.pts);
-      // And the feathering, which is the actual look: at every kink a ragged
-      // fan of curved tapered slivers, mostly running along the bolt and a few
-      // thrown across it. Solid ink, clustered, uneven - the reference draws
-      // energy as a mess of brush strokes, not as a diagram of a spark.
-      c.fillStyle = '#000';
-      c.strokeStyle = '#000';
-      c.lineWidth = 1.2;
-      // Ink flicked off the kinks: thin sharp slivers, a few per bend, and
-      // nothing fat anywhere. This is the reference's whole vocabulary for
-      // energy, and the moment the strokes thicken it turns into a hedge.
+      if (k <= 0) continue;
+      // The trail, as a body rather than a stroke: thickest where it leaves and
+      // tapering as it goes, which is what gives a bolt a direction.
+      const w = (a.width + 5) * (0.45 + k * 0.85);
+      traces.push(() => sk.trailPath(a.pts, w * 1.3, w * 0.72));
+      // A cluster of spikes at every bend, rooted *inside* the trail so the two
+      // share a belly instead of touching. Few and fat: thin ones at this size
+      // are all rim and no white, and the cluster turns into a black burr.
       for (let i = 1; i < a.pts.length - 1; i++) {
         const p = a.pts[i];
         const q = a.pts[i + 1];
         const along = Math.atan2(q.y - p.y, q.x - p.x);
-        // One torn *white* clump per kink with a single contour round it. The
-        // shape is right - clusters thrown off at every angle at wildly uneven
-        // lengths, crowding where the bolt kinks hardest - but filling them
-        // solid put more black on the page than anything else in the game.
-        const n = 6 + Math.floor(Math.abs(hashNoise(i * 3, sk.boil)) * 5);
-        const reach = (12 + Math.abs(hashNoise(i, sk.boil)) * 28) * (0.35 + k * 0.9);
+        const n = 5 + Math.floor(Math.abs(hashNoise(i * 3, sk.boil)) * 3);
+        const reach = (16 + Math.abs(hashNoise(i, sk.boil)) * 30) * (0.35 + k * 0.9);
         const dir = along + hashNoise(i * 5, sk.boil) * 1.7;
-        sk.inked(
-          () => sk.starPath(p.x, p.y, n, reach * 0.14, reach, TAU, dir, i * 37 + sk.boil),
-          2.4, 0.24, i * 53,
-        );
+        traces.push(() => sk.starPath(p.x, p.y, n, w * 0.8, reach, TAU, dir, i * 37 + sk.boil));
       }
-      // And a bigger one where it earthed itself.
+      // And a bigger one where it earthed itself, opening back up the bolt.
       const end = a.pts[a.pts.length - 1];
       const prev = a.pts[a.pts.length - 2];
-      sk.inked(
-        () => sk.starPath(end.x, end.y, 13, 6, (30 + a.width * 5) * (0.4 + k * 0.9), 2.7,
-          Math.atan2(prev.y - end.y, prev.x - end.x), 771),
-        3, 0.16, 772,
-      );
+      traces.push(() => sk.starPath(end.x, end.y, 11, w * 0.9,
+        (34 + a.width * 5) * (0.4 + k * 0.9), 2.7,
+        Math.atan2(prev.y - end.y, prev.x - end.x), 771));
     }
-    c.globalAlpha = 1;
+    sk.inkedUnion(traces, 2.4);
     c.restore();
   }
 
@@ -2519,6 +2537,24 @@ export class Mecha extends Weapon {
     if (this.slashing && this.anim > 0) {
       const ba = this.bladeAngle(ctx);
       return { main: gripAt(ctx, ba, 36, -3 * f), off: grip(ctx, 26, 16) };
+    }
+    // Firing.
+    //
+    // The cannon is his hand, so opening fire has to *be* an arm movement: it
+    // comes up along the line, punches out as the barrel telescopes, and takes
+    // the recoil back into the shoulder. Standing on the floor this used to
+    // return null and let the gait keep swinging the arm, so a burst of rounds
+    // left a barrel that appeared in mid-air beside a man walking - the one
+    // thing in the whole arsenal that fired without anybody moving.
+    if (this.cannon > 0.02) {
+      const k = this.cannon;
+      // Thrown out along the aim while the barrel is out, snatched back a few
+      // units on the frames a round is actually leaving it.
+      const kick = this.flashT > 0 ? 1 : 0;
+      return {
+        main: grip(ctx, 30 + k * 14 - kick * 5, -4 - k * 2),
+        off: grip(ctx, 24 + k * 4, 15),
+      };
     }
     if (!ctx.sm.onGround) return { main: grip(ctx, 40, -5), off: null };
     // Standing about with the wings folded: he just stands about.

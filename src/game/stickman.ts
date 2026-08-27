@@ -72,6 +72,21 @@ const WALL_JUMP_V = 900;
 const WALL_JUMP_PUSH = 165;
 /** How long the coil-and-shove drawing runs for after a kick off the wall. */
 const WALL_KICK_TIME = 0.34;
+/**
+ * How long the drive off a jump is still visible in the legs. Short: it is the
+ * two or three drawings where he is still straightening out of the push, and
+ * after that he is simply in the air.
+ */
+const TAKEOFF_TIME = 0.22;
+/**
+ * How far ahead of himself he watches the floor coming up.
+ *
+ * A landing that begins on the frame of contact is a landing nobody saw
+ * arriving - the legs snap from tucked to folded in one drawing and it reads as
+ * a glitch. From this far out he starts reaching a leg down for it, so the
+ * squat has something to be the end of.
+ */
+const LAND_LOOK = 170;
 const MAX_FALL = 1250;
 const COYOTE = 0.11;
 const JUMP_BUFFER = 0.13;
@@ -248,6 +263,10 @@ export class Stickman {
   private spine = 0;
   /** 0..1 how deep he is folded into a landing; decays over a few frames. */
   private landSquat = 0;
+  /** 0..1 how much of the push-off is still in the legs after a jump. */
+  private takeoff = 0;
+  /** 0..1 how close the floor is on the way down: the reach before the squat. */
+  private landPrep = 0;
   private breathe = 0;
   private headTilt = 0;
   aim = 0;
@@ -331,6 +350,8 @@ export class Stickman {
     this.wallKick = 0;
     this.airStallT = 0;
     this.stallT = 0;
+    this.takeoff = 0;
+    this.landPrep = 0;
     this.ghosts.length = 0;
     this.ghostBurst = 0;
     this.armsHidden = false;
@@ -401,6 +422,10 @@ export class Stickman {
         this.onGround = false;
         this.justJumped = true;
         this.squash = -0.5;
+        // The drive itself: for the next few drawings the legs are still
+        // straightening out of the shove rather than folded up under him.
+        this.takeoff = 1;
+        this.landPrep = 0;
       } else if (this.onWall !== 0) {
         // Wall jump: he plants both feet on the masonry and springs off it,
         // which is nearly all lift and only a nudge of push. The nudge is
@@ -420,12 +445,15 @@ export class Stickman {
         // are the drawing here, and a spin would bury them.
         this.flipSpin = -this.wallKickDir * TAU * 0.12;
         this.squash = -0.55;
+        this.landPrep = 0;
         this.addGhostBurst(0.22);
       } else if (this.airJumps > 0) {
         this.airJumps--;
         this.vel.y = -AIR_JUMP_V * this.jumpBoost;
         this.jumpBuffer = 0;
         this.justJumped = true;
+        this.takeoff = 1;
+        this.landPrep = 0;
         // A full somersault on the second jump.
         this.flipSpin = (this.vel.x >= 0 ? 1 : -1) * TAU;
       }
@@ -836,9 +864,39 @@ export class Stickman {
     // a few frames rather than snapping back.
     this.landSquat = damp(this.landSquat, 0, 9, dt);
 
+    // --- the two halves of a jump, as animation clocks ----------------------
+    //
+    // The push is a decay: whatever is left of it is how straight the legs
+    // still are. The landing is the opposite - it is *read off the world*, by
+    // looking down for the floor and asking how close it has got, so he starts
+    // reaching for a rooftop the moment it is under him rather than on the
+    // frame he arrives.
+    this.takeoff = Math.max(0, this.takeoff - dt / TAKEOFF_TIME);
+    const falling = !this.onGround && this.vel.y > 40;
+    const near = falling
+      ? 1 - clamp(terrain.groundBelow(this.pos.x, this.pos.y, LAND_LOOK) / LAND_LOOK, 0, 1)
+      : 0;
+    // And only when he is actually coming down hard enough for bracing to mean
+    // anything: drifting down an inch off the floor is not a landing. Once his
+    // feet are down it lets go quickly, because from that moment the squat is
+    // what is carrying the movement and two folds stacked keep him doubled over
+    // long after he has arrived.
+    this.landPrep = damp(this.landPrep, near * clamp(this.vel.y / 420, 0, 1),
+      falling ? 18 : 20, dt);
+
     // The back curls over a landing or a crouch and arches back out of a brace.
+    //
+    // The airborne half of that is the whole shape of a jump: he arches back
+    // off the shove, folds over the floor coming up to meet him, and stays
+    // folded through the squat that absorbs it. A kick off a wall is the same
+    // two beats in a third of the time - curled up against the masonry, then
+    // opening out as he drives off it.
+    const kick = this.wallKick / WALL_KICK_TIME;
     const curl = this.landSquat * 0.42
       + (this.crouching ? 0.34 : 0)
+      + this.landPrep * 0.34
+      - this.takeoff * 0.34
+      + (this.wallKick > 0 ? kick * 0.5 - (1 - kick) * 0.36 : 0)
       + (this.stanceKind === 'crouch' || this.stanceKind === 'lunge' ? this.stanceW * 0.24 : 0)
       - (this.stanceKind === 'brace' ? this.stanceW * 0.34 : 0)
       + clamp(this.gaitPower, 0, 1) * 0.07;
@@ -854,6 +912,9 @@ export class Stickman {
     const stanceHip = (this.stance?.hip ?? 0) * this.stanceW;
     const target = (this.crouching ? CROUCH_HIP : STAND_HIP)
       - this.squash * 10 - bobbing - this.landSquat * 15 + airTuck + stanceHip
+      // Both ends of a jump push the hips away from the feet: he leaves the
+      // floor at full stretch and reaches for it again on the way back down.
+      + this.takeoff * 5 + this.landPrep * 7
       + Math.sin(this.breathe) * (this.onGround && speed < 12 ? 1.3 : 0.4);
     this.hipH = damp(this.hipH, target, 22, dt);
 
@@ -1046,9 +1107,29 @@ export class Stickman {
       // Rising, both knees fold up under him; falling, the front leg reaches
       // for the floor and the back one trails behind, still folded.
       const tuck = clamp(0.5 + rise * 0.5, 0, 1);
-      return front
+      let key = front
         ? { u: 0, thigh: lerp(38, 64, tuck), knee: lerp(44, 116, tuck), hip: 0 }
         : { u: 0, thigh: lerp(-34, -4, tuck), knee: lerp(70, 108, tuck), hip: 0 };
+
+      // The push-off. For the first drawings off the floor the legs are still
+      // *finishing the shove* - long, nearly locked, trailing under and behind
+      // him - and only then do they fold up. Without this a jump began with the
+      // knees already at his chest, so nothing about it read as having pushed.
+      if (this.takeoff > 0.01) {
+        key = blendKey(key, front
+          ? { u: 0, thigh: 10, knee: 12, hip: 0 }
+          : { u: 0, thigh: -30, knee: 8, hip: 0 }, this.takeoff);
+      }
+      // And the landing, seen coming. The front leg swings down and the knee
+      // opens out to meet the floor while the back one stays folded to take the
+      // second half of it - so the squat on contact is the end of a movement
+      // instead of the whole of one.
+      if (this.landPrep > 0.01) {
+        key = blendKey(key, front
+          ? { u: 0, thigh: 27, knee: 15, hip: 0 }
+          : { u: 0, thigh: -13, knee: 54, hip: 0 }, this.landPrep);
+      }
+      return key;
     }
     // On the ground: the run cycle, faded in over the idle stance by how hard
     // the legs are actually working.
@@ -1091,6 +1172,17 @@ export class Stickman {
         const toWall = this.wallKickDir * this.facing;
         upper = lerp(upper, (front ? -60 : 96) * (toWall >= 0 ? 1 : -1), k);
         bend = lerp(bend, front ? 96 : 44, k);
+      }
+      // Thrown up over his head as he leaves the floor - the arms are half of
+      // where the height comes from - and out either side of him for balance as
+      // the floor comes back up.
+      if (this.takeoff > 0.01) {
+        upper = lerp(upper, front ? 122 : 96, this.takeoff * 0.75);
+        bend = lerp(bend, 44, this.takeoff * 0.75);
+      }
+      if (this.landPrep > 0.01) {
+        upper = lerp(upper, front ? 56 : -68, this.landPrep);
+        bend = lerp(bend, 76, this.landPrep);
       }
     } else {
       const opp = sampleLeg((this.gait + (side === 1 ? Math.PI : 0)) / TAU);
@@ -1280,6 +1372,17 @@ export class Stickman {
 function mod1(v: number): number {
   const m = v % 1;
   return m < 0 ? m + 1 : m;
+}
+
+/** One leg pose eased into another; how every air pose is layered. */
+function blendKey(a: LegKey, b: LegKey, t: number): LegKey {
+  const k = smoothstep(clamp(t, 0, 1));
+  return {
+    u: a.u,
+    thigh: lerp(a.thigh, b.thigh, k),
+    knee: lerp(a.knee, b.knee, k),
+    hip: lerp(a.hip, b.hip, k),
+  };
 }
 
 /** The interpolated leg pose at a point in the cycle, in cycles (not radians). */
