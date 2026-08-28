@@ -65,10 +65,21 @@ export class ImpactFx {
    *
    * Every blade of the fan starts at exactly the same point - where the blow
    * landed - and sweeps back past the figure, so the effect reads as a single
-   * connected form rather than an arc here and some loose strokes there. It is
-   * built as one path: filled white once, then outlined in one pass, which is
-   * what gives the reference's look of nested strokes with paper showing
-   * through them.
+   * connected form rather than an arc here and some loose strokes there.
+   *
+   * Two things make it read as ink rather than as cut paper, and both are about
+   * where the pen is *not*.
+   *
+   * The blades are fat. A sliver with a hairline of white in it is a scratch;
+   * these are wedges with a real belly, and the white is the whole mark - the
+   * ink round it is only there to say where it stops.
+   *
+   * And the rim never comes near the apex. The inner third of every blade is
+   * left completely open, so the fan has no line across the point of contact
+   * for the weapon to run into: the blade of a sword, the face of a hammer and
+   * the spikes coming off them share the same white and simply flow into one
+   * another. Ink walks the outer part of the blades only, and even there with a
+   * pen that lifts, so what closes the shape is the eye.
    *
    * `inverted` flips it solid, because on an inverted frame a white-filled
    * shape with a black outline would vanish into the black ground.
@@ -86,17 +97,26 @@ export class ImpactFx {
       const reach = worldW * (0.26 + h.power * 0.2);
       const fade = 1 - h.age * 0.14;
 
-      c.beginPath();
-      for (let i = 0; i < n; i++) {
+      /** One blade, from the apex out to its point and back. */
+      const blade = (i: number): { p: (d: number, o: number) => Vec2; len: number; w: number; bow: number } => {
         const t = n === 1 ? 0.5 : i / (n - 1);
         const a = back + (t - 0.5) * spread + hashNoise(h.seed + i, h.age) * 0.07;
         const len = reach * (0.42 + Math.abs(hashNoise(h.seed + i * 3, 1)) * 0.9) * fade;
-        const w = (4 + h.power * 8) * fade * (0.6 + Math.abs(hashNoise(h.seed + i * 7, 4)) * 0.8);
-        // Each blade bows a little, the way a drawn stroke does.
+        // Fat. The old fan was eight units of white at its widest, which at this
+        // length is a hair; a blade of this is a wedge you could letter inside.
+        const w = (13 + h.power * 22) * fade * (0.6 + Math.abs(hashNoise(h.seed + i * 7, 4)) * 0.8);
         const bow = hashNoise(h.seed + i * 11, 5) * len * 0.1;
         const ca = Math.cos(a), sa = Math.sin(a);
         const nx = -sa, ny = ca;
-        const p = (d: number, o: number): Vec2 => ({ x: h.x + ca * d + nx * o, y: h.y + sa * d + ny * o });
+        return {
+          p: (d, o) => ({ x: h.x + ca * d + nx * o, y: h.y + sa * d + ny * o }),
+          len, w, bow,
+        };
+      };
+
+      c.beginPath();
+      for (let i = 0; i < n; i++) {
+        const { p, len, w, bow } = blade(i);
         const tip = p(len, bow);
         // Apex, out along one edge to the point, and back along the other.
         c.moveTo(h.x, h.y);
@@ -107,16 +127,29 @@ export class ImpactFx {
       }
       c.fillStyle = inverted ? '#000' : '#fff';
       c.fill();
-      // The rim is walked with a pen that lifts: long runs of ink round some
-      // blades, nothing at all round others. A fan outlined all the way round
-      // reads as cut paper; one outlined in pieces reads as drawn.
       if (inverted) {
         c.strokeStyle = '#000';
         c.lineWidth = 5;
         c.stroke();
-      } else {
-        sk.rim(3.4, 0.16, h.seed + h.age * 17);
+        continue;
       }
+      // The rim: each blade walked from a third of the way out, round the
+      // point, and back - never across the apex, and never joining one blade to
+      // the next. What is left open at the middle is where the weapon lives.
+      c.beginPath();
+      for (let i = 0; i < n; i++) {
+        const { p, len, w, bow } = blade(i);
+        const open = 0.3 + Math.abs(hashNoise(h.seed + i * 13, h.age + 2)) * 0.16;
+        const tip = p(len, bow);
+        const s1 = p(len * open, w * 0.5 * (1 - open) * 1.5 + bow * 0.2);
+        const s2 = p(len * open, -w * 0.5 * (1 - open) * 1.5 + bow * 0.2);
+        const e1 = p(len * 0.5, w * 0.42 + bow * 0.35);
+        const e2 = p(len * 0.5, -w * 0.42 + bow * 0.35);
+        c.moveTo(s1.x, s1.y);
+        c.quadraticCurveTo(e1.x, e1.y, tip.x, tip.y);
+        c.quadraticCurveTo(e2.x, e2.y, s2.x, s2.y);
+      }
+      sk.rim(3.4, 0.3, h.seed + h.age * 17);
     }
     c.restore();
   }
