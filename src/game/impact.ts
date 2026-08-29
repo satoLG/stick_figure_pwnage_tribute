@@ -13,7 +13,7 @@ import type { Sketch } from '../core/sketch';
  *   3. the fan thinning out, line by line, over the next three or four frames
  *      until the paper is empty again.
  *
- * The count coming down is the whole trick: 13 lines, then 8, then 5, then 2,
+ * The count coming down is the whole trick: 21 lines, then 13, then 7, then 3,
  * then nothing. That emptying is what makes the next hit land.
  */
 interface Hit {
@@ -27,7 +27,7 @@ interface Hit {
 }
 
 /** How many lines are left on each frame of a hit's life. */
-const FAN = [13, 8, 5, 2];
+const FAN = [21, 13, 7, 3];
 /** Seconds each stage of the fan is held: one drawing at fifteen a second. */
 const STAGE = 1 / 15;
 
@@ -67,19 +67,21 @@ export class ImpactFx {
    * landed - and sweeps back past the figure, so the effect reads as a single
    * connected form rather than an arc here and some loose strokes there.
    *
-   * Two things make it read as ink rather than as cut paper, and both are about
-   * where the pen is *not*.
+   * What a blade looks like is settled by the film rather than guessed at, and
+   * it is not the obvious answer. They are *narrow* - long splinters a few
+   * units across at their widest, twenty of them at once - and the white
+   * inside one is never more than a thread. Over paper that reads as a spray
+   * of hard black slivers, which is exactly what a hit is there; over the wall
+   * the same shapes read white, because against black the thread is all there
+   * is. One drawing, right on both grounds.
    *
-   * The blades are fat. A sliver with a hairline of white in it is a scratch;
-   * these are wedges with a real belly, and the white is the whole mark - the
-   * ink round it is only there to say where it stops.
+   * Fat wedges were the earlier reading and they are wrong on the paper half
+   * of that: filled white on white, a wedge is simply not there, and the whole
+   * blow came out as a few loose dashes hanging near the figure.
    *
-   * And the rim never comes near the apex. The inner third of every blade is
-   * left completely open, so the fan has no line across the point of contact
-   * for the weapon to run into: the blade of a sword, the face of a hammer and
-   * the spikes coming off them share the same white and simply flow into one
-   * another. Ink walks the outer part of the blades only, and even there with a
-   * pen that lifts, so what closes the shape is the eye.
+   * The rim still lifts off the apex, though now only just, so the weapon that
+   * caused all this - the blade of a sword, the face of a hammer - flows into
+   * the middle of the fan instead of running into a line ruled across it.
    *
    * `inverted` flips it solid, because on an inverted frame a white-filled
    * shape with a black outline would vanish into the black ground.
@@ -101,10 +103,10 @@ export class ImpactFx {
       const blade = (i: number): { p: (d: number, o: number) => Vec2; len: number; w: number; bow: number } => {
         const t = n === 1 ? 0.5 : i / (n - 1);
         const a = back + (t - 0.5) * spread + hashNoise(h.seed + i, h.age) * 0.07;
-        const len = reach * (0.42 + Math.abs(hashNoise(h.seed + i * 3, 1)) * 0.9) * fade;
-        // Fat. The old fan was eight units of white at its widest, which at this
-        // length is a hair; a blade of this is a wedge you could letter inside.
-        const w = (13 + h.power * 22) * fade * (0.6 + Math.abs(hashNoise(h.seed + i * 7, 4)) * 0.8);
+        const len = reach * (0.34 + Math.abs(hashNoise(h.seed + i * 3, 1)) * 1.15) * fade;
+        // Narrow, and wildly uneven: in the source a fan is a few long heavy
+        // splinters with a dozen finer ones packed between them.
+        const w = (3.4 + h.power * 4.6) * fade * (0.45 + Math.abs(hashNoise(h.seed + i * 7, 4)) * 1.5);
         const bow = hashNoise(h.seed + i * 11, 5) * len * 0.1;
         const ca = Math.cos(a), sa = Math.sin(a);
         const nx = -sa, ny = ca;
@@ -129,17 +131,21 @@ export class ImpactFx {
       c.fill();
       if (inverted) {
         c.strokeStyle = '#000';
-        c.lineWidth = 5;
+        c.lineWidth = 4;
         c.stroke();
         continue;
       }
-      // The rim: each blade walked from a third of the way out, round the
-      // point, and back - never across the apex, and never joining one blade to
-      // the next. What is left open at the middle is where the weapon lives.
+      // The rim: each blade walked from a little way out, round the point, and
+      // back - never across the apex, and never joining one blade to the next.
+      // What is left open at the middle is where the weapon lives. On a blade
+      // this narrow the two sides of that walk all but meet, which is what
+      // turns the sliver black against the paper - and the pen stays down the
+      // whole way round, because a splinter thrown off a blow is one mark, not
+      // a dashed one.
       c.beginPath();
       for (let i = 0; i < n; i++) {
         const { p, len, w, bow } = blade(i);
-        const open = 0.3 + Math.abs(hashNoise(h.seed + i * 13, h.age + 2)) * 0.16;
+        const open = 0.12 + Math.abs(hashNoise(h.seed + i * 13, h.age + 2)) * 0.1;
         const tip = p(len, bow);
         const s1 = p(len * open, w * 0.5 * (1 - open) * 1.5 + bow * 0.2);
         const s2 = p(len * open, -w * 0.5 * (1 - open) * 1.5 + bow * 0.2);
@@ -149,7 +155,7 @@ export class ImpactFx {
         c.quadraticCurveTo(e1.x, e1.y, tip.x, tip.y);
         c.quadraticCurveTo(e2.x, e2.y, s2.x, s2.y);
       }
-      sk.rim(3.4, 0.3, h.seed + h.age * 17);
+      sk.rim(3.1, 0, h.seed + h.age * 17);
     }
     c.restore();
   }

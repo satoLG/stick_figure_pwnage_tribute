@@ -1,7 +1,14 @@
 import { clamp, hashNoise, TAU, type Vec2 } from '../core/math';
 
-/** How thick the floor slab is, in world units. Fixed, because the figure is. */
-const FLOOR_THICKNESS = 124;
+/**
+ * How thick the floor slab is, in world units. Fixed, because the figure is.
+ *
+ * Thin, because in the source the ground is a line rather than a plinth: the
+ * wall runs almost to the bottom of the picture and what is under his feet is
+ * a few units of black. It still has to be deep enough that a crater in it is
+ * a crater and not a hole through into nothing, which is what sets the floor.
+ */
+const FLOOR_THICKNESS = 92;
 
 /**
  * The wall, in world units. Fixed, because the figure is: a wall that grew with
@@ -61,17 +68,25 @@ export interface WorldSize { w: number; h: number; }
  * inside whatever comes back, so a phone gets more sky and a deeper floor
  * rather than a taller wall. The lower clamp on the height is what guarantees
  * the whole wall fits under the HUD strip even on a letterbox-wide screen.
+ *
+ * How many world units the screen is worth is therefore the camera, and it is
+ * set from the source film rather than picked. Measured off it, the figure
+ * stands about a third as tall as the wall beside him and the wall runs the
+ * whole band from the floor to the top of the picture; a playfield of ~660
+ * units puts our fixed 132-unit figure at that same fraction. The old 864 was
+ * a wider shot: the same drawings, but seen from far enough back that a blow
+ * landing on the wall was a small event in a lot of empty paper.
  */
 export function computeWorldSize(vw: number, vh: number): WorldSize {
   const aspect = Math.max(0.25, Math.min(4, (vw || 1) / (vh || 1)));
   let w: number, h: number;
-  if (aspect >= 1) { h = 864; w = h * aspect; }
-  else { w = 768; h = w / aspect; }
+  if (aspect >= 1) { h = 664; w = h * aspect; }
+  else { w = 590; h = w / aspect; }
   // Each clamp re-derives the other side from the aspect, so it is preserved.
-  if (w < 984) { w = 984; h = w / aspect; }
-  if (w > 2640) { w = 2640; h = w / aspect; }
-  if (h < 840) { h = 840; w = h * aspect; }
-  if (h > 1800) { h = 1800; w = h * aspect; }
+  if (w < 756) { w = 756; h = w / aspect; }
+  if (w > 2030) { w = 2030; h = w / aspect; }
+  if (h < 646) { h = 646; w = h * aspect; }
+  if (h > 1385) { h = 1385; w = h * aspect; }
   return { w: Math.round(w), h: Math.round(h) };
 }
 

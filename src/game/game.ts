@@ -93,6 +93,18 @@ export class Game {
   private shakeOff: Vec2 = vec(0, 0);
   private flashAmt = 0;
   private invertT = 0;
+  /**
+   * The swipe card: seconds left on the two drawings where the whole picture
+   * is thrown away and replaced by one white sweep on black paper.
+   *
+   * The source cuts to it on the blows that matter, and it is doing something
+   * an inversion cannot: an inverted frame still shows the scene, only in
+   * negative, so the eye keeps reading positions out of it. This shows nothing
+   * but the shape of the stroke, which is why the blow after it lands so hard.
+   */
+  private swipeT = 0;
+  private swipeDir = 0;
+  private swipeSeed = 0;
   private timeScale = 1;
   private hintFade = 1;
   /**
@@ -313,6 +325,7 @@ export class Game {
     this.shakeAmt = 0;
     this.flashAmt = 0;
     this.invertT = 0;
+    this.swipeT = 0;
     this.hintFade = 1;
     this.stats = { shots: 0, elapsed: 0 };
     this.layoutButtons();
@@ -371,7 +384,12 @@ export class Game {
       shake: (a) => this.shake(a),
       flash: (a) => { this.flashAmt = Math.min(1, this.flashAmt + a); },
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
-      hit: (x, y, dir, power) => this.impacts.add(x, y, dir, power),
+      hit: (x, y, dir, power) => {
+        this.impacts.add(x, y, dir, power);
+        // Only the heavy end of the range earns the card; on every jab it
+        // would be a strobe rather than punctuation.
+        if ((power ?? 1) >= 1.5) this.swipe(dir);
+      },
       freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
       after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
@@ -395,11 +413,31 @@ export class Game {
    */
   private frameAcc = 0;
   /**
-   * Frames drawn per second. 60 is smooth and responsive; 15 is the reference
-   * film's own cadence, and costs the input latency that comes with it. V
-   * toggles, because the two really are different games to play.
+   * How often the world is stepped. Sixty, always: this is what the controls
+   * are read on, and nothing about the look of the thing is worth answering a
+   * button sixty milliseconds late.
    */
   private animFps = 60;
+
+  /**
+   * How often a new drawing is *made*, which is a separate question and the
+   * one the film answers for us.
+   *
+   * Counted off the source frame by frame, half of every pair of video frames
+   * in it is pixel-identical to the one before: it is animated on twos, at
+   * fifteen unique drawings a second, and holding each of them for two frames
+   * is a good part of why it moves the way it does. A stick figure redrawn
+   * sixty times a second is a smooth interpolation of a drawing; redrawn
+   * fifteen times it is a drawing.
+   *
+   * So the world runs at sixty and the picture is remade at fifteen. What is
+   * on the glass between two of those is simply the last one, still up. `V`
+   * puts it back on sixty for comparison.
+   */
+  private drawHz = 15;
+  private drawnTick = -1;
+  /** Real seconds banked since the last drawing, so `ctx.dt` stays honest. */
+  private drawAcc = 0;
 
   private step(rawDt: number): void {
     const stepLen = 1 / this.animFps;
@@ -416,7 +454,7 @@ export class Game {
     this.phaseTime += rawDt;
     this.sk.update(this.time);
     // A/B the cadence against plain 60 fps while we tune the feel.
-    if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 60 ? 15 : 60;
+    if (this.input.justPressed('KeyV')) this.drawHz = this.drawHz === 15 ? 60 : 15;
 
     this.pad = this.pads.read();
     this.pickDevice();
@@ -425,7 +463,7 @@ export class Game {
     // The settings menu holds the world still. Anything else would have the
     // player fighting the game with one hand while changing it with the other.
     if (this.menu.open) {
-      this.render(rawDt);
+      this.present(rawDt);
       this.input.endFrame(rawDt);
       return;
     }
@@ -435,7 +473,7 @@ export class Game {
     if (this.freezeT > 0) {
       this.freezeT = Math.max(0, this.freezeT - rawDt);
       this.decayEffects(rawDt);
-      this.render(rawDt);
+      this.present(rawDt);
       this.input.endFrame(rawDt);
       return;
     }
@@ -447,8 +485,23 @@ export class Game {
       case 'won': this.updateWon(rawDt); break;
     }
 
-    this.render(rawDt);
+    this.present(rawDt);
     this.input.endFrame(rawDt);
+  }
+
+  /**
+   * One drawing every 1/15s, and the one already on the glass in between.
+   * The banked time goes to whoever is drawn, so anything that ages inside a
+   * draw ages by the whole gap rather than by one sixtieth of it.
+   */
+  private present(rawDt: number): void {
+    this.drawAcc += rawDt;
+    const tick = Math.floor(this.time * this.drawHz);
+    if (tick === this.drawnTick) return;
+    this.drawnTick = tick;
+    const dt = this.drawAcc;
+    this.drawAcc = 0;
+    this.render(dt);
   }
 
   /**
@@ -833,10 +886,57 @@ export class Game {
     audio.play('ui');
   }
 
+  /**
+   * Arm the swipe card. Two drawings, and never stacked: a second blow landing
+   * inside the first only ever re-aims it, because two cards back to back is a
+   * flicker and the source never does that.
+   */
+  private swipe(dir: number): void {
+    // A shade under two drawings' worth, so it lands on exactly two of them
+    // wherever in the frame the blow happened to arrive.
+    this.swipeT = 1.55 / 15;
+    this.swipeDir = dir;
+    this.swipeSeed = Math.floor(this.time * 60);
+  }
+
+  /**
+   * The card itself: black paper, one white stroke, nothing else.
+   *
+   * The stroke is a crescent lying across the blow with its belly thrown the
+   * way the blow was going, which is how the source draws the sweep of a
+   * weapon when it stops drawing the weapon.
+   */
+  private drawSwipe(): void {
+    const c = this.ctx;
+    const { w, h } = this.view;
+    c.save();
+    c.setTransform(this.scaleX, 0, 0, this.scaleY, 0, 0);
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, w, h);
+
+    const cx = w * (0.46 + hashNoise(this.swipeSeed, 3) * 0.06);
+    const cy = h * (0.45 + hashNoise(this.swipeSeed + 5, 3) * 0.05);
+    // A third of the picture, as in the source: the card is a stroke on a
+    // page, not a shape that fills the frame.
+    const len = Math.min(w * 0.46, h * 0.58);
+    const ca = Math.cos(this.swipeDir), sa = Math.sin(this.swipeDir);
+    // Across the blow for the chord, along it for the belly.
+    const px = -sa, py = ca;
+    const back = len * 0.12;
+    const a = { x: cx - px * len * 0.5 - ca * back, y: cy - py * len * 0.5 - sa * back };
+    const b = { x: cx + px * len * 0.5 - ca * back, y: cy + py * len * 0.5 - sa * back };
+    const ctrl = { x: cx + ca * len * 0.62, y: cy + sa * len * 0.62 };
+    this.sk.ribbonPath(a, ctrl, b, len * 0.3, 0.46, 0.5);
+    c.fillStyle = '#fff';
+    c.fill();
+    c.restore();
+  }
+
   private decayEffects(dt: number): void {
     this.shakeAmt = damp(this.shakeAmt, 0, 9, dt);
     this.flashAmt = Math.max(0, this.flashAmt - dt * 3.4);
     this.invertT = Math.max(0, this.invertT - dt);
+    this.swipeT = Math.max(0, this.swipeT - dt);
     const s = this.shakeAmt;
     this.shakeOff = {
       x: hashNoise(1, Math.floor(this.time * 90)) * s,
@@ -923,9 +1023,13 @@ export class Game {
 
     c.restore();
 
-    // A hard black/white inversion is the punctuation these animations use for
-    // their biggest hits, so that is exactly what a heavy blast does here.
-    if (this.flashAmt > 0.01 || this.invertT > 0) {
+    // The swipe card, which outranks everything: for two drawings the picture
+    // is gone and one white stroke stands on black paper.
+    if (this.swipeT > 0) {
+      this.drawSwipe();
+    } else if (this.flashAmt > 0.01 || this.invertT > 0) {
+      // A hard black/white inversion is the punctuation these animations use
+      // for their biggest hits, so that is what a heavy blast does here.
       c.save();
       c.globalCompositeOperation = 'difference';
       c.globalAlpha = this.invertT > 0 ? 1 : clamp(this.flashAmt, 0, 1) * 0.85;
