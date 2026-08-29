@@ -144,6 +144,8 @@ export class Game {
   get destroyedPct(): number { return this.terrain.destroyed; }
   get currentPhase(): string { return this.phase; }
   get viewSize(): { w: number; h: number } { return this.view; }
+  /** Where the wall's face starts, so a test can stand him a fixed way off it. */
+  get wallFaceX(): number { return this.terrain.wallX; }
   get equippedIndex(): number { return this.equipped; }
   get installOffer(): string | null { return installer.offer; }
   constructor(canvas: HTMLCanvasElement) {

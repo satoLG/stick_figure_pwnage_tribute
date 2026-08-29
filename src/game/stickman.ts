@@ -853,7 +853,7 @@ export class Stickman {
     // the horizontal with the head out in front at hip height, which is a
     // pose, not a lean. Walking and running keep the modest tilt they had.
     const targetLean =
-      (this.vel.x / RUN_SPEED) * (0.17 + this.sprintT * 0.42)
+      (this.vel.x / RUN_SPEED) * (0.17 + this.sprintT * 0.56)
       - Math.cos(this.recoilAngle) * this.recoil * 0.16
       + (this.state === 'wallslide' ? -this.onWall * 0.16 : 0)
       + stanceLean;
@@ -917,7 +917,7 @@ export class Stickman {
     const target = (this.crouching ? CROUCH_HIP : STAND_HIP)
       - this.squash * 10 - bobbing - this.landSquat * 15 + airTuck + stanceHip
       // A dash gets under itself as well as over: hips down, spine over.
-      - this.sprintT * 9
+      - this.sprintT * 13
       // Both ends of a jump push the hips away from the feet: he leaves the
       // floor at full stretch and reaches for it again on the way back down.
       + this.takeoff * 5 + this.landPrep * 7
