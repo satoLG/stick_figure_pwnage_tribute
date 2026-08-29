@@ -54,8 +54,14 @@ const BITE_DEPTH = 0.26;
  * Wall fragments smaller than this, once cut free of everything around them,
  * are not left hanging in the air: they fall away as debris and count as
  * destroyed. Nobody should have to chase single specks around the screen.
+ *
+ * Sized off the film, where this is not tidying-up but one of the things the
+ * wall visibly does: a cut takes the corner off it and the piece goes, a whole
+ * slab at a time. 620 units of area is a chip about five across; this is a
+ * piece the size of his head, which is the smallest thing there that ever
+ * falls off.
  */
-const SPECK_LIMIT = 620;
+const SPECK_LIMIT = 3400;
 
 export interface WorldSize { w: number; h: number; }
 
