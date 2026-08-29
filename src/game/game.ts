@@ -53,6 +53,16 @@ interface Intent extends Controls {
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  /**
+   * Where a drawing is actually made. The picture is remade fifteen times a
+   * second, and the last one made is blitted onto the glass sixty times a
+   * second with the cursor drawn on top of it - so the scene keeps the film's
+   * cadence while the crosshair still tracks the mouse at the rate the mouse
+   * moves. A crosshair stepping at fifteen is not a stylistic choice, it is a
+   * broken mouse.
+   */
+  private frame = document.createElement('canvas');
+  private frameCtx: CanvasRenderingContext2D;
   private sk: Sketch;
   private input: Input;
   private touch = new TouchControls();
@@ -141,6 +151,9 @@ export class Game {
     const c = canvas.getContext('2d', { alpha: false });
     if (!c) throw new Error('2D canvas is not available in this browser');
     this.ctx = c;
+    const fc = this.frame.getContext('2d', { alpha: false });
+    if (!fc) throw new Error('2D canvas is not available in this browser');
+    this.frameCtx = fc;
     this.sk = new Sketch(c);
     this.input = new Input(canvas);
     // A first guess from the media query, so the title card offers the right
@@ -193,6 +206,11 @@ export class Game {
     this.canvas.style.height = `${vh}px`;
     this.canvas.width = Math.round(vw * dpr);
     this.canvas.height = Math.round(vh * dpr);
+    // Resizing empties the buffer, so the next frame has to be a real drawing
+    // rather than a blit of what is no longer in there.
+    this.frame.width = this.canvas.width;
+    this.frame.height = this.canvas.height;
+    this.drawnTick = -1;
 
     const resized = size.w !== this.view.w || size.h !== this.view.h;
     this.view = size;
@@ -498,11 +516,25 @@ export class Game {
   private present(rawDt: number): void {
     this.drawAcc += rawDt;
     const tick = Math.floor(this.time * this.drawHz);
-    if (tick === this.drawnTick) return;
-    this.drawnTick = tick;
-    const dt = this.drawAcc;
-    this.drawAcc = 0;
-    this.render(dt);
+    if (tick !== this.drawnTick) {
+      this.drawnTick = tick;
+      const dt = this.drawAcc;
+      this.drawAcc = 0;
+      // Everything paints into the buffer; the glass is only ever blitted to.
+      const glass = this.ctx;
+      this.ctx = this.frameCtx;
+      this.sk.ctx = this.frameCtx;
+      this.render(dt);
+      this.ctx = glass;
+      this.sk.ctx = glass;
+    }
+    const c = this.ctx;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.drawImage(this.frame, 0, 0);
+    if (this.device === 'desk') {
+      c.setTransform(this.scaleX, 0, 0, this.scaleY, 0, 0);
+      this.drawCursor();
+    }
   }
 
   /**
@@ -1075,7 +1107,8 @@ export class Game {
       this.menu.hover(this.device === 'desk' ? this.pointerWorld() : null);
       this.menu.draw(this.sk, this.view, this.inputReport(), this.time);
     }
-    if (this.device === 'desk') this.drawCursor();
+    // The cursor is not drawn here: it goes on the glass every frame, over the
+    // blit of whichever drawing is currently up.
   }
 
   /**
@@ -1230,7 +1263,7 @@ export class Game {
     // more. The open ground is only consulted to stop the words running off
     // the left edge of a narrow phone.
     const open = Math.max(160, t.wallX);
-    const size = fitCueSize(open * 0.62, clamp(w * 0.028, 15, 38));
+    const size = fitCueSize(open * 0.62, clamp(w * 0.028, 15, 38) * this.hudK);
     const half = cueWidth(size) / 2;
     const x = Math.max(half + size * 0.7, t.wallX - size * 1.4 - half);
     const band = t.groundTop - t.wallTop;
