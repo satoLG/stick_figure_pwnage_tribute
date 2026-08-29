@@ -130,11 +130,20 @@ certainly not worth being shoved across the room for.
 
 The scene is a fixed-size thing placed on a variable-size screen, not a thing
 stretched to fill it. The figure, the floor and the wall are all constants in
-world units — the wall is always 564 tall and 420 thick, better than four
-figures high — so a phone and an ultrawide get the same wall, the same run-up
-and the same length of game. What the screen shape decides is how much room
-there is *around* it: a tall screen gets more sky and a deeper floor, never a
-taller wall.
+world units — the wall is 420 thick and as tall as the band under the HUD
+strip will take, better than three figures high — so a phone and an ultrawide
+get the same wall, the same run-up and the same length of game. What the
+screen shape decides is how much room there is *around* it: a tall screen gets
+more sky and a deeper floor, never a taller wall.
+
+How many world units the screen is *worth* is the camera, and it is measured
+off the film rather than picked. There, the figure stands about a third as
+tall as the wall beside him and the wall runs the whole way from the floor to
+the top of the picture. A playfield of about 660 units high puts our fixed
+132-unit figure at that same fraction, and a floor slab of 92 keeps the ground
+a line under his feet rather than a plinth he is standing on. The earlier 864
+was the same drawings seen from further back, and at that distance a blow
+landing on the wall was a small event in a lot of empty paper.
 
 Where in that leftover room the wall sits is the framing, and it is aimed
 rather than left to fall out: the floor is deepened until the wall's middle
@@ -252,6 +261,36 @@ thing in his hands came out of.
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
 
+### Which of these is which, in the film
+
+The arsenal is not an invention; it is the source's own run of powers, taken in
+order off the film (`pwnage_og_video.mp4` in this repo) and given a trigger.
+Timings are from the first part, the one that opens on the wall.
+
+| In the film | What happens there | Here |
+| --- | --- | --- |
+| 0:08–0:17 | A long thin blade. He drags it behind him in a crouched dash, leaps, and the cut takes a whole slab off the top corner of the wall, which then slides off | **2 Swordsman** |
+| 0:12–0:16 | The fan of long splinters converging on one point of contact, and the white crescent on black between the blows | Not a weapon: this is the hit language every weapon here uses (`impact.ts`, and the swipe card in `game.ts`) |
+| 0:17–0:23 | Repeating fire — muzzle sprays, dotted tracers, round white craters, several barrels at once | **5 Gunslinger** |
+| 0:23, 0:31 | Curved blades of air, drawn as white crescents on an inverted frame | **4 Windslash** |
+| 0:27.5–0:30 | The giant mallet, driven into the ground with him perched at the top of the handle | **3 Smasher** |
+| 0:30–0:32 | Three round grenades lobbed together, then flat blades thrown | **5 Gunslinger** (the held chain) and **8 Shinobi** |
+| 0:35–0:38 | Tubes strapped over his shoulders, a rocket out on a dotted contrail, a cauliflower cloud on the wall | **6 Rocketeer** |
+| 0:38–0:40 | Crouched, arms back, a jet of fire breathed at the stone | **8 Shinobi**, held |
+| 0:40–0:47 | Kunai, a smoke bomb, and a second copy of himself running beside him | **8 Shinobi** |
+| 0:47–0:50 | Hair up, aura on, and he stops touching the ground | **14 Sayajeans** |
+| 0:52 | A discharge that earths itself all round him and scorches the floor | **9 Thunderbolt**, held |
+| 0:54–0:58 | Gadgets pulled out of a cartoon cat's pouch | Nothing. It is a joke, and it stays in the film |
+| 0:58–1:05 | The machine assembles out of a floating helmet, punches, fires its fist, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** |
+| 1:06–1:09 | A ball of jagged discharge held in one hand and driven into the wall | **9 Thunderbolt** |
+| 1:09–1:13 | A cape, and something that comes up out of the ground beside him | **13 Monster tamer** |
+| 1:13–1:17 | The finisher: enormous arcs that sweep the whole frame and take the rest of the wall | **2 Swordsman**, held |
+
+Four of ours have no single moment in the film to point at, and are built out
+of the parts of it that recur: **1 Brawler** from the bare-handed frames, **7
+Mage**, **10 Mecha** and **11 Split head** from the second half's stranger
+transformations.
+
 ---
 
 ## How it works
@@ -353,6 +392,43 @@ a percentage point.
 Notch insets are read from a zero-size probe element carrying
 `env(safe-area-inset-*)` and applied to the HUD, so nothing important hides
 under a cutout.
+
+### Fifteen drawings a second (`Game.present`)
+
+The source is animated on twos. Count it frame by frame and half of every pair
+of its video frames is pixel-identical to the one before: fifteen unique
+drawings a second, each held for two. That is not an artefact of the encode, it
+is how the thing was made, and it is a good part of why it moves the way it
+does — a stick figure redrawn sixty times a second is a smooth interpolation of
+a drawing, and redrawn fifteen times it is a drawing.
+
+So the two clocks are split. The world steps at sixty, because that is what the
+controls are read on and nothing about the look of it is worth answering a
+button sixty milliseconds late. The picture is remade at fifteen, and what is on
+the glass in between is simply the last one, still up. The ink's wobble runs on
+that same fifteen, so every drawing that goes up is a genuinely new one and no
+two of them share a jitter. `V` puts the drawing rate back to sixty if you want
+to see the difference.
+
+### One hit, in three drawings (`src/game/impact.ts`)
+
+A landed blow in the source is not a cloud of debris. It is a fan of long sharp
+splinters that all converge on the single point of contact, thinning out over
+the next three or four drawings — 21 lines, then 13, then 7, then 3, then paper
+— and on the heavy blows a **swipe card** in front of it: two drawings where the
+picture is thrown away entirely and one white crescent stands on black.
+
+The splinters are narrow on purpose. Filled white and fat, which is what they
+used to be, they are invisible on white paper and the whole blow comes out as a
+few loose dashes near the figure; narrow, the ink round them closes over the
+belly and the same drawing reads as hard black slivers over the paper and as
+white ones over the wall, which is exactly what the film does.
+
+That rule — a stroke is on the paper at full strength or it is not on the paper
+— is why there is no half-inversion and no fading anywhere. Light from a blast
+banks up and spends itself on one inverted drawing instead of washing the
+screen grey, and a gust of wind dies by having less blade rather than by going
+faint.
 
 ### Why not Phaser?
 
