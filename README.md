@@ -240,7 +240,7 @@ thing in his hands came out of.
 | --- | --- | --- | --- |
 | 1 | `1` | Brawler | Punches and only punches — jab, cross, hook, uppercut, a shoulder charge out of a run, haymakers if you lean on it — each with its own stance so the body moves under the arm. Keep leaning and it winds up into the barrage: the blows arrive sooner and sooner until the arms stop being drawn at all and a field of drags buries him, and letting go runs the same thing backwards |
 | 2 | `2` | Swordsman | A slab too heavy to lift: standing or walking it trails behind him on a slant with the point skimming the floor, and a run rips it back up through everything in front. Nothing it does is a flick — every cut comes round from behind the far shoulder through most of a half circle and drags him along with it, taking out three times the ground the old one did. Hold it and he throws himself the width of a room forward turning over twice, lands on the wall and puts three full-weight cuts through it |
-| 3 | `3` | Smasher | The source's mallet: a smooth barrel as tall as he is with a stick out of the back and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
+| 3 | `3` | Smasher | The source's mallet, the one from part two: a rectangular head on a long shaft, and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
 | 4 | `4` | Windslash | Nothing in his hands: every swing throws curved blades of air four hundred units out in front, and what they leave is separate scores with wall still standing between them. There is weather round him whether or not the trigger is down, and the air carries him half again as high as anyone else jumps. Hold it and he pulls the storm in; letting go throws a whirlwind whose base stays in his hands |
 | 5 | `5` | Gunslinger | Four guns and he chooses. The three he is not holding ride on his back where you can see them; the one in his hands is whatever the range calls for — the revolver out past 250 units, the shotgun inside it. Hold the trigger and the tube comes off his back: one rocket, then three grenades thrown after it, then the rifle, which waits until a grenade is nearly on the wall before putting a round through it |
 | 6 | `6` | Rocketeer | A long screened cannon over his shoulder with three ports in the mouth of it, and four fat tubes fanned out behind him with the bore showing at the end of each. Three rounds one after another out of the front, or hold it down and dump ten off the back |
@@ -263,33 +263,44 @@ automatically so nobody has to hunt single pixels.
 
 ### Which of these is which, in the film
 
-The arsenal is not an invention; it is the source's own run of powers, taken in
-order off the film (`pwnage_og_video.mp4` in this repo) and given a trigger.
-Timings are from the first part, the one that opens on the wall.
+The arsenal is not an invention; it is the source's own run of powers with
+triggers on them. The reading below is taken off `pwnage_og_video.mp4` in this
+repo frame by frame, and the rows are marked for how sure of it we are, because
+at 192x144 a barrel and a bomb are the same twelve pixels and the first pass at
+this got two of them wrong.
 
-| In the film | What happens there | Here |
-| --- | --- | --- |
-| 0:08–0:17 | A long thin blade. He drags it behind him in a crouched dash, leaps, and the cut takes a whole slab off the top corner of the wall, which then slides off | **2 Swordsman** |
-| 0:12–0:16 | The fan of long splinters converging on one point of contact, and the white crescent on black between the blows | Not a weapon: this is the hit language every weapon here uses (`impact.ts`, and the swipe card in `game.ts`) |
-| 0:17–0:23 | Repeating fire — muzzle sprays, dotted tracers, round white craters, several barrels at once | **5 Gunslinger** |
-| 0:23, 0:31 | Curved blades of air, drawn as white crescents on an inverted frame | **4 Windslash** |
-| 0:27.5–0:30 | The giant mallet, driven into the ground with him perched at the top of the handle | **3 Smasher** |
-| 0:30–0:32 | Three round grenades lobbed together, then flat blades thrown | **5 Gunslinger** (the held chain) and **8 Shinobi** |
-| 0:35–0:38 | Tubes strapped over his shoulders, a rocket out on a dotted contrail, a cauliflower cloud on the wall | **6 Rocketeer** |
-| 0:38–0:40 | Crouched, arms back, a jet of fire breathed at the stone | **8 Shinobi**, held |
-| 0:40–0:47 | Kunai, a smoke bomb, and a second copy of himself running beside him | **8 Shinobi** |
-| 0:47–0:50 | Hair up, aura on, and he stops touching the ground | **14 Sayajeans** |
-| 0:52 | A discharge that earths itself all round him and scorches the floor | **9 Thunderbolt**, held |
-| 0:54–0:58 | Gadgets pulled out of a cartoon cat's pouch | Nothing. It is a joke, and it stays in the film |
-| 0:58–1:05 | The machine assembles out of a floating helmet, punches, fires its fist, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** |
-| 1:06–1:09 | A ball of jagged discharge held in one hand and driven into the wall | **9 Thunderbolt** |
-| 1:09–1:13 | A cape, and something that comes up out of the ground beside him | **13 Monster tamer** |
-| 1:13–1:17 | The finisher: enormous arcs that sweep the whole frame and take the rest of the wall | **2 Swordsman**, held |
+**Part one, on the wall.**
 
-Four of ours have no single moment in the film to point at, and are built out
-of the parts of it that recur: **1 Brawler** from the bare-handed frames, **7
-Mage**, **10 Mecha** and **11 Split head** from the second half's stranger
-transformations.
+| In the film | What is actually on screen | Here | |
+| --- | --- | --- | --- |
+| 0:08–0:18 | A long thin blade. He drags it behind him in a crouched dash, leaps, and one cut takes a whole slab off the top corner of the wall, which then slides away | **2 Swordsman** | sure |
+| 0:12–0:16 | The fan of long splinters converging on one point of contact, and the white crescent on black between the blows | not a weapon: this is the hit language every weapon here uses (`impact.ts`, and the swipe card in `game.ts`) | sure |
+| 0:19–0:23 | Close-quarters: four limbs with weights on the ends, then a barrage of blows so fast the arms stop being drawn, a spray of splinters off each one | **1 Brawler** | fair |
+| 0:23, 0:31 | Curved blades drawn as white crescents on an inverted frame | **4 Windslash** | fair |
+| 0:27.5–0:30 | A giant bomb, nose down in the ground with him standing on the flare of its tail, and then it goes off | **6 Rocketeer** (its heavy end) | sure |
+| 0:30–0:32 | Round bombs lobbed by hand, then flat ringed blades thrown after them | **8 Shinobi** | fair |
+| 0:35–0:39 | Standing on a box with four or five long tubes fanned off his back and one over the shoulder, firing rockets that arc into the stone | **6 Rocketeer** | sure |
+| 0:40–0:47 | Kunai, a smoke bomb, and a second copy of himself running beside him | **8 Shinobi** | fair |
+| 0:50–0:52.5 | He pulls a cartoon head off its owner and throws it | nothing. It is a joke, and it stays in the film | sure |
+| 0:52.5 | A discharge that earths itself all round him and scorches the floor | **9 Thunderbolt**, held | sure |
+| 0:54–0:58 | Gadgets pulled out of a cartoon cat's pouch | nothing, again | sure |
+| 0:58–1:05 | The machine assembles out of a floating helmet, punches, fires its fist off on a smoke trail, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** | sure |
+| 1:06–1:09 | A ball of jagged discharge held in one hand and driven into the wall | **9 Thunderbolt** | fair |
+| 1:09–1:13 | A cape, and something that comes up out of the ground beside him | **13 Monster tamer** | fair |
+| 1:13–1:17 | The finisher: enormous arcs that sweep the whole frame and take the rest of the wall | **2 Swordsman**, held | sure |
+
+**Part two, after the End card**, which is where two of ours actually come
+from:
+
+| In the film | What is on screen | Here | |
+| --- | --- | --- | --- |
+| ~1:31 | A mallet: a rectangular head on a long shaft, carried on the shoulder, swung over and driven into the ground | **3 Smasher** | sure |
+| ~1:34 | A blade several times his height, swung on the diagonal | **2 Swordsman**, and the shape our greatsword is drawn to | sure |
+
+**7 Mage**, **10 Mecha** and **11 Split head** have no single moment to point
+at; they are built out of the second half's stranger transformations. **5
+Gunslinger** has none either - there is no firearm in part one - and stands as
+the tribute's own addition beside them.
 
 ---
 
