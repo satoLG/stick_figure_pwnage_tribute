@@ -91,6 +91,7 @@ export class Game {
   // --- screen effects -------------------------------------------------------
   private shakeAmt = 0;
   private shakeOff: Vec2 = vec(0, 0);
+  /** Light banked from blasts, spent on inverted drawings. Never painted. */
   private flashAmt = 0;
   private invertT = 0;
   /**
@@ -217,7 +218,7 @@ export class Game {
    * read as one picture rather than a game with a bar bolted over it.
    */
   private get hudBand(): number {
-    return this.topInset + clamp(this.view.h * 0.05, 44, 92) * 1.3 + 30;
+    return this.topInset + clamp(this.view.h * 0.05, 44, 92) * this.hudK + 26;
   }
 
   /**
@@ -382,7 +383,7 @@ export class Game {
       dt,
       time: this.time,
       shake: (a) => this.shake(a),
-      flash: (a) => { this.flashAmt = Math.min(1, this.flashAmt + a); },
+      flash: (a) => this.addFlash(a),
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => {
         this.impacts.add(x, y, dir, power);
@@ -834,7 +835,6 @@ export class Game {
       this.phase = 'won';
       this.phaseTime = 0;
       this.timeScale = 1;
-      this.flashAmt = 1;
       this.invertT = 0.25;
       this.shake(30);
       this.particles.shockwave(this.view.w * 0.84, this.view.h * 0.42, 320);
@@ -858,8 +858,7 @@ export class Game {
     const b = p.blast;
     audio.play(b.sfx === 'cannon' ? 'cannon' : 'explosion');
     this.shake(b.shake);
-    this.flashAmt = Math.min(1, this.flashAmt + b.flash);
-    if (b.flash > 0.6) this.invertT = Math.max(this.invertT, 0.06);
+    this.addFlash(b.flash);
     this.particles.shockwave(at.x, at.y, b.radius * 1.5);
     this.particles.debris(at.x, at.y, b.debris, 240 + b.radius * 3);
     this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), 380 + b.radius * 3);
@@ -930,6 +929,19 @@ export class Game {
     c.fillStyle = '#fff';
     c.fill();
     c.restore();
+  }
+
+  /**
+   * Light thrown by a blast. It banks up rather than being painted: past a
+   * threshold it spends itself on a single inverted drawing and resets, which
+   * is the only form the source has for it. A run of small flashes therefore
+   * reads as one hard blink instead of a grey haze that never quite clears.
+   */
+  private addFlash(a: number): void {
+    this.flashAmt += a;
+    if (this.flashAmt < 0.45) return;
+    this.flashAmt = 0;
+    this.invertT = Math.max(this.invertT, 1 / 15);
   }
 
   private decayEffects(dt: number): void {
@@ -1027,12 +1039,14 @@ export class Game {
     // is gone and one white stroke stands on black paper.
     if (this.swipeT > 0) {
       this.drawSwipe();
-    } else if (this.flashAmt > 0.01 || this.invertT > 0) {
+    } else if (this.invertT > 0) {
       // A hard black/white inversion is the punctuation these animations use
-      // for their biggest hits, so that is what a heavy blast does here.
+      // for their biggest hits, so that is what a heavy blast does here - and
+      // all it does. There is no half-inversion in the source: the paper is
+      // white or it is black, never the grey wash a partly-opaque difference
+      // pass leaves over the whole picture.
       c.save();
       c.globalCompositeOperation = 'difference';
-      c.globalAlpha = this.invertT > 0 ? 1 : clamp(this.flashAmt, 0, 1) * 0.85;
       c.fillStyle = '#fff';
       c.fillRect(0, 0, w, h);
       c.restore();
@@ -1064,13 +1078,22 @@ export class Game {
     if (this.device === 'desk') this.drawCursor();
   }
 
+  /**
+   * The HUD is drawn in world units like everything else, so pulling the
+   * camera in made all of it a third bigger on the glass. It is furniture,
+   * not scene: it goes back to the size it was, which is this much smaller in
+   * the units the scene is now measured in.
+   */
+  private readonly hudK = 0.77;
+
   private drawHud(): void {
     const sk = this.sk;
     const c = this.ctx;
     const { w, h } = this.view;
+    const k = this.hudK;
     const frac = this.terrain.destroyed;
-    const barW = clamp(w * 0.42, 240, 470);
-    const topY = 34 + this.topInset;
+    const barW = clamp(w * 0.42, 240, 470) * k;
+    const topY = 30 + this.topInset;
     // Before the first blow the strip is empty and the cue has the screen; the
     // meter drops in behind the first hit, which is the moment it means
     // anything. It arrives from above so it reads as the HUD assembling.
@@ -1088,24 +1111,24 @@ export class Game {
     // readout moves up under the meter instead.
     const w2 = this.weapon;
     const compact = this.isTouch;
-    const left = 44 + this.safe.left;
-    const baseY = compact ? topY + 58 : h - 70 - this.safe.bottom;
+    const left = 44 * k + this.safe.left;
+    const baseY = compact ? topY + 58 * k : h - 62 * k - this.safe.bottom;
     // The bottom strip of the screen is the floor slab, which is solid black.
     // Anything printed down there has to be knocked out in white to be read.
     const ink = baseY > this.terrain.groundTop ? '#fff' : '#000';
     c.save();
-    const nameSize = clamp(w * 0.02, 15, 24);
+    const nameSize = clamp(w * 0.02, 15, 24) * k;
     inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85, color: ink });
     inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left', color: ink });
     // Which half of the arsenal this came out of, set small after the name.
     inkText(sk, w2.group === 'extra' ? 'EXTRA' : 'MAIN',
       left + nameSize * 1.35 + measureText(sk, w2.name, nameSize) + 12, baseY + 1,
       nameSize * 0.5, { align: 'left', alpha: 0.4, color: ink });
-    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55, color: ink });
+    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34 * k, baseY + 24 * k, 13 * k, { align: 'left', alpha: 0.55, color: ink });
 
     const barX = left + nameSize * 1.35;
-    const barY = baseY + (compact ? nameSize * 0.85 : 38);
-    const cdW = clamp(w * 0.16, 110, 180);
+    const barY = baseY + (compact ? nameSize * 0.85 : 38 * k);
+    const cdW = clamp(w * 0.16, 110, 180) * k;
     const meter = w2.charge > 0 ? w2.charge : 1 - w2.cooldownFrac;
     c.strokeStyle = ink;
     c.lineWidth = 2;
@@ -1116,12 +1139,12 @@ export class Game {
     c.stroke();
     c.fillStyle = ink;
     c.fillRect(barX + 2, barY + 2, Math.max(0, (cdW - 4) * clamp(meter, 0, 1)), 4);
-    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7, color: ink });
+    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44 * k, barY + 4, 12 * k, { alpha: 0.7, color: ink });
 
     // The running melee chain, so the player can see the combo they are on.
     const combo = w2.comboLabel;
     if (combo) {
-      inkText(sk, combo, barX + cdW + 16, barY + 5, clamp(w * 0.017, 12, 17),
+      inkText(sk, combo, barX + cdW + 16 * k, barY + 5, clamp(w * 0.017, 12, 17) * k,
         { align: 'left', alpha: 0.85, wobble: 1.2, color: ink });
     }
     c.restore();

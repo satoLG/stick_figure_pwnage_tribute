@@ -483,8 +483,10 @@ export class Wind extends MeleeWeapon {
     for (const g of this.ambient) this.drawGust(sk, g);
     c.globalAlpha = 1;
     c.strokeStyle = '#000';
-    c.globalAlpha = 0.34 + this.gather * 0.5;
-    c.lineWidth = 2 + this.gather * 1.6;
+    // Full-strength ink, kept quiet by the width of the pen rather than by a
+    // wash of grey: the same rule the gusts follow.
+    c.globalAlpha = 1;
+    c.lineWidth = 1.5 + this.gather * 1.8;
     const n = 4 + Math.round(this.gather * 5);
     for (let i = 0; i < n; i++) {
       // Ribbons of air sweeping round him, tighter and faster as he pulls
@@ -503,15 +505,14 @@ export class Wind extends MeleeWeapon {
     }
     // While it is gathering the air is coming *in*, hard.
     if (this.gather > 0.05) {
-      c.globalAlpha = this.gather * 0.8;
-      c.lineWidth = 2.6;
+      c.lineWidth = 1.6 + this.gather * 1.4;
       for (let i = 0; i < 9; i++) {
         const a = (i / 9) * TAU + ctx.time * 1.4;
         const r0 = 210 * (1 - ((ctx.time * 1.3 + i * 0.11) % 1)) * this.gather + 70;
         sk.scrawl(
           { x: cx + Math.cos(a) * (r0 + 70), y: cy + Math.sin(a) * (r0 + 70) },
           { x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0 },
-          2.6, 14, 3,
+          1.6 + this.gather * 1.4, 14, 3,
         );
       }
     }
@@ -548,7 +549,11 @@ export class Wind extends MeleeWeapon {
     const L = g.len * (0.75 + run * 0.35);
     const bend = g.curl * L * 0.45;
 
-    c.globalAlpha = clamp(k * 2.6, 0, 1);
+    // No fade. Nothing in the source thins out to grey as it dies - a stroke
+    // is on the paper at full strength or it is not on the paper - so the
+    // life of a gust is spent on how *much* blade there is, never on how
+    // faint it is, and the last drawing of one is a hairline, not a ghost.
+    c.globalAlpha = 1;
     // A blade of wind in the reference is a long lens with the paper showing
     // through the middle of it and a heavy rim drawn down one side and only
     // half way up the other. The hairline strokes trailing it stay solid,
@@ -565,7 +570,7 @@ export class Wind extends MeleeWeapon {
       c.fill();
     };
     // A comma: fat a third of the way along, hooking to a point at the tip.
-    blade(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.28 + k * 0.34), g.seed);
+    blade(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.06 + k * 0.56), g.seed);
     for (let i = 0; i < 2; i++) {
       const o = (i === 0 ? 1 : -1) * g.width * (0.7 + Math.abs(hashNoise(g.seed + i, sk.boil)) * 0.5);
       const l = L * (0.45 + Math.abs(hashNoise(g.seed + i * 7, sk.boil)) * 0.4);

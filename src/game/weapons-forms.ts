@@ -690,7 +690,11 @@ export class Titan extends Weapon {
   override onEquip(): void {
     super.onEquip();
     this.phase = 'idle';
-    this.up = 1;
+    // It is not standing there the instant it is picked: in the source the
+    // machine assembles, a helmet first and the rest of it after, over about
+    // half a second. Ours comes up out of the floor over the same half second,
+    // through the very squash the collapse uses in reverse.
+    this.up = 0.1;
     this.step = 0;
     this.slab = null;
   }
