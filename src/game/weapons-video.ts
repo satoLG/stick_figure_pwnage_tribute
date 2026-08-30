@@ -777,11 +777,11 @@ export class MissilePods extends Weapon {
   // that contrast is how you read at a glance which end is which.
 
   /** How long the shoulder block is, and how deep it stands. */
-  private readonly blockLen = 78;
-  private readonly blockHalf = 18;
+  private readonly blockLen = 104;
+  private readonly blockHalf = 11;
 
   /** Perpendicular offset of front port `i` on the face of the block. */
-  private frontOffset(i: number): number { return (i - 1) * 8 + 3; }
+  private frontOffset(i: number): number { return (i - 1) * 5.5 + 1.5; }
 
   /** The mouth of front port `i`, on the face of the block. */
   private frontMouth(ctx: WeaponCtx, i: number): Vec2 {
@@ -937,7 +937,10 @@ export class MissilePods extends Weapon {
       const ca = Math.cos(a), sa = Math.sin(a);
       // Thick enough that you can believe a rocket comes out of one. They
       // were rails; they are tubes, and a tube has a bore.
-      const half = 12 - (i % 2) * 2.2;
+      // Straws, not planks. In the source these are thin enough that four of
+      // them fanned off his back still read as four separate lines against a
+      // head only twice their width.
+      const half = 7 - (i % 2) * 1.4;
       const at = (d: number, o: number): Vec2 =>
         ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
       const rail = [at(4, -half), at(len, -half * 0.88), at(len, half * 0.88), at(4, half)];
@@ -982,26 +985,31 @@ export class MissilePods extends Weapon {
     const H = this.blockHalf;
     c.save();
     c.strokeStyle = '#000';
-    // The block: short, deep and *screened*, so it reads solid against the
-    // bare rails behind him. The one shape in the rig with any weight to it.
+    // The launcher he is actually holding: a long tube laid over the shoulder,
+    // running well past his head, banded down its length like a ladder. The
+    // source draws it as a strip with cross bars rather than as a solid block
+    // - a screened slab that size reads as a suitcase, and the length is what
+    // says the thing is a launcher at all.
     const block = [at(14, -H), at(14 + L, -H * 0.86), at(14 + L, H * 0.86), at(14, H)];
     c.fillStyle = '#fff';
     sk.polyPath(block, 0.9);
     c.fill();
-    c.fillStyle = sk.screenTone();
-    c.fill();
-    sk.poly(block, 3.4, false, 0.9);
+    sk.poly(block, 3.2, false, 0.9);
+    for (let i = 1; i <= 5; i++) {
+      const d = 14 + (L * i) / 6;
+      const hh = H * (1 - (i / 6) * 0.14);
+      sk.line(at(d, -hh), at(d, hh), 2.2, 1, 0.4);
+    }
     // Three ports across its face, each a black slot: this is the end a
     // missile actually leaves by, and it has to be obvious which end that is.
     c.fillStyle = '#000';
     for (let i = 0; i < 3; i++) {
       const o = this.frontOffset(i);
-      sk.polyPath([at(14 + L - 9, o - 3.6), at(14 + L + 3, o - 3.6),
-        at(14 + L + 3, o + 3.6), at(14 + L - 9, o + 3.6)], 0.5);
+      sk.polyPath([at(14 + L - 8, o - 2.6), at(14 + L + 3, o - 2.6),
+        at(14 + L + 3, o + 2.6), at(14 + L - 8, o + 2.6)], 0.5);
       c.fill();
     }
-    // A rib across the top of it and the strap over his shoulder.
-    sk.line(at(14 + L * 0.4, -H), at(14 + L * 0.4, H), 2.4, 1, 0.5);
+    // The strap over his shoulder.
     sk.line(at(12, -H * 0.9), at(-8, -H * 0.2), 3.2, 1, 0.6);
 
     if (this.launch > 0.02) {
