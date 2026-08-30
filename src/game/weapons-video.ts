@@ -532,9 +532,16 @@ export class Wind extends MeleeWeapon {
   }
 
   /**
-   * One curl of air: a tapered ribbon bent along its own travel, with a couple
-   * of thinner ones trailing it. Everything about it curves - a wind drawn as
-   * straight lines is a speed line, and this has to read as air.
+   * One cut of air, and in the source that is a **claw**: three tapered blades
+   * side by side, evenly spaced, all bent through the same curve, raked across
+   * the paper together. Confirmed against the film - the wind character's cuts
+   * come in threes, and the frames where the screen inverts show three white
+   * parallel curves and nothing else.
+   *
+   * A single fat ribbon with two hairlines trailing it, which is what this was,
+   * reads as one gust of something. Three of a weight read as a slash.
+   * Everything about them curves, too - a wind drawn as straight lines is a
+   * speed line.
    */
   private drawGust(sk: Sketch, g: Gust): void {
     const c = sk.ctx;
@@ -569,13 +576,34 @@ export class Wind extends MeleeWeapon {
       sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8);
       c.fill();
     };
-    // A comma: fat a third of the way along, hooking to a point at the tip.
-    blade(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.06 + k * 0.56), g.seed);
-    for (let i = 0; i < 2; i++) {
-      const o = (i === 0 ? 1 : -1) * g.width * (0.7 + Math.abs(hashNoise(g.seed + i, sk.boil)) * 0.5);
-      const l = L * (0.45 + Math.abs(hashNoise(g.seed + i * 7, sk.boil)) * 0.4);
-      hair(at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
-        g.width * 0.14 * (0.4 + k));
+    // The claw. Three blades across the gust's own width, the middle one a
+    // little the longest and the fattest so the set has a lead finger, each
+    // one a comma - fat a third of the way along, hooking to a point at the
+    // tip. They share the bend, which is what makes them read as one gesture
+    // rather than three gusts that happen to be near each other.
+    const gap = g.width * 0.66;
+    for (let i = 0; i < 3; i++) {
+      const rank = i - 1;                       // -1, 0, 1 across the rake
+      const o = rank * gap;
+      // Staggered ends: a rake is not three lines cut off along a ruler.
+      const back = L * (0.02 + Math.abs(rank) * 0.1)
+        + hashNoise(g.seed + i * 5, sk.boil) * L * 0.04;
+      const tip = L * (1 - Math.abs(rank) * 0.12)
+        + hashNoise(g.seed + i * 9, sk.boil) * L * 0.05;
+      const w = g.width * (0.05 + k * 0.4) * (rank === 0 ? 1 : 0.78);
+      blade(
+        at(back, o),
+        at((back + tip) * 0.5, o + bend * 0.7),
+        at(tip, o * 0.55 + bend),
+        w, g.seed + i * 31,
+      );
+    }
+    // One hairline shed off the outside of the rake, which the film does on
+    // about every other cut.
+    if (Math.abs(hashNoise(g.seed, sk.boil)) > 0.35) {
+      const o = gap * (hashNoise(g.seed + 3, sk.boil) > 0 ? 2.1 : -2.1);
+      hair(at(L * 0.16, o), at(L * 0.5, o + bend * 0.6), at(L * 0.8, o * 0.5 + bend * 0.9),
+        g.width * 0.12 * (0.4 + k));
     }
   }
 
