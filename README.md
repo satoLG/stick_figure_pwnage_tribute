@@ -274,31 +274,40 @@ because both of them were misread here first:
   beside him is his own after-image, which is a motion trail rather than a
   clone.
 
-Several of the film's characters were also folded into one weapon here rather
-than given a slot each, so the map is many-to-one in places.
+Several of the film's characters were folded into one weapon here rather than
+given a slot each, so the map is many-to-one in places. All of it is confirmed
+against the film by the author.
 
-**Confirmed against the film by the author:**
+**Part one, on the wall:**
 
 | In the film | What is on screen | Here |
 | --- | --- | --- |
+| 0:08–0:18 | The blade: the crouched dash with it dragging behind, the leap, the cut that takes a slab off the wall | **2 Swordsman** — our blade is drawn differently, the movement is his |
 | 0:19–0:23 | Wings out, and the attack with the four rods off his back | **10 Mecha** |
-| 0:27.5–0:31 | The staff's charged attack: rings of symbols turning round the shaft, the charge gathering at its head, and a thick beam let go into the wall | **7 Mage** |
-| 0:36–0:39 | Standing on a box with long tubes fanned off his back and one over the shoulder, firing rounds that arc into the stone | **6 Rocketeer** |
+| 0:25–0:31 | The staff's charged attack: rings of symbols turning round the shaft, the charge gathering at its head, a thick beam let go into the wall | **7 Mage** |
+| 0:33–0:39 | Tubes fanned off his back and one over the shoulder, firing rounds that arc into the stone | **6 Rocketeer** |
 | 0:39–0:43 | Cuts of wind thrown in the shape of claws | **4 Windslash** |
-| 0:43–0:46 | Bare-handed work, one of several such characters folded into one slot | **1 Brawler** |
+| 0:43–0:46 | Bare hands, one of several such characters folded into one slot | **1 Brawler** |
 | 0:52–0:53.5 | The discharge that earths itself all round him and scorches the floor | **9 Thunderbolt** |
-| 0:53.5–1:05 | A ball, then a helicopter, then the transformation runs all the way into the machine: it punches, fires its fist off on a smoke trail, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** |
+| 0:53.5–1:05 | A ball, then a helicopter, then the transformation runs all the way into the machine: it punches, fires its fist off, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** |
 | 1:07–1:12 | A fireball, kunai and shuriken | **8 Shinobi** |
 | 1:12–1:14 | The end of the shinobi, running into another wind character | **8 Shinobi** into **4 Windslash** |
-| 1:14–1:17 | Winds going wild across the whole frame and taking the wall with them | **4 Windslash** |
+| 1:14–1:17 | Wind going wild across the whole frame and taking the wall with it | **4 Windslash**, held |
 
-**Still being read off the frames, and not confirmed:** the opening blade work
-at 0:08–0:18 (**2 Swordsman**), 0:23–0:26, the throws at 0:30–0:33, 0:46–0:52,
-and everything in the film's second part, which is where the mallet
-(**3 Smasher**) and the greatsword come from.
+**Part two, after the End card:**
 
-**5 Gunslinger** is not one moment of the film: it is ours, assembled out of the
-places where he does use firearms.
+| In the film | What is on screen | Here |
+| --- | --- | --- |
+| ~1:21–1:27 | He jumps with the picture coming apart around him and lays into the wall with thick, heavily scribbled strokes | **1 Brawler**, held — the barrage |
+| ~1:27–1:30 | A pistol, then a bazooka, swapped between in seconds | **5 Gunslinger**, which is where its two halves come from |
+| ~1:31 | The mallet: a rectangular head on a long shaft, driven into the ground | **3 Smasher** |
+| ~1:38–1:42 | The head splits down the middle, one side lifts, and missiles leave the rack inside | **11 Split head** |
+| ~1:45 | A band opens across the middle of the head and a thin beam comes out of it | **11 Split head**, held |
+| ~1:50–1:55 | Something enormous with a toothed maw, and a torrent out of its mouth | **13 Monster tamer** |
+
+Two stretches of the film are jokes and stay there: the cartoon head thrown at
+0:50 and the gadgets out of the cat's pouch at 0:54, and the door gag that
+opens part two.
 
 ---
 
