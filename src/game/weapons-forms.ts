@@ -247,7 +247,11 @@ export class Shout extends Weapon {
       this.roar = ROAR_TIME;
       ctx.sfx('cannon', 0.5);
       ctx.flash(0.5);
-      ctx.invert(0.08);
+      // Three drawings of black paper, not one. The film turns the ground
+      // dark for the whole opening of that roar and lets the torrent be the
+      // only white thing on the page; a single inverted frame reads as a
+      // camera flash instead of as the lights going out.
+      ctx.invert(0.2);
       ctx.shake(24);
     }
     if (this.roar <= 0) return;
@@ -276,8 +280,14 @@ export class Shout extends Weapon {
   }
 
   /** How tall and how wide the thing behind him gets, fully out of the floor. */
-  private static readonly BEAST_H = 350;
-  private static readonly BEAST_W = 152;
+  /**
+   * How big the thing is. In the film it towers: its head is up near the top
+   * of the picture with him standing under the jaw, and the maw alone is
+   * wider than he is tall. Ours used to come up to about his own height, which
+   * is a large dog rather than a summon.
+   */
+  private static readonly BEAST_H = 470;
+  private static readonly BEAST_W = 196;
 
   /**
    * Where the thing is standing.
@@ -604,7 +614,9 @@ export class Shout extends Weapon {
     if (this.roar > 0) {
       const k = this.roar / ROAR_TIME;
       const from = this.beastMaw(ctx);
-      const r = (34 + 26 * this.power) * (0.55 + k * 0.55);
+      // Half again as wide as it was. What comes out of that mouth in the film
+      // is a torrent that swallows most of the frame, not a rod of light.
+      const r = (52 + 40 * this.power) * (0.55 + k * 0.55);
       const ca = Math.cos(this.dir), sa = Math.sin(this.dir);
       const front = ctx.terrain.strikePoint(from.x, from.y, ca, sa, 1800, 6);
       const len = front ? Math.hypot(front.x - from.x, front.y - from.y) + r : 1800;
@@ -628,6 +640,26 @@ export class Shout extends Weapon {
       }
       sk.tuftPath(from.x, from.y, 15, r * 0.8, r * 2.4, 3.0, this.dir, 9102, 0.08);
       c.fill();
+      // The torrent itself: long white streaks pouring out of the maw the
+      // whole length of the beam, which is what the film's frames are made of
+      // once the roar is out - the band alone is a plank, and the plank is not
+      // what makes it frightening.
+      c.fillStyle = '#fff';
+      c.strokeStyle = '#000';
+      c.lineWidth = 2.4;
+      for (let i = 0; i < 16; i++) {
+        const spread = (Math.abs(hashNoise(9200 + i, sk.boil)) - 0.1) * r * 1.5;
+        const side = i % 2 === 0 ? 1 : -1;
+        const d0 = L * (0.02 + Math.abs(hashNoise(9210 + i, sk.boil)) * 0.5);
+        const d1 = Math.min(L * 1.02, d0 + L * (0.3 + Math.abs(hashNoise(9220 + i, sk.boil)) * 0.7));
+        const o = side * spread;
+        const p = (d: number, oo: number): Vec2 =>
+          ({ x: from.x + ca * d - sa * oo, y: from.y + sa * d + ca * oo });
+        sk.ribbonPath(p(d0, o * 0.4), p((d0 + d1) * 0.5, o), p(d1, o * 1.25),
+          r * (0.1 + Math.abs(hashNoise(9230 + i, sk.boil)) * 0.28), 0.35, 0.7);
+        c.fill();
+        c.stroke();
+      }
       c.restore();
     }
   }
