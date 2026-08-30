@@ -286,6 +286,12 @@ export class Stickman {
   gaitPower = 0;
   /** 0..1 blend into the flat-out sprint animation. */
   sprintT = 0;
+  /**
+   * What the power in his hands does to how fast he covers ground. Most of
+   * them leave it alone; the winged one does not, and in the film that machine
+   * plainly moves quicker than he does on foot.
+   */
+  speedMul = 1;
   private halfStride = 0;
   /** True on the frame a foot plants, so the game can kick up dust. */
   justStepped = false;
@@ -567,12 +573,12 @@ export class Stickman {
     // same jump without one, which it must never do.
     if (!this.onGround) {
       const drift = this.vel.y < 0 ? 0 : this.stallT;
-      return AIR_SPEED * Math.max(0.4, push) * lerp(1, AIR_ATTACK_DRIFT, drift);
+      return AIR_SPEED * Math.max(0.4, push) * lerp(1, AIR_ATTACK_DRIFT, drift) * this.speedMul;
     }
     const runT = smoothstep(clamp(push / RUN_PUSH, 0, 1));
     const sprintT = clamp((push - RUN_PUSH) / (1 - RUN_PUSH), 0, 1);
     const base = lerp(WALK_SPEED * 0.55, RUN_SPEED, runT) + (SPRINT_SPEED - RUN_SPEED) * sprintT;
-    return base * crouch;
+    return base * crouch * this.speedMul;
   }
 
   private landVel = 0;

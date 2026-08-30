@@ -2420,6 +2420,8 @@ export class Mecha extends Weapon {
   readonly id = 13;
   readonly name = 'MECHA';
   readonly tagline = 'wings out — blade below, guns above';
+  /** The wings are not decoration: with them out he covers ground faster. */
+  override readonly speedMul = 1.32;
   override auto = true;
   override cooldown = 0.1;
 
@@ -2680,9 +2682,12 @@ export class Mecha extends Weapon {
     const n = 5;
     for (let i = 0; i < n; i++) {
       const t = i / (n - 1);
-      const a = back + (f > 0 ? 1 : -1) * ((-0.95 + t * 1.55) * (0.7 + sp * 0.5) + flap * (1 - t * 0.6));
-      const L = (44 + Math.sin(t * Math.PI) * 30) * (0.82 + sp * 0.42);
-      const w = 8 - t * 3;
+      const a = back + (f > 0 ? 1 : -1) * ((-1.05 + t * 1.75) * (0.78 + sp * 0.48) + flap * (1 - t * 0.6));
+      // Big. Folded they still have to be the first thing you see about him,
+      // which is what the source's mechanical wings are - they read from the
+      // silhouette before the blade or the guns do.
+      const L = (66 + Math.sin(t * Math.PI) * 42) * (0.86 + sp * 0.4);
+      const w = 11 - t * 3.6;
       const ca = Math.cos(a), sa = Math.sin(a);
       const at = (d: number, o: number): Vec2 => ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
       const feather = [at(0, -w * 0.6), at(L * 0.68, -w), at(L, -w * 0.2), at(L * 0.74, w * 0.6), at(0, w * 0.6)];

@@ -230,6 +230,9 @@ export abstract class Weapon {
    */
   get mark(): MarkKind { return 'splinter'; }
 
+  /** How fast this power lets him move, as a multiple of his own speed. */
+  readonly speedMul: number = 1;
+
   /** Held-trigger weapons keep firing; the rest need a fresh click. */
   auto = false;
   cooldown = 0.3;

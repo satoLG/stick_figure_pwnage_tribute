@@ -741,6 +741,7 @@ export class Game {
     if (this.hintFade > 0 && this.phaseTime > 9) this.hintFade = Math.max(0, this.hintFade - rawDt * 0.5);
 
     // --- character ---------------------------------------------------------
+    this.sm.speedMul = this.weapon.speedMul;
     this.sm.update(dt, this.terrain, intent, intent.aim);
     if (this.sm.justJumped) audio.play('jump', rand(0.9, 1.15));
     if (this.sm.justWallJumped) {
