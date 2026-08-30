@@ -1420,7 +1420,11 @@ export class Titan extends Weapon {
 /** Seconds of held trigger before the skull opens all the way. */
 const SPLIT_HOLD = 0.5;
 /** Half-width of the cutting beam. It is meant to be seen from across the room. */
-const BEAM_HALF = 17;
+/**
+ * Half the beam's width. Thin, on the author's word and the film's: what comes
+ * out of the band is a hard bright line, not a band you could put your arm in.
+ */
+const BEAM_HALF = 9;
 
 /**
  * His head opens down the middle. What is inside is a machine: a lens that
@@ -1604,13 +1608,17 @@ export class SplitHead extends Weapon {
     c.strokeStyle = '#000';
     c.lineJoin = 'round';
 
-    // Two doors, and which one is open says what is about to come out.
+    // Two doors, and which one is open says what is about to come out. Both
+    // of them were the wrong way round until the author said so.
     //
-    // For a salvo the skull hinges apart on the seam across the middle: the
-    // lid tips up and back, the jaw drops, and the rack shows between them.
-    // For the beam it comes apart the other way entirely - straight down the
-    // middle, both halves swinging out sideways - so the machine is standing
-    // in a doorway rather than peering out of a slot.
+    // For a salvo the skull splits **down the middle** and one side alone
+    // swings away, like a lid coming off, leaving the rack looking out of the
+    // half that stayed. Both halves swinging wide is a doorway, and a doorway
+    // is not what a rack of missiles needs.
+    //
+    // For the beam the head barely opens at all: a **band** parts across the
+    // middle of it, a few units of mechanism showing in the slot, and the
+    // beam comes out of that.
     const w = this.wide;
     // The skull swells as it comes apart. A head this size split down the
     // middle is four pixels of daylight; letting it grow while it opens is
@@ -1618,38 +1626,54 @@ export class SplitHead extends Weapon {
     const R = HEAD_R * (1 + this.open * 0.45);
     c.fillStyle = '#000';
     if (w < 0.5) {
-      // The seam across the middle. The dark of the inside goes down first and
-      // is left showing between the halves; without it the two domes close up
-      // into one slightly odd head.
-      const lift = this.open * R * 2.05;
-      const g = lift * 0.78;
+      // Down the middle, and one side only. The half he is facing with lifts
+      // away and turns as it goes; the other stands where it was, and the dark
+      // of the inside is left showing along the cut.
+      const part = this.open * R * 1.5;
       if (this.open > 0.08) {
         sk.polyPath([
-          { x: h.x - R * 0.86, y: h.y - g },
-          { x: h.x + R * 0.86, y: h.y - g * 0.8 },
-          { x: h.x + R * 0.8, y: h.y + g * 0.8 },
-          { x: h.x - R * 0.8, y: h.y + g },
+          { x: h.x - R * 0.2, y: h.y - R * 0.94 },
+          { x: h.x + part * 0.9, y: h.y - R * 0.9 },
+          { x: h.x + part * 0.9, y: h.y + R * 0.9 },
+          { x: h.x - R * 0.2, y: h.y + R * 0.94 },
         ], 1.2);
         c.fill();
       }
-      this.halfHead(sk, h.x - f * this.open * 8, h.y - lift, -f * this.open * 1.15, true, R);
-      this.halfHead(sk, h.x + f * this.open * 4, h.y + lift * 0.5, f * this.open * 0.5, false, R);
+      // The half that stays: the back of the skull, cut face towards us.
+      this.halfHead(sk, h.x - R * 0.16, h.y, -Math.PI / 2, true, R);
+      // The half that goes: out along the aim, lifted and turning over.
+      this.halfHead(
+        sk,
+        h.x + f * (part + R * 0.3), h.y - part * 0.55,
+        Math.PI / 2 + f * this.open * 0.9, true, R,
+      );
     } else {
-      // Straight down the middle: both halves swing out sideways and turn
-      // their cut faces to us, and what stands in the gap is a doorway rather
-      // than a slot.
-      const part = this.open * R * 1.45;
-      if (this.open > 0.08) {
+      // The band. A slot a fraction of the head deep, with the lid resting on
+      // top of it - the whole face does not have to come off to let a line of
+      // light out.
+      const gap = this.open * R * 0.55;
+      if (this.open > 0.06) {
         sk.polyPath([
-          { x: h.x - part * 0.72, y: h.y - R * 0.94 },
-          { x: h.x + part * 0.72, y: h.y - R * 0.9 },
-          { x: h.x + part * 0.72, y: h.y + R * 0.9 },
-          { x: h.x - part * 0.72, y: h.y + R * 0.94 },
+          { x: h.x - R * 0.9, y: h.y - gap },
+          { x: h.x + R * 0.92, y: h.y - gap * 0.86 },
+          { x: h.x + R * 0.9, y: h.y + gap * 0.86 },
+          { x: h.x - R * 0.88, y: h.y + gap },
         ], 1.2);
         c.fill();
       }
-      this.halfHead(sk, h.x - part, h.y, -Math.PI / 2 - this.open * 0.34, true, R);
-      this.halfHead(sk, h.x + part, h.y, Math.PI / 2 + this.open * 0.34, true, R);
+      this.halfHead(sk, h.x, h.y - gap, 0, true, R);
+      this.halfHead(sk, h.x, h.y + gap, 0, false, R);
+      // Two rails in the slot, so the band reads as mechanism rather than as
+      // a crack in his head.
+      c.strokeStyle = '#000';
+      for (const d of [-0.45, 0.45]) {
+        sk.line(
+          { x: h.x - R * 0.7, y: h.y + gap * d },
+          { x: h.x + R * 0.7, y: h.y + gap * d },
+          2, 1, 0.3,
+        );
+      }
+      c.fillStyle = '#000';
     }
 
     // The machine between them.
