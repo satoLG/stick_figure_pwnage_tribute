@@ -8,7 +8,7 @@ import { hashNoise, quadPoint, type Vec2 } from './math';
  */
 export class Sketch {
   ctx: CanvasRenderingContext2D;
-  /** Advances with the drawing rate, so the wobble *is* the redrawing. */
+  /** Advances ~12x a second so the wobble reads as redrawn ink, not static. */
   boil = 0;
   /** Global wobble amount in world units. */
   jitter = 1.15;
@@ -19,13 +19,14 @@ export class Sketch {
   }
 
   /**
-   * Called once per drawn frame; `t` is elapsed seconds. The wobble advances
-   * fifteen times a second - the rate the source is animated on, and the rate
-   * the picture is remade at - so every drawing that goes up is a new one and
-   * no two of them share a wobble.
+   * Called once per drawn frame; `t` is elapsed seconds. The picture runs at
+   * sixty, but the *wobble* does not: ink re-drawn sixty times a second is a
+   * vibration rather than a hand, so it advances a dozen times a second and
+   * four frames share each state of it. That is the one place the source's
+   * lower rate is worth keeping, because there it is the ink talking.
    */
   update(t: number): void {
-    this.boil = Math.floor(t * 15);
+    this.boil = Math.floor(t * 12);
     this.strokeId = 0;
   }
 

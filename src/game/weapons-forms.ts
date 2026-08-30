@@ -7,6 +7,7 @@
  * `hidesBody`, `headScale` - and put their own back in its place, posed off
  * the same skeleton so the gait, the lean and the recoil still drive them.
  */
+import type { MarkKind } from './impact';
 import {
   angleDelta, clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU,
   type Vec2,
@@ -118,6 +119,9 @@ const SHOUT_TAP = 0.3;
  * whole character of it: you point this by standing somewhere, not by pointing.
  */
 export class Shout extends Weapon {
+  /** Both of them shout a beam, so both of them pierce. */
+  override get mark(): MarkKind { return 'pierce'; }
+
   readonly id = 15;
   readonly name = 'MONSTER TAMER';
   readonly tagline = 'straight ahead, and it does not aim';
@@ -670,6 +674,9 @@ const T_VOLLEY = 1.0, T_BURN = 1.1, T_EJECT = 0.5, T_MONO = 0.75, T_GONE = 1.6;
  * slab which he picks up and throws at the wall.
  */
 export class Titan extends Weapon {
+  /** A fist that size craters; the visor's beam pierces. */
+  override get mark(): MarkKind { return this.beam > 0 ? 'pierce' : 'crater'; }
+
   readonly id = 16;
   readonly name = 'GIANT ROBOT';
   readonly tagline = 'punches, eye beams, and then he throws it';
@@ -1369,6 +1376,9 @@ const BEAM_HALF = 17;
  * a rack of four very unfriendly missiles.
  */
 export class SplitHead extends Weapon {
+  /** Rounds out of the rack prick; the cutting beam runs through. */
+  override get mark(): MarkKind { return this.beamT > 0 ? 'pierce' : 'spark'; }
+
   readonly id = 17;
   readonly name = 'SPLIT HEAD';
   readonly tagline = 'four in the rack, and a torch behind them';

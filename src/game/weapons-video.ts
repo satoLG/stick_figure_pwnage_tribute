@@ -7,6 +7,7 @@
  * the claws because of three parallel rips left in a wall. The numbers were
  * fitted to the pictures afterwards, never the other way round.
  */
+import type { MarkKind } from './impact';
 import {
   angleDelta, clamp, damp, easeOutCubic, easeOutQuint, hashNoise, lerp, rand, TAU, type Vec2,
 } from '../core/math';
@@ -168,6 +169,9 @@ const WIND_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 };
 
 export class Wind extends MeleeWeapon {
+  /** Wind cuts in threes here as well as on the way over. */
+  override get mark(): MarkKind { return 'claw'; }
+
   readonly id = 4;
   readonly name = 'WINDSLASH';
   readonly tagline = 'the air is the blade, and it reaches';
@@ -730,6 +734,9 @@ const SALVO_HOLD = 0.5;
 const SALVO_SIZE = 10;
 
 export class MissilePods extends Weapon {
+  /** A charge going off, every time. */
+  override get mark(): MarkKind { return 'bloom'; }
+
   readonly id = 9;
   readonly name = 'ROCKETEER';
   readonly tagline = 'three out the front, or ten off his back';
@@ -1065,6 +1072,9 @@ interface Sigil {
 }
 
 export class ArcaneStaff extends Weapon {
+  /** The orbs go in like rounds; the charged beam runs through. */
+  override get mark(): MarkKind { return this.beam > 0 ? 'pierce' : 'spark'; }
+
   readonly id = 10;
   readonly name = 'MAGE';
   readonly tagline = 'four bolts, or one very wide beam';
@@ -1595,6 +1605,9 @@ const SEAL_TAP = 0.28;
 const BREATH_TIME = 0.55;
 
 export class Shinobi extends Weapon {
+  /** A thrown blade pricks; the breath blooms. */
+  override get mark(): MarkKind { return this.breath > 0 ? 'bloom' : 'spark'; }
+
   readonly id = 11;
   readonly name = 'SHINOBI';
   readonly tagline = 'two blades, or one very large breath';
@@ -2070,6 +2083,9 @@ interface Arc {
 }
 
 export class Thunderbolt extends Weapon {
+  /** Legs that kink and fork where the charge earths itself. */
+  override get mark(): MarkKind { return 'bolt'; }
+
   readonly id = 12;
   readonly name = 'THUNDERBOLT';
   readonly tagline = 'bolts that skip, or all of it at once';
@@ -2390,6 +2406,9 @@ const ROD_ANGLES = [-2.35, -0.95, 0.95, 2.35];
  * the trigger does depends entirely on whether his feet are on the floor.
  */
 export class Mecha extends Weapon {
+  /** The forearm blade cuts; the palm gun and the rods run through. */
+  override get mark(): MarkKind { return this.slashing ? 'slash' : 'pierce'; }
+
   readonly id = 13;
   readonly name = 'MECHA';
   readonly tagline = 'wings out — blade below, guns above';

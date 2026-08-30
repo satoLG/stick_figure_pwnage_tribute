@@ -12,7 +12,7 @@ import {
   drawProgress, focusRing, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
 } from '../ui/ui';
-import { ImpactFx } from './impact';
+import { drawMark, ImpactFx, type MarkKind } from './impact';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
 import { BODY_H, RUN_PUSH, Stickman, type Controls } from './stickman';
@@ -53,16 +53,6 @@ interface Intent extends Controls {
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  /**
-   * Where a drawing is actually made. The picture is remade fifteen times a
-   * second, and the last one made is blitted onto the glass sixty times a
-   * second with the cursor drawn on top of it - so the scene keeps the film's
-   * cadence while the crosshair still tracks the mouse at the rate the mouse
-   * moves. A crosshair stepping at fifteen is not a stylistic choice, it is a
-   * broken mouse.
-   */
-  private frame = document.createElement('canvas');
-  private frameCtx: CanvasRenderingContext2D;
   private sk: Sketch;
   private input: Input;
   private touch = new TouchControls();
@@ -116,6 +106,9 @@ export class Game {
   private swipeT = 0;
   private swipeDir = 0;
   private swipeSeed = 0;
+  private swipeAt: Vec2 = vec(0, 0);
+  private swipePower = 1;
+  private swipeKind: MarkKind = 'splinter';
   private timeScale = 1;
   private hintFade = 1;
   /**
@@ -153,9 +146,6 @@ export class Game {
     const c = canvas.getContext('2d', { alpha: false });
     if (!c) throw new Error('2D canvas is not available in this browser');
     this.ctx = c;
-    const fc = this.frame.getContext('2d', { alpha: false });
-    if (!fc) throw new Error('2D canvas is not available in this browser');
-    this.frameCtx = fc;
     this.sk = new Sketch(c);
     this.input = new Input(canvas);
     // A first guess from the media query, so the title card offers the right
@@ -208,11 +198,6 @@ export class Game {
     this.canvas.style.height = `${vh}px`;
     this.canvas.width = Math.round(vw * dpr);
     this.canvas.height = Math.round(vh * dpr);
-    // Resizing empties the buffer, so the next frame has to be a real drawing
-    // rather than a blit of what is no longer in there.
-    this.frame.width = this.canvas.width;
-    this.frame.height = this.canvas.height;
-    this.drawnTick = -1;
 
     const resized = size.w !== this.view.w || size.h !== this.view.h;
     this.view = size;
@@ -406,10 +391,10 @@ export class Game {
       flash: (a) => this.addFlash(a),
       invert: (s) => { this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => {
-        this.impacts.add(x, y, dir, power);
+        this.impacts.add(x, y, dir, power, this.weapon.mark);
         // Only the heavy end of the range earns the card; on every jab it
         // would be a strobe rather than punctuation.
-        if ((power ?? 1) >= 1.5) this.swipe(dir);
+        if ((power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
       },
       freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
       after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
@@ -434,31 +419,17 @@ export class Game {
    */
   private frameAcc = 0;
   /**
-   * How often the world is stepped. Sixty, always: this is what the controls
-   * are read on, and nothing about the look of the thing is worth answering a
-   * button sixty milliseconds late.
+   * Frames per second, for the world and for the picture alike.
+   *
+   * The source is animated on twos - count it and half of every pair of its
+   * video frames is identical to the one before - but that is 2005 and a
+   * hand-drawn Flash timeline talking, not a choice worth copying. Everything
+   * it does at fifteen gets translated up: the poses, the held frames and the
+   * counts of an effect are all authored in the film's drawings and then
+   * played out at sixty, so the shapes are the source's and the motion is not
+   * a slideshow.
    */
   private animFps = 60;
-
-  /**
-   * How often a new drawing is *made*, which is a separate question and the
-   * one the film answers for us.
-   *
-   * Counted off the source frame by frame, half of every pair of video frames
-   * in it is pixel-identical to the one before: it is animated on twos, at
-   * fifteen unique drawings a second, and holding each of them for two frames
-   * is a good part of why it moves the way it does. A stick figure redrawn
-   * sixty times a second is a smooth interpolation of a drawing; redrawn
-   * fifteen times it is a drawing.
-   *
-   * So the world runs at sixty and the picture is remade at fifteen. What is
-   * on the glass between two of those is simply the last one, still up. `V`
-   * puts it back on sixty for comparison.
-   */
-  private drawHz = 15;
-  private drawnTick = -1;
-  /** Real seconds banked since the last drawing, so `ctx.dt` stays honest. */
-  private drawAcc = 0;
 
   private step(rawDt: number): void {
     const stepLen = 1 / this.animFps;
@@ -474,8 +445,8 @@ export class Game {
     this.time += rawDt;
     this.phaseTime += rawDt;
     this.sk.update(this.time);
-    // A/B the cadence against plain 60 fps while we tune the feel.
-    if (this.input.justPressed('KeyV')) this.drawHz = this.drawHz === 15 ? 60 : 15;
+    // A/B against the source's own cadence while tuning a movement.
+    if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 60 ? 15 : 60;
 
     this.pad = this.pads.read();
     this.pickDevice();
@@ -484,7 +455,7 @@ export class Game {
     // The settings menu holds the world still. Anything else would have the
     // player fighting the game with one hand while changing it with the other.
     if (this.menu.open) {
-      this.present(rawDt);
+      this.render(rawDt);
       this.input.endFrame(rawDt);
       return;
     }
@@ -494,7 +465,7 @@ export class Game {
     if (this.freezeT > 0) {
       this.freezeT = Math.max(0, this.freezeT - rawDt);
       this.decayEffects(rawDt);
-      this.present(rawDt);
+      this.render(rawDt);
       this.input.endFrame(rawDt);
       return;
     }
@@ -506,38 +477,10 @@ export class Game {
       case 'won': this.updateWon(rawDt); break;
     }
 
-    this.present(rawDt);
+    this.render(rawDt);
     this.input.endFrame(rawDt);
   }
 
-  /**
-   * One drawing every 1/15s, and the one already on the glass in between.
-   * The banked time goes to whoever is drawn, so anything that ages inside a
-   * draw ages by the whole gap rather than by one sixtieth of it.
-   */
-  private present(rawDt: number): void {
-    this.drawAcc += rawDt;
-    const tick = Math.floor(this.time * this.drawHz);
-    if (tick !== this.drawnTick) {
-      this.drawnTick = tick;
-      const dt = this.drawAcc;
-      this.drawAcc = 0;
-      // Everything paints into the buffer; the glass is only ever blitted to.
-      const glass = this.ctx;
-      this.ctx = this.frameCtx;
-      this.sk.ctx = this.frameCtx;
-      this.render(dt);
-      this.ctx = glass;
-      this.sk.ctx = glass;
-    }
-    const c = this.ctx;
-    c.setTransform(1, 0, 0, 1, 0, 0);
-    c.drawImage(this.frame, 0, 0);
-    if (this.device === 'desk') {
-      c.setTransform(this.scaleX, 0, 0, this.scaleY, 0, 0);
-      this.drawCursor();
-    }
-  }
 
   /**
    * Whichever device spoke last owns the screen. A pad only takes over once it
@@ -924,20 +867,24 @@ export class Game {
    * inside the first only ever re-aims it, because two cards back to back is a
    * flicker and the source never does that.
    */
-  private swipe(dir: number): void {
-    // A shade under two drawings' worth, so it lands on exactly two of them
-    // wherever in the frame the blow happened to arrive.
-    this.swipeT = 1.55 / 15;
+  private swipe(x: number, y: number, dir: number, power: number): void {
+    // Two of the film's drawings' worth, played out at sixty.
+    this.swipeT = 2 / 15;
     this.swipeDir = dir;
+    this.swipeAt = vec(x, y);
+    this.swipePower = power;
+    this.swipeKind = this.weapon.mark;
     this.swipeSeed = Math.floor(this.time * 60);
   }
 
   /**
-   * The card itself: black paper, one white stroke, nothing else.
+   * The card itself: black paper, one white mark, nothing else.
    *
-   * The stroke is a crescent lying across the blow with its belly thrown the
-   * way the blow was going, which is how the source draws the sweep of a
-   * weapon when it stops drawing the weapon.
+   * Two things about it are the whole point. It is the mark of *this* power -
+   * the shape that weapon leaves, not a house crescent every one of them
+   * borrows - and it stands where the blow actually landed, so the card reads
+   * as the same event seen with the lights off rather than as a title slide
+   * dropped over the game.
    */
   private drawSwipe(): void {
     const c = this.ctx;
@@ -946,22 +893,21 @@ export class Game {
     c.setTransform(this.scaleX, 0, 0, this.scaleY, 0, 0);
     c.fillStyle = '#000';
     c.fillRect(0, 0, w, h);
-
-    const cx = w * (0.46 + hashNoise(this.swipeSeed, 3) * 0.06);
-    const cy = h * (0.45 + hashNoise(this.swipeSeed + 5, 3) * 0.05);
-    // A third of the picture, as in the source: the card is a stroke on a
-    // page, not a shape that fills the frame.
-    const len = Math.min(w * 0.46, h * 0.58);
-    const ca = Math.cos(this.swipeDir), sa = Math.sin(this.swipeDir);
-    // Across the blow for the chord, along it for the belly.
-    const px = -sa, py = ca;
-    const back = len * 0.12;
-    const a = { x: cx - px * len * 0.5 - ca * back, y: cy - py * len * 0.5 - sa * back };
-    const b = { x: cx + px * len * 0.5 - ca * back, y: cy + py * len * 0.5 - sa * back };
-    const ctrl = { x: cx + ca * len * 0.62, y: cy + sa * len * 0.62 };
-    this.sk.ribbonPath(a, ctrl, b, len * 0.3, 0.46, 0.5);
-    c.fillStyle = '#fff';
-    c.fill();
+    drawMark(this.sk, {
+      kind: this.swipeKind,
+      x: this.swipeAt.x + this.shakeOff.x,
+      y: this.swipeAt.y + this.shakeOff.y,
+      dir: this.swipeDir,
+      power: this.swipePower,
+      seed: this.swipeSeed,
+      strokes: 15,
+      fade: 1,
+      reach: Math.min(w, h) * 0.62,
+      inverted: true,
+      // Bigger than the live mark: with the picture gone this is all there is
+      // to look at, and in the film that frame is filled.
+      scale: 1.35,
+    });
     c.restore();
   }
 
@@ -1109,8 +1055,7 @@ export class Game {
       this.menu.hover(this.device === 'desk' ? this.pointerWorld() : null);
       this.menu.draw(this.sk, this.view, this.inputReport(), this.time);
     }
-    // The cursor is not drawn here: it goes on the glass every frame, over the
-    // blit of whichever drawing is currently up.
+    if (this.device === 'desk') this.drawCursor();
   }
 
   /**

@@ -1,3 +1,4 @@
+import type { MarkKind } from './impact';
 import {
   clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU, type Vec2,
 } from '../core/math';
@@ -147,6 +148,9 @@ const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 };
 
 export class Fists extends MeleeWeapon {
+  /** Knuckles crater; they do not cut. */
+  override get mark(): MarkKind { return 'crater'; }
+
   readonly id = 1;
   readonly name = 'BRAWLER';
   readonly tagline = 'four punches, then hold on';
@@ -672,6 +676,9 @@ const DRAG_LOW = 0.24, DRAG_HIGH = 0.66;
 const DRAG_COYOTE = 0.3;
 
 export class Greatsword extends MeleeWeapon {
+  /** A cut leaves the arc it cut, not a scatter. */
+  override get mark(): MarkKind { return 'slash'; }
+
   readonly id = 2;
   readonly name = 'SWORDSMAN';
   readonly tagline = 'rides the floor, lands like a truck';
@@ -886,6 +893,9 @@ const FRENZY_BLOWS = 7;
 const FRENZY_RATE = 0.19;
 
 export class Warhammer extends MeleeWeapon {
+  /** A head that size opens a hole, and the hole throws spikes all round. */
+  override get mark(): MarkKind { return 'crater'; }
+
   readonly id = 3;
   readonly name = 'SMASHER';
   readonly tagline = 'the head is bigger than he is';
@@ -1125,6 +1135,12 @@ const SLUNG_BOX: Record<Gun, readonly [number, number, number, number]> = {
 };
 
 export class Gunslinger extends Weapon {
+  /**
+   * Four guns and a rocket tube: a round going in leaves a tight star, a
+   * warhead leaves a bloom. Which one is in his hands decides it.
+   */
+  override get mark(): MarkKind { return this.gun === 'bazooka' ? 'bloom' : 'spark'; }
+
   readonly id = 5;
   readonly name = 'GUNSLINGER';
   readonly tagline = 'four on his back, one in his hands';
@@ -1652,6 +1668,9 @@ const BEAM_BORE = 340;
 const ORB_TAP = 0.22;
 
 export class EnergyBeam extends Weapon {
+  /** Light arriving: a cone through the point, nothing thrown sideways. */
+  override get mark(): MarkKind { return 'bloom'; }
+
   readonly id = 14;
   readonly name = 'SAYAJEANS';
   override readonly group = 'extra' as const;
