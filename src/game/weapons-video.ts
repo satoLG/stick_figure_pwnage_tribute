@@ -262,11 +262,49 @@ export class Wind extends MeleeWeapon {
       run: 0, ang: a, len: 300 + power * 260, power, spin: rand(0, TAU),
       reach: front ? Math.hypot(front.x - hands.x, front.y - hands.y) + 90 : 1200,
     };
+    this.gale(ctx, power);
     ctx.sfx('heavyswing', 0.5);
     ctx.shake(9 * power);
     ctx.flash(0.16 * power);
     ctx.sm.applyRecoil(0.7, a, 70 * power);
     ctx.sm.addGhostBurst(0.3);
+  }
+
+  /**
+   * The film's last thirty drawings, and the thing this weapon is for: the
+   * wind stops being cuts thrown at the wall and takes the whole picture.
+   * Blades the length of the screen cross it at angles, over the figure and
+   * everything else, in the same rake of threes the small ones use.
+   *
+   * They are only weather - the funnel behind them is what does the cutting -
+   * but nothing else in the game covers the paper like this, and in the source
+   * that coverage is the whole point of the shot.
+   */
+  private gale(ctx: WeaponCtx, power: number): void {
+    const W = ctx.terrain.w, H = ctx.terrain.h;
+    const a = ctx.sm.pose.aim;
+    const n = 4 + Math.round(power * 3);
+    for (let i = 0; i < n; i++) {
+      // Crossing the frame rather than radiating from him: a few along the
+      // aim, the rest raked steeply across it.
+      const steep = i % 2 === 1;
+      const ang = steep ? a + rand(-1.15, 1.15) : a + rand(-0.3, 0.3);
+      const len = W * rand(0.75, 1.15);
+      // Start well behind the frame so the blade is already full length when
+      // it crosses the middle of it.
+      const x = rand(-0.15, 0.55) * W - Math.cos(ang) * len * 0.25;
+      const y = rand(0.05, 0.95) * H - Math.sin(ang) * len * 0.25;
+      this.gusts.push({
+        x, y, ang,
+        len,
+        curl: rand(-0.45, 0.45),
+        off: 0,
+        width: 34 + power * 40,
+        life: rand(0.45, 0.8), max: 0.8,
+        seed: Math.floor(rand(0, 9999)),
+      });
+    }
+    if (this.gusts.length > 40) this.gusts.splice(0, this.gusts.length - 40);
   }
 
   /** Where the funnel is anchored: between his hands, out along the aim. */
