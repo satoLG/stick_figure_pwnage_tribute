@@ -264,35 +264,41 @@ automatically so nobody has to hunt single pixels.
 ### Which of these is which, in the film
 
 The arsenal is not an invention; it is the source's own run of powers with
-triggers on them. What follows is the map back to `pwnage_og_video.mp4` in this
-repo, and it is split by who says so, because at 192x144 a staff mid-charge and
-a bomb are the same twelve pixels: a first pass at this from the frames alone
-read the mage's charge as a falling bomb and the mecha's back rods as gunfire.
-The rows marked **confirmed** are the ones the author has confirmed against the
-film; the rest are still a reading of the frames and are marked as such.
+triggers on them. Two things about the film have to be said before the table,
+because both of them were misread here first:
 
-| In the film | What is on screen | Here | |
-| --- | --- | --- | --- |
-| 0:19–0:23 | Wings out, and the attack with the four rods off his back | **10 Mecha** | confirmed |
-| 0:27.5–0:31 | The staff's charged attack: rings of symbols turning round the shaft, the charge gathering at its head, and a thick beam let go into the wall | **7 Mage** | confirmed |
-| 0:08–0:18 | A long thin blade. He drags it behind him in a crouched dash, leaps, and one cut takes a whole slab off the top corner of the wall, which then slides away | **2 Swordsman** | reading |
-| 0:12–0:16 | The fan of long splinters converging on one point of contact, and the white crescent on black between the blows | not a weapon: this is the hit language every weapon here uses (`impact.ts`, and the swipe card in `game.ts`) | reading |
-| 0:23, 0:31 | Curved blades drawn as white crescents on an inverted frame | **4 Windslash** | reading |
-| 0:30–0:32 | Round bombs lobbed by hand, then flat ringed blades thrown after them | **8 Shinobi** | reading |
-| 0:35–0:39 | Standing on a box with long tubes fanned off his back and one over the shoulder, firing rounds that arc into the stone | **6 Rocketeer** | reading |
-| 0:40–0:47 | Kunai, a smoke bomb, and a second copy of himself running beside him | **8 Shinobi** | reading |
-| 0:50–0:52.5, 0:54–0:58 | A cartoon head thrown, and gadgets out of a cartoon cat's pouch | nothing. They are jokes, and they stay in the film | reading |
-| 0:52.5 | A discharge that earths itself all round him and scorches the floor | **9 Thunderbolt**, held | reading |
-| 0:58–1:05 | The machine assembles out of a floating helmet, punches, fires its fist off on a smoke trail, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** | reading |
-| 1:06–1:09 | A ball of jagged discharge held in one hand and driven into the wall | **9 Thunderbolt** | reading |
-| 1:09–1:13 | A cape, and something that comes up out of the ground beside him | **13 Monster tamer** | reading |
-| 1:13–1:17 | The finisher: enormous arcs that sweep the whole frame and take the rest of the wall | **2 Swordsman**, held | reading |
-| ~1:31, part two | A mallet: a rectangular head on a long shaft, carried on the shoulder and driven into the ground | **3 Smasher**, and the shape ours is drawn to | reading |
-| ~1:34, part two | A blade several times his height, swung on the diagonal | **2 Swordsman** | reading |
+- **The cut-ins are the credits.** Before a power starts, the drawing behind
+  him is *who that power is* - the character it is a homage to. They are not
+  interruptions and they are not other fighters.
+- **There is only ever one stick figure.** What looks like a second one running
+  beside him is his own after-image, which is a motion trail rather than a
+  clone.
+
+Several of the film's characters were also folded into one weapon here rather
+than given a slot each, so the map is many-to-one in places.
+
+**Confirmed against the film by the author:**
+
+| In the film | What is on screen | Here |
+| --- | --- | --- |
+| 0:19–0:23 | Wings out, and the attack with the four rods off his back | **10 Mecha** |
+| 0:27.5–0:31 | The staff's charged attack: rings of symbols turning round the shaft, the charge gathering at its head, and a thick beam let go into the wall | **7 Mage** |
+| 0:36–0:39 | Standing on a box with long tubes fanned off his back and one over the shoulder, firing rounds that arc into the stone | **6 Rocketeer** |
+| 0:39–0:43 | Cuts of wind thrown in the shape of claws | **4 Windslash** |
+| 0:43–0:46 | Bare-handed work, one of several such characters folded into one slot | **1 Brawler** |
+| 0:52–0:53.5 | The discharge that earths itself all round him and scorches the floor | **9 Thunderbolt** |
+| 0:53.5–1:05 | A ball, then a helicopter, then the transformation runs all the way into the machine: it punches, fires its fist off on a smoke trail, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** |
+| 1:07–1:12 | A fireball, kunai and shuriken | **8 Shinobi** |
+| 1:12–1:14 | The end of the shinobi, running into another wind character | **8 Shinobi** into **4 Windslash** |
+| 1:14–1:17 | Winds going wild across the whole frame and taking the wall with them | **4 Windslash** |
+
+**Still being read off the frames, and not confirmed:** the opening blade work
+at 0:08–0:18 (**2 Swordsman**), 0:23–0:26, the throws at 0:30–0:33, 0:46–0:52,
+and everything in the film's second part, which is where the mallet
+(**3 Smasher**) and the greatsword come from.
 
 **5 Gunslinger** is not one moment of the film: it is ours, assembled out of the
-places where he does use firearms. **1 Brawler**, **11 Split head** and **14
-Sayajeans** likewise take from the film's habits rather than from one scene.
+places where he does use firearms.
 
 ---
 
