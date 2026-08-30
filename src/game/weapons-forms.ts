@@ -655,6 +655,8 @@ type TitanPhase = 'idle' | 'aim' | 'volley' | 'burn' | 'eject' | 'monolith' | 'g
 
 /** Seconds of held trigger before the arm folds into a launcher. */
 const TITAN_HOLD = 0.55;
+/** How long the ball is a ball, and how long the whole arrival takes. */
+const BIRTH_BALL = 0.42, BIRTH_TOTAL = 0.75;
 /** The scripted collapse, in the order it happens. */
 const T_VOLLEY = 1.0, T_BURN = 1.1, T_EJECT = 0.5, T_MONO = 0.75, T_GONE = 1.6;
 
@@ -683,6 +685,15 @@ export class Titan extends Weapon {
   private step = 0;
   private punch = 0;
   private beam = 0;
+  /**
+   * Seconds since it was picked, while the thing is still assembling itself.
+   *
+   * In the film the machine does not walk on: a round gadget is set down, a
+   * rotor unfolds out of the top of it and it flies about for a moment, and
+   * then the ball is what turns into the helmet and the rest of it grows
+   * downwards from there. This is that, at a tenth of the length.
+   */
+  private birth = 0;
   private muzzleT = 0;
   /** The slab, once it exists: a position and a flight. */
   private slab: { x: number; y: number; vx: number; vy: number; spin: number } | null = null;
@@ -690,11 +701,10 @@ export class Titan extends Weapon {
   override onEquip(): void {
     super.onEquip();
     this.phase = 'idle';
-    // It is not standing there the instant it is picked: in the source the
-    // machine assembles, a helmet first and the rest of it after, over about
-    // half a second. Ours comes up out of the floor over the same half second,
-    // through the very squash the collapse uses in reverse.
-    this.up = 0.1;
+    // It is not standing there the instant it is picked: the ball comes first,
+    // then the rotor, then the machine grows down out of it.
+    this.birth = 0;
+    this.up = 0;
     this.step = 0;
     this.slab = null;
   }
@@ -710,6 +720,10 @@ export class Titan extends Weapon {
     // From the moment he kicks the hatch he is the thing to watch, so the
     // machine stops standing in for him even though it is still standing.
     if (this.phase === 'eject' || this.phase === 'monolith' || this.phase === 'gone') return false;
+    // While the ball is on screen he is not: in the film the gadget is set
+    // down alone and he is simply not in the drawing until it has finished
+    // being a machine.
+    if (this.birth < BIRTH_TOTAL) return true;
     return this.up > 0.25;
   }
 
@@ -808,6 +822,13 @@ export class Titan extends Weapon {
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
+    if (this.birth < BIRTH_TOTAL) {
+      this.birth += ctx.dt;
+      // Nothing else happens while it is arriving: no attacks, no folding.
+      if (this.birth < BIRTH_BALL) { this.up = 0; this.timer = 0.1; return; }
+      // The ball opens into the machine fast, the way a transformation cuts.
+      this.up = damp(this.up, 1, 12, ctx.dt);
+    }
     this.punch = Math.max(0, this.punch - ctx.dt * 3);
     this.beam = Math.max(0, this.beam - ctx.dt);
     this.muzzleT = Math.max(0, this.muzzleT - ctx.dt);
@@ -1047,7 +1068,58 @@ export class Titan extends Weapon {
     this.tube(sk, c2, tip, mitt, mitt * 0.92);
   }
 
+  /**
+   * What arrives before the machine does: a round gadget standing on the
+   * floor with a rotor turning on a short mast out of the top of it, and one
+   * small square hatch on its face. Two beats of it, and then it is a helmet.
+   *
+   * The rotor is drawn as a bar whose length pumps rather than as blades going
+   * round, because at fifteen drawings a second a spinning blade is a bar of
+   * changing length and nothing else - which is exactly how the source draws
+   * it too.
+   */
+  private drawArrival(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+    const r = 40;
+    const cx = sm.pos.x;
+    const cy = sm.pos.y - r - 4;
+    c.save();
+    c.strokeStyle = '#000';
+    c.fillStyle = '#fff';
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
+    // The body, filled so the wall never shows through it.
+    const round: Vec2[] = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * TAU;
+      round.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+    }
+    sk.polyPath(round, 1.2);
+    c.fill();
+    c.lineWidth = 3.4;
+    c.stroke();
+    // The hatch, low and to the front.
+    const f = sm.facing;
+    c.lineWidth = 2.6;
+    sk.poly([
+      { x: cx + f * 6, y: cy + 6 }, { x: cx + f * 17, y: cy + 6 },
+      { x: cx + f * 17, y: cy + 22 }, { x: cx + f * 6, y: cy + 22 },
+    ], 2.6, false, 0.6);
+    // Mast and rotor.
+    const top = { x: cx, y: cy - r };
+    sk.line(top, { x: cx, y: top.y - 13 }, 3, 1, 0.5);
+    const span = 30 + Math.abs(hashNoise(7, sk.boil)) * 26;
+    sk.line(
+      { x: cx - span, y: top.y - 13 + hashNoise(3, sk.boil) * 2 },
+      { x: cx + span, y: top.y - 13 + hashNoise(5, sk.boil) * 2 },
+      3, 1, 0.4,
+    );
+    c.restore();
+  }
+
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
+    if (this.birth < BIRTH_BALL) { this.drawArrival(sk, ctx); return; }
     if (this.up < 0.04) return;
     const c = sk.ctx;
     const sm = ctx.sm;
