@@ -335,9 +335,9 @@ export class Fists extends MeleeWeapon {
       // the reference's longest is about a third of the frame and most are
       // half that again.
       len: (58 + Math.pow(Math.random(), 1.8) * 200) * (0.55 + field * 0.45),
-      width: rand(11, 30) * (0.6 + field * 0.4),
+      width: rand(15, 38) * (0.62 + field * 0.42),
       bow: rand(-0.16, 0.16),
-      hollow: Math.random() < 0.16,
+      hollow: Math.random() < 0.07,
       life: rand(0.2, 0.36),
       max: 0.36,
       seed: Math.floor(rand(0, 9999)),
@@ -503,7 +503,6 @@ export class Fists extends MeleeWeapon {
 
     c.fillStyle = '#fff';
     for (const g of geom) {
-      c.globalAlpha = clamp(g.k * 3.4, 0, 1);
       const { m, L, at } = g;
       const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
       let d = 0;
@@ -520,8 +519,7 @@ export class Fists extends MeleeWeapon {
     }
 
     for (const g of geom) {
-      const { m, k, L, at } = g;
-      c.globalAlpha = clamp(k * 3.4, 0, 1);
+      const { m, L, at } = g;
       // Not a black blob: a white-bellied drag walled in by a heavy rim that
       // is only drawn part of the way round it. Where the drag runs thin the
       // two sides of the rim meet and it reads solid black, and where it runs
@@ -543,7 +541,7 @@ export class Fists extends MeleeWeapon {
         d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
       }
       // A hooked tick off the blunt end, the way the reference finishes them.
-      if (!m.hollow && k > 0.4) {
+      if (!m.hollow && g.k > 0.4) {
         c.fillStyle = '#000';
         sk.tuftPath(g.head.x, g.head.y, 2, 0, g.w * 2.4, 1.1, m.ang + Math.PI, m.seed + 41, 0.09);
         c.fill();
