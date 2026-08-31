@@ -837,11 +837,16 @@ export class Game {
     audio.play(b.sfx === 'cannon' ? 'cannon' : 'explosion');
     this.shake(b.shake);
     this.addFlash(b.flash);
-    this.particles.shockwave(at.x, at.y, b.radius * 1.5);
-    this.particles.debris(at.x, at.y, b.debris, 240 + b.radius * 3);
-    this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), 380 + b.radius * 3);
-    this.particles.smoke(at.x, at.y, Math.round(b.radius / 8), b.radius * 0.45);
-    this.particles.streaks(at.x, at.y, 12, Math.atan2(-p.vy, -p.vx), TAU, b.radius * 0.9);
+    // Particle sizes are proportional to the playfield, not screen pixels:
+    // PR #8 pulled the camera in (~660 units, was 864), so absolute sizes
+    // overran the figure. The worldW terms below are the camera, and the
+    // b.radius multipliers preserve per-weapon scale.
+    const w = this.terrain.w;
+    this.particles.shockwave(at.x, at.y, w * 0.18 + b.radius * 0.5);
+    this.particles.debris(at.x, at.y, b.debris, w * 0.36 + b.radius * 1.4);
+    this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), w * 0.58 + b.radius * 1.4);
+    this.particles.smoke(at.x, at.y, Math.round(b.radius / 8), w * 0.07 + b.radius * 0.18);
+    this.particles.streaks(at.x, at.y, 12, Math.atan2(-p.vy, -p.vx), TAU, w * 0.12 + b.radius * 0.35);
 
     // Blowback on the player if they stood too close to their own rocket.
     const dx = this.sm.pos.x - at.x, dy = (this.sm.pos.y - 50) - at.y;
