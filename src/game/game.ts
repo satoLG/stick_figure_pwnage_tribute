@@ -7,6 +7,7 @@ import { installer } from '../core/pwa';
 import { AimSolver, type AimMode } from '../ui/aim';
 import { cueWidth, drawStartCue, fitCueSize } from '../ui/cue';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
+import { settings } from '../core/settings';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
   drawProgress, focusRing, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
@@ -174,6 +175,8 @@ export class Game {
   /** 0..1 through the cue's exit, and 0..1 through the meter's entrance. */
   private cueOut = 0;
   private meterIn = 0;
+  /** Tracks the weapon's charge transition to fire the charge-inversion once. */
+  private wasCharging = false;
 
   private scaleX = 1;
   private scaleY = 1;
@@ -381,6 +384,7 @@ export class Game {
     this.wallHit = false;
     this.cueOut = 0;
     this.meterIn = 0;
+    this.wasCharging = false;
     this.shakeAmt = 0;
     this.flashAmt = 0;
     this.invertT = 0;
@@ -443,12 +447,10 @@ export class Game {
       time: this.time,
       shake: (a) => this.shake(a),
       flash: (a) => this.addFlash(a),
-      invert: (s) => { this.invertT = Math.max(this.invertT, s); },
+      invert: (s) => { if (settings.impactFx) this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => {
         this.impacts.add(x, y, dir, power, this.weapon.mark);
-        // Only the heavy end of the range earns the card; on every jab it
-        // would be a strobe rather than punctuation.
-        if ((power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
+        if (settings.impactFx && (power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
       },
       // `drawings` is in the source's 15Hz clock, not seconds. The
       // convertion to a per-frame decrement lives in `decayEffects`.
@@ -846,6 +848,21 @@ export class Game {
     // here, every frame, so dropping the stance is just saying nothing.
     this.sm.setStance(this.weapon.stance(wctx));
 
+    // --- charge inversion -------------------------------------------------
+    // When the player first starts charging a weapon (trigger held > 0),
+    // fire a single inverted frame as visual feedback that the build-up has
+    // begun. This replaces the old behaviour where inversion was tied to
+    // the random flash-bank from addFlash.
+    if (settings.impactFx) {
+      const ch = this.weapon.charge > 0.02;
+      if (ch && !this.wasCharging) {
+        this.addFlash(0.45);
+      }
+      this.wasCharging = ch;
+    } else {
+      this.wasCharging = this.weapon.charge > 0.02;
+    }
+
     // --- projectiles + their craters ---------------------------------------
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
@@ -997,7 +1014,7 @@ export class Game {
    */
   private addFlash(a: number): void {
     this.flashAmt += a;
-    if (this.flashAmt < FLASH_BANK) return;
+    if (!settings.impactFx || this.flashAmt < FLASH_BANK) return;
     this.flashAmt = 0;
     this.invertT = Math.max(this.invertT, INVERT_TIME);
   }

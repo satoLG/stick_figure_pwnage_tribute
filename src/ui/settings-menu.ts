@@ -144,6 +144,7 @@ export class SettingsMenu {
     const h = pad * 2 + rowH * 0.8         // title
       + head + rowH * 2                    // audio
       + head + lines * rowH * 0.62 + rowH  // input
+      + head + rowH                        // visual
       + pad;
     const x = (view.w - w) / 2;
     const y = clamp(this.chip.y + this.chip.h + pad, 0, Math.max(0, view.h - h - pad));
@@ -198,6 +199,13 @@ export class SettingsMenu {
       AIM_SPEEDS.map((o, i) => ({
         label: o.name, on: i === settings.aimSpeed, act: () => { settings.aimSpeed = i; },
       })));
+
+    ty = this.heading(sk, x + pad, ty, w - pad * 2, head, 'VISUAL');
+    this.choice(sk, x + pad, ty, w - pad * 2, rowH, 'IMPACT FX',
+      [
+        { label: 'ON', on: settings.impactFx, act: () => { settings.impactFx = true; } },
+        { label: 'OFF', on: !settings.impactFx, act: () => { settings.impactFx = false; } },
+      ]);
 
     // Last, over the plates, so the ring reads against whichever it is on.
     if (this.ring) focusRing(sk, this.ring, time);
