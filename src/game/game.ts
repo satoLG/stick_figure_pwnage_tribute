@@ -53,7 +53,7 @@ const INVERT_TIME = INVERT_DRAWINGS / 15;
  * one place the source deliberately throws the picture away, and that pause
  * is in drawings, not seconds.
  */
-const SWIPE_DRAWINGS = 2;
+const SWIPE_DRAWINGS = 1;
 const SWIPE_TIME = SWIPE_DRAWINGS / 15;
 
 /**
@@ -150,6 +150,13 @@ export class Game {
    * but the shape of the stroke, which is why the blow after it lands so hard.
    */
   private swipeT = 0;
+  /**
+   * Swipe card cooldown flag. When a heavy blow (power >= 1.5) first hits the
+   * wall, the card draws for exactly one picture. This flag prevents
+   * multiple swipes on the same impact — the source never shows two cards
+   * back-to-back; it would be a flicker, not punctuation.
+   */
+  private swipeCooldown = 0;
   private swipeDir = 0;
   private swipeSeed = 0;
   private swipeAt: Vec2 = vec(0, 0);
@@ -378,6 +385,7 @@ export class Game {
     this.flashAmt = 0;
     this.invertT = 0;
     this.swipeT = 0;
+    this.swipeCooldown = 0;
     this.hintFade = 1;
     this.stats = { shots: 0, elapsed: 0 };
     this.layoutButtons();
@@ -921,14 +929,18 @@ export class Game {
   }
 
   /**
-   * Arm the swipe card. Two drawings, and never stacked: a second blow landing
-   * inside the first only ever re-aims it, because two cards back to back is a
-   * flicker and the source never does that.
+   * Arm the swipe card. One drawing, and never re-armed on the same impact:
+   * a heavy blow that keeps touching the wall for several frames would
+   * otherwise re-trigger the card every picture, turning it into a strobe.
+   * The cooldown is the same length as the card itself, so the card plays
+   * once per landed blow and the next swipe needs a fresh hit after it ends.
    */
   private swipe(x: number, y: number, dir: number, power: number): void {
+    if (this.swipeCooldown > 0) return;
     // `SWIPE_DRAWINGS` drawings of the source's cadence, played out at whatever
     // `animFps` is current (see `decayEffects` for the picture-clock math).
     this.swipeT = SWIPE_TIME;
+    this.swipeCooldown = SWIPE_TIME;
     this.swipeDir = dir;
     this.swipeAt = vec(x, y);
     this.swipePower = power;
@@ -1010,6 +1022,7 @@ export class Game {
     this.freezeT = Math.max(0, this.freezeT - pictureDt);
     this.invertT = Math.max(0, this.invertT - pictureDt);
     this.swipeT = Math.max(0, this.swipeT - pictureDt);
+    this.swipeCooldown = Math.max(0, this.swipeCooldown - pictureDt);
     const s = this.shakeAmt;
     this.shakeOff = {
       x: hashNoise(1, Math.floor(this.time * 90)) * s,
@@ -1096,7 +1109,7 @@ export class Game {
 
     c.restore();
 
-    // The swipe card, which outranks everything: for two drawings the picture
+    // The swipe card, which outranks everything: for one drawing the picture
     // is gone and one white stroke stands on black paper.
     if (this.swipeT > 0) {
       this.drawSwipe();
