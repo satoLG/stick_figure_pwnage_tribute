@@ -130,11 +130,20 @@ certainly not worth being shoved across the room for.
 
 The scene is a fixed-size thing placed on a variable-size screen, not a thing
 stretched to fill it. The figure, the floor and the wall are all constants in
-world units — the wall is always 564 tall and 420 thick, better than four
-figures high — so a phone and an ultrawide get the same wall, the same run-up
-and the same length of game. What the screen shape decides is how much room
-there is *around* it: a tall screen gets more sky and a deeper floor, never a
-taller wall.
+world units — the wall is 420 thick and as tall as the band under the HUD
+strip will take, better than three figures high — so a phone and an ultrawide
+get the same wall, the same run-up and the same length of game. What the
+screen shape decides is how much room there is *around* it: a tall screen gets
+more sky and a deeper floor, never a taller wall.
+
+How many world units the screen is *worth* is the camera, and it is measured
+off the film rather than picked. There, the figure stands about a third as
+tall as the wall beside him and the wall runs the whole way from the floor to
+the top of the picture. A playfield of about 660 units high puts our fixed
+132-unit figure at that same fraction, and a floor slab of 92 keeps the ground
+a line under his feet rather than a plinth he is standing on. The earlier 864
+was the same drawings seen from further back, and at that distance a blow
+landing on the wall was a small event in a lot of empty paper.
 
 Where in that leftover room the wall sits is the framing, and it is aimed
 rather than left to fall out: the floor is deepened until the wall's middle
@@ -231,7 +240,7 @@ thing in his hands came out of.
 | --- | --- | --- | --- |
 | 1 | `1` | Brawler | Punches and only punches — jab, cross, hook, uppercut, a shoulder charge out of a run, haymakers if you lean on it — each with its own stance so the body moves under the arm. Keep leaning and it winds up into the barrage: the blows arrive sooner and sooner until the arms stop being drawn at all and a field of drags buries him, and letting go runs the same thing backwards |
 | 2 | `2` | Swordsman | A slab too heavy to lift: standing or walking it trails behind him on a slant with the point skimming the floor, and a run rips it back up through everything in front. Nothing it does is a flick — every cut comes round from behind the far shoulder through most of a half circle and drags him along with it, taking out three times the ground the old one did. Hold it and he throws himself the width of a room forward turning over twice, lands on the wall and puts three full-weight cuts through it |
-| 3 | `3` | Smasher | The source's mallet: a smooth barrel as tall as he is with a stick out of the back and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
+| 3 | `3` | Smasher | The mallet from the film's second part: a rectangular head on a long shaft, and no bands, cheeks or claws anywhere on it. Ploughs along behind him, then craters instead of cutting. Hold it and the ceremony goes out of it — forward, back, forward, three times as fast as a head that size has any right to move |
 | 4 | `4` | Windslash | Nothing in his hands: every swing throws curved blades of air four hundred units out in front, and what they leave is separate scores with wall still standing between them. There is weather round him whether or not the trigger is down, and the air carries him half again as high as anyone else jumps. Hold it and he pulls the storm in; letting go throws a whirlwind whose base stays in his hands |
 | 5 | `5` | Gunslinger | Four guns and he chooses. The three he is not holding ride on his back where you can see them; the one in his hands is whatever the range calls for — the revolver out past 250 units, the shotgun inside it. Hold the trigger and the tube comes off his back: one rocket, then three grenades thrown after it, then the rifle, which waits until a grenade is nearly on the wall before putting a round through it |
 | 6 | `6` | Rocketeer | A long screened cannon over his shoulder with three ports in the mouth of it, and four fat tubes fanned out behind him with the bore showing at the end of each. Three rounds one after another out of the front, or hold it down and dump ten off the back |
@@ -251,6 +260,54 @@ thing in his hands came out of.
 
 Win by erasing the wall. The last few scattered slivers are swept
 automatically so nobody has to hunt single pixels.
+
+### Which of these is which, in the film
+
+The arsenal is not an invention; it is the source's own run of powers with
+triggers on them. Two things about the film have to be said before the table,
+because both of them were misread here first:
+
+- **The cut-ins are the credits.** Before a power starts, the drawing behind
+  him is *who that power is* - the character it is a homage to. They are not
+  interruptions and they are not other fighters.
+- **There is only ever one stick figure.** What looks like a second one running
+  beside him is his own after-image, which is a motion trail rather than a
+  clone.
+
+Several of the film's characters were folded into one weapon here rather than
+given a slot each, so the map is many-to-one in places. All of it is confirmed
+against the film by the author.
+
+**Part one, on the wall:**
+
+| In the film | What is on screen | Here |
+| --- | --- | --- |
+| 0:08–0:18 | The blade: the crouched dash with it dragging behind, the leap, the cut that takes a slab off the wall | **2 Swordsman** — our blade is drawn differently, the movement is his |
+| 0:19–0:23 | Wings out, and the attack with the four rods off his back | **10 Mecha** |
+| 0:25–0:31 | The staff's charged attack: rings of symbols turning round the shaft, the charge gathering at its head, a thick beam let go into the wall | **7 Mage** |
+| 0:33–0:39 | Tubes fanned off his back and one over the shoulder, firing rounds that arc into the stone | **6 Rocketeer** |
+| 0:39–0:43 | Cuts of wind thrown in the shape of claws | **4 Windslash** |
+| 0:43–0:46 | Bare hands, one of several such characters folded into one slot | **1 Brawler** |
+| 0:52–0:53.5 | The discharge that earths itself all round him and scorches the floor | **9 Thunderbolt** |
+| 0:53.5–1:05 | A ball, then a helicopter, then the transformation runs all the way into the machine: it punches, fires its fist off, cuts with a thin twin-line beam out of the visor, folds down into a launcher | **12 Giant robot** |
+| 1:07–1:12 | A fireball, kunai and shuriken | **8 Shinobi** |
+| 1:12–1:14 | The end of the shinobi, running into another wind character | **8 Shinobi** into **4 Windslash** |
+| 1:14–1:17 | Wind going wild across the whole frame and taking the wall with it | **4 Windslash**, held |
+
+**Part two, after the End card:**
+
+| In the film | What is on screen | Here |
+| --- | --- | --- |
+| ~1:21–1:27 | He jumps with the picture coming apart around him and lays into the wall with thick, heavily scribbled strokes | **1 Brawler**, held — the barrage |
+| ~1:27–1:30 | A pistol, then a bazooka, swapped between in seconds | **5 Gunslinger**, which is where its two halves come from |
+| ~1:31 | The mallet: a rectangular head on a long shaft, driven into the ground | **3 Smasher** |
+| ~1:38–1:42 | The head splits down the middle, one side lifts, and missiles leave the rack inside | **11 Split head** |
+| ~1:45 | A band opens across the middle of the head and a thin beam comes out of it | **11 Split head**, held |
+| ~1:50–1:55 | Something enormous with a toothed maw, and a torrent out of its mouth | **13 Monster tamer** |
+
+Two stretches of the film are jokes and stay there: the cartoon head thrown at
+0:50 and the gadgets out of the cat's pouch at 0:54, and the door gag that
+opens part two.
 
 ---
 
@@ -353,6 +410,43 @@ a percentage point.
 Notch insets are read from a zero-size probe element carrying
 `env(safe-area-inset-*)` and applied to the HUD, so nothing important hides
 under a cutout.
+
+### Fifteen drawings a second (`Game.present`)
+
+The source is animated on twos. Count it frame by frame and half of every pair
+of its video frames is pixel-identical to the one before: fifteen unique
+drawings a second, each held for two. That is not an artefact of the encode, it
+is how the thing was made, and it is a good part of why it moves the way it
+does — a stick figure redrawn sixty times a second is a smooth interpolation of
+a drawing, and redrawn fifteen times it is a drawing.
+
+So the two clocks are split. The world steps at sixty, because that is what the
+controls are read on and nothing about the look of it is worth answering a
+button sixty milliseconds late. The picture is remade at fifteen, and what is on
+the glass in between is simply the last one, still up. The ink's wobble runs on
+that same fifteen, so every drawing that goes up is a genuinely new one and no
+two of them share a jitter. `V` puts the drawing rate back to sixty if you want
+to see the difference.
+
+### One hit, in three drawings (`src/game/impact.ts`)
+
+A landed blow in the source is not a cloud of debris. It is a fan of long sharp
+splinters that all converge on the single point of contact, thinning out over
+the next three or four drawings — 21 lines, then 13, then 7, then 3, then paper
+— and on the heavy blows a **swipe card** in front of it: two drawings where the
+picture is thrown away entirely and one white crescent stands on black.
+
+The splinters are narrow on purpose. Filled white and fat, which is what they
+used to be, they are invisible on white paper and the whole blow comes out as a
+few loose dashes near the figure; narrow, the ink round them closes over the
+belly and the same drawing reads as hard black slivers over the paper and as
+white ones over the wall, which is exactly what the film does.
+
+That rule — a stroke is on the paper at full strength or it is not on the paper
+— is why there is no half-inversion and no fading anywhere. Light from a blast
+banks up and spends itself on one inverted drawing instead of washing the
+screen grey, and a gust of wind dies by having less blade rather than by going
+faint.
 
 ### Why not Phaser?
 

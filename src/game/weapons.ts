@@ -1,3 +1,4 @@
+import type { MarkKind } from './impact';
 import {
   clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU, type Vec2,
 } from '../core/math';
@@ -147,6 +148,9 @@ const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 };
 
 export class Fists extends MeleeWeapon {
+  /** Knuckles crater; they do not cut. */
+  override get mark(): MarkKind { return 'crater'; }
+
   readonly id = 1;
   readonly name = 'BRAWLER';
   readonly tagline = 'four punches, then hold on';
@@ -331,9 +335,9 @@ export class Fists extends MeleeWeapon {
       // the reference's longest is about a third of the frame and most are
       // half that again.
       len: (58 + Math.pow(Math.random(), 1.8) * 200) * (0.55 + field * 0.45),
-      width: rand(11, 30) * (0.6 + field * 0.4),
+      width: rand(15, 38) * (0.62 + field * 0.42),
       bow: rand(-0.16, 0.16),
-      hollow: Math.random() < 0.16,
+      hollow: Math.random() < 0.07,
       life: rand(0.2, 0.36),
       max: 0.36,
       seed: Math.floor(rand(0, 9999)),
@@ -499,7 +503,6 @@ export class Fists extends MeleeWeapon {
 
     c.fillStyle = '#fff';
     for (const g of geom) {
-      c.globalAlpha = clamp(g.k * 3.4, 0, 1);
       const { m, L, at } = g;
       const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
       let d = 0;
@@ -516,8 +519,7 @@ export class Fists extends MeleeWeapon {
     }
 
     for (const g of geom) {
-      const { m, k, L, at } = g;
-      c.globalAlpha = clamp(k * 3.4, 0, 1);
+      const { m, L, at } = g;
       // Not a black blob: a white-bellied drag walled in by a heavy rim that
       // is only drawn part of the way round it. Where the drag runs thin the
       // two sides of the rim meet and it reads solid black, and where it runs
@@ -539,7 +541,7 @@ export class Fists extends MeleeWeapon {
         d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
       }
       // A hooked tick off the blunt end, the way the reference finishes them.
-      if (!m.hollow && k > 0.4) {
+      if (!m.hollow && g.k > 0.4) {
         c.fillStyle = '#000';
         sk.tuftPath(g.head.x, g.head.y, 2, 0, g.w * 2.4, 1.1, m.ang + Math.PI, m.seed + 41, 0.09);
         c.fill();
@@ -672,6 +674,9 @@ const DRAG_LOW = 0.24, DRAG_HIGH = 0.66;
 const DRAG_COYOTE = 0.3;
 
 export class Greatsword extends MeleeWeapon {
+  /** A cut leaves the arc it cut, not a scatter. */
+  override get mark(): MarkKind { return 'slash'; }
+
   readonly id = 2;
   readonly name = 'SWORDSMAN';
   readonly tagline = 'rides the floor, lands like a truck';
@@ -886,6 +891,9 @@ const FRENZY_BLOWS = 7;
 const FRENZY_RATE = 0.19;
 
 export class Warhammer extends MeleeWeapon {
+  /** A head that size opens a hole, and the hole throws spikes all round. */
+  override get mark(): MarkKind { return 'crater'; }
+
   readonly id = 3;
   readonly name = 'SMASHER';
   readonly tagline = 'the head is bigger than he is';
@@ -1125,6 +1133,12 @@ const SLUNG_BOX: Record<Gun, readonly [number, number, number, number]> = {
 };
 
 export class Gunslinger extends Weapon {
+  /**
+   * Four guns and a rocket tube: a round going in leaves a tight star, a
+   * warhead leaves a bloom. Which one is in his hands decides it.
+   */
+  override get mark(): MarkKind { return this.gun === 'bazooka' ? 'bloom' : 'spark'; }
+
   readonly id = 5;
   readonly name = 'GUNSLINGER';
   readonly tagline = 'four on his back, one in his hands';
@@ -1652,6 +1666,9 @@ const BEAM_BORE = 340;
 const ORB_TAP = 0.22;
 
 export class EnergyBeam extends Weapon {
+  /** Light arriving: a cone through the point, nothing thrown sideways. */
+  override get mark(): MarkKind { return 'bloom'; }
+
   readonly id = 14;
   readonly name = 'SAYAJEANS';
   override readonly group = 'extra' as const;

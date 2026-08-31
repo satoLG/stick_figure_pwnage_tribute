@@ -7,6 +7,7 @@
  * `hidesBody`, `headScale` - and put their own back in its place, posed off
  * the same skeleton so the gait, the lean and the recoil still drive them.
  */
+import type { MarkKind } from './impact';
 import {
   angleDelta, clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU,
   type Vec2,
@@ -118,6 +119,9 @@ const SHOUT_TAP = 0.3;
  * whole character of it: you point this by standing somewhere, not by pointing.
  */
 export class Shout extends Weapon {
+  /** Both of them shout a beam, so both of them pierce. */
+  override get mark(): MarkKind { return 'pierce'; }
+
   readonly id = 15;
   readonly name = 'MONSTER TAMER';
   readonly tagline = 'straight ahead, and it does not aim';
@@ -243,7 +247,11 @@ export class Shout extends Weapon {
       this.roar = ROAR_TIME;
       ctx.sfx('cannon', 0.5);
       ctx.flash(0.5);
-      ctx.invert(0.08);
+      // Three drawings of black paper, not one. The film turns the ground
+      // dark for the whole opening of that roar and lets the torrent be the
+      // only white thing on the page; a single inverted frame reads as a
+      // camera flash instead of as the lights going out.
+      ctx.invert(0.2);
       ctx.shake(24);
     }
     if (this.roar <= 0) return;
@@ -272,8 +280,14 @@ export class Shout extends Weapon {
   }
 
   /** How tall and how wide the thing behind him gets, fully out of the floor. */
-  private static readonly BEAST_H = 350;
-  private static readonly BEAST_W = 152;
+  /**
+   * How big the thing is. In the film it towers: its head is up near the top
+   * of the picture with him standing under the jaw, and the maw alone is
+   * wider than he is tall. Ours used to come up to about his own height, which
+   * is a large dog rather than a summon.
+   */
+  private static readonly BEAST_H = 470;
+  private static readonly BEAST_W = 196;
 
   /**
    * Where the thing is standing.
@@ -600,7 +614,9 @@ export class Shout extends Weapon {
     if (this.roar > 0) {
       const k = this.roar / ROAR_TIME;
       const from = this.beastMaw(ctx);
-      const r = (34 + 26 * this.power) * (0.55 + k * 0.55);
+      // Half again as wide as it was. What comes out of that mouth in the film
+      // is a torrent that swallows most of the frame, not a rod of light.
+      const r = (52 + 40 * this.power) * (0.55 + k * 0.55);
       const ca = Math.cos(this.dir), sa = Math.sin(this.dir);
       const front = ctx.terrain.strikePoint(from.x, from.y, ca, sa, 1800, 6);
       const len = front ? Math.hypot(front.x - from.x, front.y - from.y) + r : 1800;
@@ -624,6 +640,26 @@ export class Shout extends Weapon {
       }
       sk.tuftPath(from.x, from.y, 15, r * 0.8, r * 2.4, 3.0, this.dir, 9102, 0.08);
       c.fill();
+      // The torrent itself: long white streaks pouring out of the maw the
+      // whole length of the beam, which is what the film's frames are made of
+      // once the roar is out - the band alone is a plank, and the plank is not
+      // what makes it frightening.
+      c.fillStyle = '#fff';
+      c.strokeStyle = '#000';
+      c.lineWidth = 2.4;
+      for (let i = 0; i < 16; i++) {
+        const spread = (Math.abs(hashNoise(9200 + i, sk.boil)) - 0.1) * r * 1.5;
+        const side = i % 2 === 0 ? 1 : -1;
+        const d0 = L * (0.02 + Math.abs(hashNoise(9210 + i, sk.boil)) * 0.5);
+        const d1 = Math.min(L * 1.02, d0 + L * (0.3 + Math.abs(hashNoise(9220 + i, sk.boil)) * 0.7));
+        const o = side * spread;
+        const p = (d: number, oo: number): Vec2 =>
+          ({ x: from.x + ca * d - sa * oo, y: from.y + sa * d + ca * oo });
+        sk.ribbonPath(p(d0, o * 0.4), p((d0 + d1) * 0.5, o), p(d1, o * 1.25),
+          r * (0.1 + Math.abs(hashNoise(9230 + i, sk.boil)) * 0.28), 0.35, 0.7);
+        c.fill();
+        c.stroke();
+      }
       c.restore();
     }
   }
@@ -655,6 +691,8 @@ type TitanPhase = 'idle' | 'aim' | 'volley' | 'burn' | 'eject' | 'monolith' | 'g
 
 /** Seconds of held trigger before the arm folds into a launcher. */
 const TITAN_HOLD = 0.55;
+/** How long the ball is a ball, and how long the whole arrival takes. */
+const BIRTH_BALL = 0.42, BIRTH_TOTAL = 0.75;
 /** The scripted collapse, in the order it happens. */
 const T_VOLLEY = 1.0, T_BURN = 1.1, T_EJECT = 0.5, T_MONO = 0.75, T_GONE = 1.6;
 
@@ -668,6 +706,9 @@ const T_VOLLEY = 1.0, T_BURN = 1.1, T_EJECT = 0.5, T_MONO = 0.75, T_GONE = 1.6;
  * slab which he picks up and throws at the wall.
  */
 export class Titan extends Weapon {
+  /** A fist that size craters; the visor's beam pierces. */
+  override get mark(): MarkKind { return this.beam > 0 ? 'pierce' : 'crater'; }
+
   readonly id = 16;
   readonly name = 'GIANT ROBOT';
   readonly tagline = 'punches, eye beams, and then he throws it';
@@ -683,6 +724,15 @@ export class Titan extends Weapon {
   private step = 0;
   private punch = 0;
   private beam = 0;
+  /**
+   * Seconds since it was picked, while the thing is still assembling itself.
+   *
+   * In the film the machine does not walk on: a round gadget is set down, a
+   * rotor unfolds out of the top of it and it flies about for a moment, and
+   * then the ball is what turns into the helmet and the rest of it grows
+   * downwards from there. This is that, at a tenth of the length.
+   */
+  private birth = 0;
   private muzzleT = 0;
   /** The slab, once it exists: a position and a flight. */
   private slab: { x: number; y: number; vx: number; vy: number; spin: number } | null = null;
@@ -690,7 +740,10 @@ export class Titan extends Weapon {
   override onEquip(): void {
     super.onEquip();
     this.phase = 'idle';
-    this.up = 1;
+    // It is not standing there the instant it is picked: the ball comes first,
+    // then the rotor, then the machine grows down out of it.
+    this.birth = 0;
+    this.up = 0;
     this.step = 0;
     this.slab = null;
   }
@@ -706,6 +759,10 @@ export class Titan extends Weapon {
     // From the moment he kicks the hatch he is the thing to watch, so the
     // machine stops standing in for him even though it is still standing.
     if (this.phase === 'eject' || this.phase === 'monolith' || this.phase === 'gone') return false;
+    // While the ball is on screen he is not: in the film the gadget is set
+    // down alone and he is simply not in the drawing until it has finished
+    // being a machine.
+    if (this.birth < BIRTH_TOTAL) return true;
     return this.up > 0.25;
   }
 
@@ -804,6 +861,13 @@ export class Titan extends Weapon {
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
+    if (this.birth < BIRTH_TOTAL) {
+      this.birth += ctx.dt;
+      // Nothing else happens while it is arriving: no attacks, no folding.
+      if (this.birth < BIRTH_BALL) { this.up = 0; this.timer = 0.1; return; }
+      // The ball opens into the machine fast, the way a transformation cuts.
+      this.up = damp(this.up, 1, 12, ctx.dt);
+    }
     this.punch = Math.max(0, this.punch - ctx.dt * 3);
     this.beam = Math.max(0, this.beam - ctx.dt);
     this.muzzleT = Math.max(0, this.muzzleT - ctx.dt);
@@ -1031,19 +1095,105 @@ export class Titan extends Weapon {
   private limb(
     sk: Sketch, a: Vec2, b: Vec2, c2: Vec2, r: number, mitt: number, endDir?: Vec2,
   ): void {
+    const sk2 = sk.ctx;
     this.tube(sk, a, b, r * 1.16, r * 0.98);
     this.tube(sk, b, c2, r * 1.02, r * 0.92);
+    // A band across the joint. Every limb in the source has one, and without
+    // it two tubes meeting at an angle read as one bent sausage.
+    const jx = c2.x - b.x, jy = c2.y - b.y;
+    const jl = Math.hypot(jx, jy) || 1;
+    const nx = -jy / jl, ny = jx / jl;
+    sk2.strokeStyle = '#000';
+    sk.line(
+      { x: b.x + nx * r * 0.86, y: b.y + ny * r * 0.86 },
+      { x: b.x - nx * r * 0.86, y: b.y - ny * r * 0.86 },
+      2.6, 1, 0.4,
+    );
     if (mitt <= 0) return;
     // Which way the block on the end runs.
     let dx = endDir ? endDir.x : c2.x - b.x;
     let dy = endDir ? endDir.y : c2.y - b.y;
     const l = Math.hypot(dx, dy) || 1;
     dx /= l; dy /= l;
-    const tip = { x: c2.x + dx * mitt * 0.9, y: c2.y + dy * mitt * 0.9 };
-    this.tube(sk, c2, tip, mitt, mitt * 0.92);
+    this.block(sk, c2, { x: dx, y: dy }, mitt * 1.15, mitt * 0.95);
+  }
+
+  /**
+   * The block on the end of a limb: a fist, or a boot.
+   *
+   * Not a tube. A rounded cap on a rounded limb is a ball on a stick, which is
+   * exactly what this machine must not look like - in the source both ends are
+   * squared off, and the corner is most of what says "machine" about them.
+   */
+  private block(sk: Sketch, at: Vec2, dir: Vec2, len: number, half: number): void {
+    const c = sk.ctx;
+    const nx = -dir.y, ny = dir.x;
+    const p = (d: number, o: number): Vec2 =>
+      ({ x: at.x + dir.x * d + nx * o, y: at.y + dir.y * d + ny * o });
+    const pts = [
+      p(-half * 0.35, half), p(len, half * 0.86),
+      p(len, -half * 0.86), p(-half * 0.35, -half),
+    ];
+    c.fillStyle = '#fff';
+    sk.polyPath(pts, 0.9);
+    c.fill();
+    sk.poly(pts, 3, false, 0.9);
+    // One knuckle line across it.
+    sk.line(p(len * 0.55, half * 0.7), p(len * 0.55, -half * 0.7), 2.4, 1, 0.4);
+  }
+
+  /**
+   * What arrives before the machine does: a round gadget standing on the
+   * floor with a rotor turning on a short mast out of the top of it, and one
+   * small square hatch on its face. Two beats of it, and then it is a helmet.
+   *
+   * The rotor is drawn as a bar whose length pumps rather than as blades going
+   * round, because at fifteen drawings a second a spinning blade is a bar of
+   * changing length and nothing else - which is exactly how the source draws
+   * it too.
+   */
+  private drawArrival(sk: Sketch, ctx: WeaponCtx): void {
+    const c = sk.ctx;
+    const sm = ctx.sm;
+    const r = 40;
+    const cx = sm.pos.x;
+    const cy = sm.pos.y - r - 4;
+    c.save();
+    c.strokeStyle = '#000';
+    c.fillStyle = '#fff';
+    c.lineJoin = 'round';
+    c.lineCap = 'round';
+    // The body, filled so the wall never shows through it.
+    const round: Vec2[] = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * TAU;
+      round.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+    }
+    sk.polyPath(round, 1.2);
+    c.fill();
+    c.lineWidth = 3.4;
+    c.stroke();
+    // The hatch, low and to the front.
+    const f = sm.facing;
+    c.lineWidth = 2.6;
+    sk.poly([
+      { x: cx + f * 6, y: cy + 6 }, { x: cx + f * 17, y: cy + 6 },
+      { x: cx + f * 17, y: cy + 22 }, { x: cx + f * 6, y: cy + 22 },
+    ], 2.6, false, 0.6);
+    // Mast and rotor.
+    const top = { x: cx, y: cy - r };
+    sk.line(top, { x: cx, y: top.y - 13 }, 3, 1, 0.5);
+    const span = 30 + Math.abs(hashNoise(7, sk.boil)) * 26;
+    sk.line(
+      { x: cx - span, y: top.y - 13 + hashNoise(3, sk.boil) * 2 },
+      { x: cx + span, y: top.y - 13 + hashNoise(5, sk.boil) * 2 },
+      3, 1, 0.4,
+    );
+    c.restore();
   }
 
   override drawBehind(sk: Sketch, ctx: WeaponCtx): void {
+    if (this.birth < BIRTH_BALL) { this.drawArrival(sk, ctx); return; }
     if (this.up < 0.04) return;
     const c = sk.ctx;
     const sm = ctx.sm;
@@ -1062,10 +1212,13 @@ export class Titan extends Weapon {
     c.lineJoin = 'round';
     c.lineCap = 'round';
 
-    // The machine's arms are longer than his are - they hang past the hip
-    // instead of folding up over the chest, which is what a barrel of a torso
-    // forces. Both joints are pushed out along the line of his own arm.
-    const REACH = 1.28;
+    // The machine's arms are *short*, and that was the thing most wrong with
+    // it. Blown up off his skeleton at full length they came out as two long
+    // thin sausages with a ball on the end, hanging past the hip; in the
+    // source they are stubby and thick, held out in front of a barrel of a
+    // torso, with a squared fist. So the joints are pulled back in along the
+    // line of his own arm rather than pushed out along it.
+    const REACH = 0.86;
     // His shoulders sit a few units either side of his spine. The machine's
     // torso is a barrel five times that wide, so the arms have to be hung off
     // the *edge* of it - hanging them off his skeleton's shoulders ran both
@@ -1079,10 +1232,22 @@ export class Titan extends Weapon {
       const a0 = shoulder(sh, out), a1 = q(jt);
       return { x: a0.x + (a1.x - a0.x) * REACH, y: a0.y + (a1.y - a0.y) * REACH };
     };
+    /**
+     * A leg joint, brought in under the machine. His stride is a stick
+     * figure's - long, wide and splayed - and at two and a half times the size
+     * it reads as a squat rather than a stand. Pulling the knee and the foot
+     * most of the way back towards the line of the hip leaves two heavy
+     * columns with a walk still visible in them, which is how the source
+     * stands this thing up.
+     */
+    const leg = (hip: Vec2, jt: Vec2): Vec2 => {
+      const h = q(hip), j = q(jt);
+      return { x: h.x + (j.x - h.x) * 0.42, y: j.y };
+    };
 
     // Back limbs first, a shade thinner so the near side reads in front.
-    this.limb(sk, q(p.hipL), q(p.kneeL), q(p.footL), 27, 25, { x: f * 1, y: 0.12 });
-    this.limb(sk, shoulder(p.shL, -0.9), arm(p.shL, p.elbowL, -0.9), arm(p.shL, p.handL, -0.9), 23, 23);
+    this.limb(sk, q(p.hipL), leg(p.hipL, p.kneeL), leg(p.hipL, p.footL), 34, 26, { x: f * 1, y: 0.12 });
+    this.limb(sk, shoulder(p.shL, -0.9), arm(p.shL, p.elbowL, -0.9), arm(p.shL, p.handL, -0.9), 29, 25);
 
     // --- torso: a barrel with a ribbed panel down the front of it ----------
     const chest = q(p.chest), pelvis = q(p.pelvis), neck = q(p.neck);
@@ -1107,7 +1272,7 @@ export class Titan extends Weapon {
     }
 
     // --- the near leg ------------------------------------------------------
-    this.limb(sk, q(p.hipR), q(p.kneeR), q(p.footR), 30, 28, { x: f * 1, y: 0.12 });
+    this.limb(sk, q(p.hipR), leg(p.hipR, p.kneeR), leg(p.hipR, p.footR), 38, 29, { x: f * 1, y: 0.12 });
 
     // --- the helmet --------------------------------------------------------
     //
@@ -1128,16 +1293,18 @@ export class Titan extends Weapon {
     sk.polyPath(dome, 1);
     c.fill();
     sk.poly(dome, 3, false, 1);
-    // Seam and bolts.
-    sk.line({ x: h.x + f * 2, y: h.y - R * 0.84 }, { x: h.x + f * 2, y: h.y - R * 0.1 }, 3, 1, 0.5);
-    for (const d of [-1, 1]) {
-      sk.polyPath(ring(h.x + d * R * 0.34 + f * 2, h.y - R * 0.44, R * 0.11, 8, 0), 0.5);
-      c.stroke();
-      sk.polyPath(ring(h.x + d * R * 0.34 + f * 2, h.y - R * 0.2, R * 0.11, 8, 0), 0.5);
-      c.stroke();
-    }
-    // Brim, then the visor band under it, then the jaw plate.
-    this.tube(sk, { x: h.x - R * 1.06, y: h.y + R * 0.04 }, { x: h.x + R * 1.06, y: h.y }, 6, 6, 2.6);
+    // A seam over the crown and a short crest at the front of it, and nothing
+    // else: the two pairs of bolts that used to sit here read as a pair of
+    // eyes with digits in them, which is the one thing a visored helmet must
+    // not have. The source's dome is plain.
+    sk.line({ x: h.x + f * 2, y: h.y - R * 0.86 }, { x: h.x + f * 2, y: h.y - R * 0.08 }, 3, 1, 0.5);
+    sk.line(
+      { x: h.x + f * R * 0.5, y: h.y - R * 0.6 },
+      { x: h.x + f * R * 0.86, y: h.y - R * 0.24 }, 3, 1, 0.5,
+    );
+    // Brim, then the visor band under it, then the jaw plate. The brim only
+    // just clears the dome - a wide one turns the machine into a bell.
+    this.tube(sk, { x: h.x - R * 0.94, y: h.y + R * 0.04 }, { x: h.x + R * 0.94, y: h.y }, 5, 5, 2.6);
     c.fillStyle = '#000';
     sk.polyPath([
       { x: h.x - R * 0.9, y: h.y + R * 0.2 }, { x: h.x + R * 0.9, y: h.y + R * 0.16 },
@@ -1170,7 +1337,7 @@ export class Titan extends Weapon {
         c.fill();
       }
     } else {
-      this.limb(sk, shoulder(p.shR, 0.85), arm(p.shR, p.elbowR, 0.85), arm(p.shR, p.handR, 0.85), 25, 26);
+      this.limb(sk, shoulder(p.shR, 0.85), arm(p.shR, p.elbowR, 0.85), arm(p.shR, p.handR, 0.85), 32, 28);
       // The shock coming off the mitt, as thin spikes and not as a starburst.
       if (this.punch > 0.02) {
         const hd = arm(p.shR, p.handR, 0.85);
@@ -1285,7 +1452,11 @@ export class Titan extends Weapon {
 /** Seconds of held trigger before the skull opens all the way. */
 const SPLIT_HOLD = 0.5;
 /** Half-width of the cutting beam. It is meant to be seen from across the room. */
-const BEAM_HALF = 17;
+/**
+ * Half the beam's width. Thin, on the author's word and the film's: what comes
+ * out of the band is a hard bright line, not a band you could put your arm in.
+ */
+const BEAM_HALF = 9;
 
 /**
  * His head opens down the middle. What is inside is a machine: a lens that
@@ -1293,6 +1464,9 @@ const BEAM_HALF = 17;
  * a rack of four very unfriendly missiles.
  */
 export class SplitHead extends Weapon {
+  /** Rounds out of the rack prick; the cutting beam runs through. */
+  override get mark(): MarkKind { return this.beamT > 0 ? 'pierce' : 'spark'; }
+
   readonly id = 17;
   readonly name = 'SPLIT HEAD';
   readonly tagline = 'four in the rack, and a torch behind them';
@@ -1466,13 +1640,17 @@ export class SplitHead extends Weapon {
     c.strokeStyle = '#000';
     c.lineJoin = 'round';
 
-    // Two doors, and which one is open says what is about to come out.
+    // Two doors, and which one is open says what is about to come out. Both
+    // of them were the wrong way round until the author said so.
     //
-    // For a salvo the skull hinges apart on the seam across the middle: the
-    // lid tips up and back, the jaw drops, and the rack shows between them.
-    // For the beam it comes apart the other way entirely - straight down the
-    // middle, both halves swinging out sideways - so the machine is standing
-    // in a doorway rather than peering out of a slot.
+    // For a salvo the skull splits **down the middle** and one side alone
+    // swings away, like a lid coming off, leaving the rack looking out of the
+    // half that stayed. Both halves swinging wide is a doorway, and a doorway
+    // is not what a rack of missiles needs.
+    //
+    // For the beam the head barely opens at all: a **band** parts across the
+    // middle of it, a few units of mechanism showing in the slot, and the
+    // beam comes out of that.
     const w = this.wide;
     // The skull swells as it comes apart. A head this size split down the
     // middle is four pixels of daylight; letting it grow while it opens is
@@ -1480,38 +1658,54 @@ export class SplitHead extends Weapon {
     const R = HEAD_R * (1 + this.open * 0.45);
     c.fillStyle = '#000';
     if (w < 0.5) {
-      // The seam across the middle. The dark of the inside goes down first and
-      // is left showing between the halves; without it the two domes close up
-      // into one slightly odd head.
-      const lift = this.open * R * 2.05;
-      const g = lift * 0.78;
+      // Down the middle, and one side only. The half he is facing with lifts
+      // away and turns as it goes; the other stands where it was, and the dark
+      // of the inside is left showing along the cut.
+      const part = this.open * R * 1.5;
       if (this.open > 0.08) {
         sk.polyPath([
-          { x: h.x - R * 0.86, y: h.y - g },
-          { x: h.x + R * 0.86, y: h.y - g * 0.8 },
-          { x: h.x + R * 0.8, y: h.y + g * 0.8 },
-          { x: h.x - R * 0.8, y: h.y + g },
+          { x: h.x - R * 0.2, y: h.y - R * 0.94 },
+          { x: h.x + part * 0.9, y: h.y - R * 0.9 },
+          { x: h.x + part * 0.9, y: h.y + R * 0.9 },
+          { x: h.x - R * 0.2, y: h.y + R * 0.94 },
         ], 1.2);
         c.fill();
       }
-      this.halfHead(sk, h.x - f * this.open * 8, h.y - lift, -f * this.open * 1.15, true, R);
-      this.halfHead(sk, h.x + f * this.open * 4, h.y + lift * 0.5, f * this.open * 0.5, false, R);
+      // The half that stays: the back of the skull, cut face towards us.
+      this.halfHead(sk, h.x - R * 0.16, h.y, -Math.PI / 2, true, R);
+      // The half that goes: out along the aim, lifted and turning over.
+      this.halfHead(
+        sk,
+        h.x + f * (part + R * 0.3), h.y - part * 0.55,
+        Math.PI / 2 + f * this.open * 0.9, true, R,
+      );
     } else {
-      // Straight down the middle: both halves swing out sideways and turn
-      // their cut faces to us, and what stands in the gap is a doorway rather
-      // than a slot.
-      const part = this.open * R * 1.45;
-      if (this.open > 0.08) {
+      // The band. A slot a fraction of the head deep, with the lid resting on
+      // top of it - the whole face does not have to come off to let a line of
+      // light out.
+      const gap = this.open * R * 0.55;
+      if (this.open > 0.06) {
         sk.polyPath([
-          { x: h.x - part * 0.72, y: h.y - R * 0.94 },
-          { x: h.x + part * 0.72, y: h.y - R * 0.9 },
-          { x: h.x + part * 0.72, y: h.y + R * 0.9 },
-          { x: h.x - part * 0.72, y: h.y + R * 0.94 },
+          { x: h.x - R * 0.9, y: h.y - gap },
+          { x: h.x + R * 0.92, y: h.y - gap * 0.86 },
+          { x: h.x + R * 0.9, y: h.y + gap * 0.86 },
+          { x: h.x - R * 0.88, y: h.y + gap },
         ], 1.2);
         c.fill();
       }
-      this.halfHead(sk, h.x - part, h.y, -Math.PI / 2 - this.open * 0.34, true, R);
-      this.halfHead(sk, h.x + part, h.y, Math.PI / 2 + this.open * 0.34, true, R);
+      this.halfHead(sk, h.x, h.y - gap, 0, true, R);
+      this.halfHead(sk, h.x, h.y + gap, 0, false, R);
+      // Two rails in the slot, so the band reads as mechanism rather than as
+      // a crack in his head.
+      c.strokeStyle = '#000';
+      for (const d of [-0.45, 0.45]) {
+        sk.line(
+          { x: h.x - R * 0.7, y: h.y + gap * d },
+          { x: h.x + R * 0.7, y: h.y + gap * d },
+          2, 1, 0.3,
+        );
+      }
+      c.fillStyle = '#000';
     }
 
     // The machine between them.

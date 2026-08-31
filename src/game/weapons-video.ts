@@ -7,6 +7,7 @@
  * the claws because of three parallel rips left in a wall. The numbers were
  * fitted to the pictures afterwards, never the other way round.
  */
+import type { MarkKind } from './impact';
 import {
   angleDelta, clamp, damp, easeOutCubic, easeOutQuint, hashNoise, lerp, rand, TAU, type Vec2,
 } from '../core/math';
@@ -168,6 +169,9 @@ const WIND_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 };
 
 export class Wind extends MeleeWeapon {
+  /** Wind cuts in threes here as well as on the way over. */
+  override get mark(): MarkKind { return 'claw'; }
+
   readonly id = 4;
   readonly name = 'WINDSLASH';
   readonly tagline = 'the air is the blade, and it reaches';
@@ -262,11 +266,49 @@ export class Wind extends MeleeWeapon {
       run: 0, ang: a, len: 300 + power * 260, power, spin: rand(0, TAU),
       reach: front ? Math.hypot(front.x - hands.x, front.y - hands.y) + 90 : 1200,
     };
+    this.gale(ctx, power);
     ctx.sfx('heavyswing', 0.5);
     ctx.shake(9 * power);
     ctx.flash(0.16 * power);
     ctx.sm.applyRecoil(0.7, a, 70 * power);
     ctx.sm.addGhostBurst(0.3);
+  }
+
+  /**
+   * The film's last thirty drawings, and the thing this weapon is for: the
+   * wind stops being cuts thrown at the wall and takes the whole picture.
+   * Blades the length of the screen cross it at angles, over the figure and
+   * everything else, in the same rake of threes the small ones use.
+   *
+   * They are only weather - the funnel behind them is what does the cutting -
+   * but nothing else in the game covers the paper like this, and in the source
+   * that coverage is the whole point of the shot.
+   */
+  private gale(ctx: WeaponCtx, power: number): void {
+    const W = ctx.terrain.w, H = ctx.terrain.h;
+    const a = ctx.sm.pose.aim;
+    const n = 4 + Math.round(power * 3);
+    for (let i = 0; i < n; i++) {
+      // Crossing the frame rather than radiating from him: a few along the
+      // aim, the rest raked steeply across it.
+      const steep = i % 2 === 1;
+      const ang = steep ? a + rand(-1.15, 1.15) : a + rand(-0.3, 0.3);
+      const len = W * rand(0.75, 1.15);
+      // Start well behind the frame so the blade is already full length when
+      // it crosses the middle of it.
+      const x = rand(-0.15, 0.55) * W - Math.cos(ang) * len * 0.25;
+      const y = rand(0.05, 0.95) * H - Math.sin(ang) * len * 0.25;
+      this.gusts.push({
+        x, y, ang,
+        len,
+        curl: rand(-0.45, 0.45),
+        off: 0,
+        width: 34 + power * 40,
+        life: rand(0.45, 0.8), max: 0.8,
+        seed: Math.floor(rand(0, 9999)),
+      });
+    }
+    if (this.gusts.length > 40) this.gusts.splice(0, this.gusts.length - 40);
   }
 
   /** Where the funnel is anchored: between his hands, out along the aim. */
@@ -483,8 +525,10 @@ export class Wind extends MeleeWeapon {
     for (const g of this.ambient) this.drawGust(sk, g);
     c.globalAlpha = 1;
     c.strokeStyle = '#000';
-    c.globalAlpha = 0.34 + this.gather * 0.5;
-    c.lineWidth = 2 + this.gather * 1.6;
+    // Full-strength ink, kept quiet by the width of the pen rather than by a
+    // wash of grey: the same rule the gusts follow.
+    c.globalAlpha = 1;
+    c.lineWidth = 1.5 + this.gather * 1.8;
     const n = 4 + Math.round(this.gather * 5);
     for (let i = 0; i < n; i++) {
       // Ribbons of air sweeping round him, tighter and faster as he pulls
@@ -503,15 +547,14 @@ export class Wind extends MeleeWeapon {
     }
     // While it is gathering the air is coming *in*, hard.
     if (this.gather > 0.05) {
-      c.globalAlpha = this.gather * 0.8;
-      c.lineWidth = 2.6;
+      c.lineWidth = 1.6 + this.gather * 1.4;
       for (let i = 0; i < 9; i++) {
         const a = (i / 9) * TAU + ctx.time * 1.4;
         const r0 = 210 * (1 - ((ctx.time * 1.3 + i * 0.11) % 1)) * this.gather + 70;
         sk.scrawl(
           { x: cx + Math.cos(a) * (r0 + 70), y: cy + Math.sin(a) * (r0 + 70) },
           { x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0 },
-          2.6, 14, 3,
+          1.6 + this.gather * 1.4, 14, 3,
         );
       }
     }
@@ -531,9 +574,16 @@ export class Wind extends MeleeWeapon {
   }
 
   /**
-   * One curl of air: a tapered ribbon bent along its own travel, with a couple
-   * of thinner ones trailing it. Everything about it curves - a wind drawn as
-   * straight lines is a speed line, and this has to read as air.
+   * One cut of air, and in the source that is a **claw**: three tapered blades
+   * side by side, evenly spaced, all bent through the same curve, raked across
+   * the paper together. Confirmed against the film - the wind character's cuts
+   * come in threes, and the frames where the screen inverts show three white
+   * parallel curves and nothing else.
+   *
+   * A single fat ribbon with two hairlines trailing it, which is what this was,
+   * reads as one gust of something. Three of a weight read as a slash.
+   * Everything about them curves, too - a wind drawn as straight lines is a
+   * speed line.
    */
   private drawGust(sk: Sketch, g: Gust): void {
     const c = sk.ctx;
@@ -548,7 +598,11 @@ export class Wind extends MeleeWeapon {
     const L = g.len * (0.75 + run * 0.35);
     const bend = g.curl * L * 0.45;
 
-    c.globalAlpha = clamp(k * 2.6, 0, 1);
+    // No fade. Nothing in the source thins out to grey as it dies - a stroke
+    // is on the paper at full strength or it is not on the paper - so the
+    // life of a gust is spent on how *much* blade there is, never on how
+    // faint it is, and the last drawing of one is a hairline, not a ghost.
+    c.globalAlpha = 1;
     // A blade of wind in the reference is a long lens with the paper showing
     // through the middle of it and a heavy rim drawn down one side and only
     // half way up the other. The hairline strokes trailing it stay solid,
@@ -564,13 +618,34 @@ export class Wind extends MeleeWeapon {
       sk.ribbonPath(a0, ctrl, b0, w, 0.34, 0.8);
       c.fill();
     };
-    // A comma: fat a third of the way along, hooking to a point at the tip.
-    blade(at(0, 0), at(L * 0.5, bend * 0.7), at(L, bend), g.width * (0.28 + k * 0.34), g.seed);
-    for (let i = 0; i < 2; i++) {
-      const o = (i === 0 ? 1 : -1) * g.width * (0.7 + Math.abs(hashNoise(g.seed + i, sk.boil)) * 0.5);
-      const l = L * (0.45 + Math.abs(hashNoise(g.seed + i * 7, sk.boil)) * 0.4);
-      hair(at(L * 0.12, o), at(L * 0.4, o + bend * 0.5), at(l, o * 0.4 + bend * 0.8),
-        g.width * 0.14 * (0.4 + k));
+    // The claw. Three blades across the gust's own width, the middle one a
+    // little the longest and the fattest so the set has a lead finger, each
+    // one a comma - fat a third of the way along, hooking to a point at the
+    // tip. They share the bend, which is what makes them read as one gesture
+    // rather than three gusts that happen to be near each other.
+    const gap = g.width * 0.66;
+    for (let i = 0; i < 3; i++) {
+      const rank = i - 1;                       // -1, 0, 1 across the rake
+      const o = rank * gap;
+      // Staggered ends: a rake is not three lines cut off along a ruler.
+      const back = L * (0.02 + Math.abs(rank) * 0.1)
+        + hashNoise(g.seed + i * 5, sk.boil) * L * 0.04;
+      const tip = L * (1 - Math.abs(rank) * 0.12)
+        + hashNoise(g.seed + i * 9, sk.boil) * L * 0.05;
+      const w = g.width * (0.05 + k * 0.4) * (rank === 0 ? 1 : 0.78);
+      blade(
+        at(back, o),
+        at((back + tip) * 0.5, o + bend * 0.7),
+        at(tip, o * 0.55 + bend),
+        w, g.seed + i * 31,
+      );
+    }
+    // One hairline shed off the outside of the rake, which the film does on
+    // about every other cut.
+    if (Math.abs(hashNoise(g.seed, sk.boil)) > 0.35) {
+      const o = gap * (hashNoise(g.seed + 3, sk.boil) > 0 ? 2.1 : -2.1);
+      hair(at(L * 0.16, o), at(L * 0.5, o + bend * 0.6), at(L * 0.8, o * 0.5 + bend * 0.9),
+        g.width * 0.12 * (0.4 + k));
     }
   }
 
@@ -659,6 +734,9 @@ const SALVO_HOLD = 0.5;
 const SALVO_SIZE = 10;
 
 export class MissilePods extends Weapon {
+  /** A charge going off, every time. */
+  override get mark(): MarkKind { return 'bloom'; }
+
   readonly id = 9;
   readonly name = 'ROCKETEER';
   readonly tagline = 'three out the front, or ten off his back';
@@ -699,11 +777,11 @@ export class MissilePods extends Weapon {
   // that contrast is how you read at a glance which end is which.
 
   /** How long the shoulder block is, and how deep it stands. */
-  private readonly blockLen = 78;
-  private readonly blockHalf = 18;
+  private readonly blockLen = 104;
+  private readonly blockHalf = 11;
 
   /** Perpendicular offset of front port `i` on the face of the block. */
-  private frontOffset(i: number): number { return (i - 1) * 8 + 3; }
+  private frontOffset(i: number): number { return (i - 1) * 5.5 + 1.5; }
 
   /** The mouth of front port `i`, on the face of the block. */
   private frontMouth(ctx: WeaponCtx, i: number): Vec2 {
@@ -859,7 +937,10 @@ export class MissilePods extends Weapon {
       const ca = Math.cos(a), sa = Math.sin(a);
       // Thick enough that you can believe a rocket comes out of one. They
       // were rails; they are tubes, and a tube has a bore.
-      const half = 12 - (i % 2) * 2.2;
+      // Straws, not planks. In the source these are thin enough that four of
+      // them fanned off his back still read as four separate lines against a
+      // head only twice their width.
+      const half = 7 - (i % 2) * 1.4;
       const at = (d: number, o: number): Vec2 =>
         ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
       const rail = [at(4, -half), at(len, -half * 0.88), at(len, half * 0.88), at(4, half)];
@@ -904,26 +985,31 @@ export class MissilePods extends Weapon {
     const H = this.blockHalf;
     c.save();
     c.strokeStyle = '#000';
-    // The block: short, deep and *screened*, so it reads solid against the
-    // bare rails behind him. The one shape in the rig with any weight to it.
+    // The launcher he is actually holding: a long tube laid over the shoulder,
+    // running well past his head, banded down its length like a ladder. The
+    // source draws it as a strip with cross bars rather than as a solid block
+    // - a screened slab that size reads as a suitcase, and the length is what
+    // says the thing is a launcher at all.
     const block = [at(14, -H), at(14 + L, -H * 0.86), at(14 + L, H * 0.86), at(14, H)];
     c.fillStyle = '#fff';
     sk.polyPath(block, 0.9);
     c.fill();
-    c.fillStyle = sk.screenTone();
-    c.fill();
-    sk.poly(block, 3.4, false, 0.9);
+    sk.poly(block, 3.2, false, 0.9);
+    for (let i = 1; i <= 5; i++) {
+      const d = 14 + (L * i) / 6;
+      const hh = H * (1 - (i / 6) * 0.14);
+      sk.line(at(d, -hh), at(d, hh), 2.2, 1, 0.4);
+    }
     // Three ports across its face, each a black slot: this is the end a
     // missile actually leaves by, and it has to be obvious which end that is.
     c.fillStyle = '#000';
     for (let i = 0; i < 3; i++) {
       const o = this.frontOffset(i);
-      sk.polyPath([at(14 + L - 9, o - 3.6), at(14 + L + 3, o - 3.6),
-        at(14 + L + 3, o + 3.6), at(14 + L - 9, o + 3.6)], 0.5);
+      sk.polyPath([at(14 + L - 8, o - 2.6), at(14 + L + 3, o - 2.6),
+        at(14 + L + 3, o + 2.6), at(14 + L - 8, o + 2.6)], 0.5);
       c.fill();
     }
-    // A rib across the top of it and the strap over his shoulder.
-    sk.line(at(14 + L * 0.4, -H), at(14 + L * 0.4, H), 2.4, 1, 0.5);
+    // The strap over his shoulder.
     sk.line(at(12, -H * 0.9), at(-8, -H * 0.2), 3.2, 1, 0.6);
 
     if (this.launch > 0.02) {
@@ -994,6 +1080,9 @@ interface Sigil {
 }
 
 export class ArcaneStaff extends Weapon {
+  /** The orbs go in like rounds; the charged beam runs through. */
+  override get mark(): MarkKind { return this.beam > 0 ? 'pierce' : 'spark'; }
+
   readonly id = 10;
   readonly name = 'MAGE';
   readonly tagline = 'four bolts, or one very wide beam';
@@ -1524,6 +1613,9 @@ const SEAL_TAP = 0.28;
 const BREATH_TIME = 0.55;
 
 export class Shinobi extends Weapon {
+  /** A thrown blade pricks; the breath blooms. */
+  override get mark(): MarkKind { return this.breath > 0 ? 'bloom' : 'spark'; }
+
   readonly id = 11;
   readonly name = 'SHINOBI';
   readonly tagline = 'two blades, or one very large breath';
@@ -1999,6 +2091,9 @@ interface Arc {
 }
 
 export class Thunderbolt extends Weapon {
+  /** Legs that kink and fork where the charge earths itself. */
+  override get mark(): MarkKind { return 'bolt'; }
+
   readonly id = 12;
   readonly name = 'THUNDERBOLT';
   readonly tagline = 'bolts that skip, or all of it at once';
@@ -2319,9 +2414,14 @@ const ROD_ANGLES = [-2.35, -0.95, 0.95, 2.35];
  * the trigger does depends entirely on whether his feet are on the floor.
  */
 export class Mecha extends Weapon {
+  /** The forearm blade cuts; the palm gun and the rods run through. */
+  override get mark(): MarkKind { return this.slashing ? 'slash' : 'pierce'; }
+
   readonly id = 13;
   readonly name = 'MECHA';
   readonly tagline = 'wings out — blade below, guns above';
+  /** The wings are not decoration: with them out he covers ground faster. */
+  override readonly speedMul = 1.32;
   override auto = true;
   override cooldown = 0.1;
 
@@ -2582,9 +2682,12 @@ export class Mecha extends Weapon {
     const n = 5;
     for (let i = 0; i < n; i++) {
       const t = i / (n - 1);
-      const a = back + (f > 0 ? 1 : -1) * ((-0.95 + t * 1.55) * (0.7 + sp * 0.5) + flap * (1 - t * 0.6));
-      const L = (44 + Math.sin(t * Math.PI) * 30) * (0.82 + sp * 0.42);
-      const w = 8 - t * 3;
+      const a = back + (f > 0 ? 1 : -1) * ((-1.05 + t * 1.75) * (0.78 + sp * 0.48) + flap * (1 - t * 0.6));
+      // Big. Folded they still have to be the first thing you see about him,
+      // which is what the source's mechanical wings are - they read from the
+      // silhouette before the blade or the guns do.
+      const L = (66 + Math.sin(t * Math.PI) * 42) * (0.86 + sp * 0.4);
+      const w = 11 - t * 3.6;
       const ca = Math.cos(a), sa = Math.sin(a);
       const at = (d: number, o: number): Vec2 => ({ x: root.x + ca * d - sa * o, y: root.y + sa * d + ca * o });
       const feather = [at(0, -w * 0.6), at(L * 0.68, -w), at(L, -w * 0.2), at(L * 0.74, w * 0.6), at(0, w * 0.6)];

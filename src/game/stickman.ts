@@ -286,6 +286,12 @@ export class Stickman {
   gaitPower = 0;
   /** 0..1 blend into the flat-out sprint animation. */
   sprintT = 0;
+  /**
+   * What the power in his hands does to how fast he covers ground. Most of
+   * them leave it alone; the winged one does not, and in the film that machine
+   * plainly moves quicker than he does on foot.
+   */
+  speedMul = 1;
   private halfStride = 0;
   /** True on the frame a foot plants, so the game can kick up dust. */
   justStepped = false;
@@ -567,12 +573,12 @@ export class Stickman {
     // same jump without one, which it must never do.
     if (!this.onGround) {
       const drift = this.vel.y < 0 ? 0 : this.stallT;
-      return AIR_SPEED * Math.max(0.4, push) * lerp(1, AIR_ATTACK_DRIFT, drift);
+      return AIR_SPEED * Math.max(0.4, push) * lerp(1, AIR_ATTACK_DRIFT, drift) * this.speedMul;
     }
     const runT = smoothstep(clamp(push / RUN_PUSH, 0, 1));
     const sprintT = clamp((push - RUN_PUSH) / (1 - RUN_PUSH), 0, 1);
     const base = lerp(WALK_SPEED * 0.55, RUN_SPEED, runT) + (SPRINT_SPEED - RUN_SPEED) * sprintT;
-    return base * crouch;
+    return base * crouch * this.speedMul;
   }
 
   private landVel = 0;
@@ -848,8 +854,12 @@ export class Stickman {
     // Torso lean: into the run (harder the faster he goes), back under recoil,
     // and whatever the current stance asks for on top.
     const stanceLean = (this.stance?.lean ?? 0) * this.facing * this.stanceW;
+    // The sprint's share of this is deliberately enormous. A flat-out dash in
+    // the source is not a run with a tilt on it: the spine goes over towards
+    // the horizontal with the head out in front at hip height, which is a
+    // pose, not a lean. Walking and running keep the modest tilt they had.
     const targetLean =
-      (this.vel.x / RUN_SPEED) * (0.17 + this.sprintT * 0.2)
+      (this.vel.x / RUN_SPEED) * (0.17 + this.sprintT * 0.56)
       - Math.cos(this.recoilAngle) * this.recoil * 0.16
       + (this.state === 'wallslide' ? -this.onWall * 0.16 : 0)
       + stanceLean;
@@ -912,6 +922,8 @@ export class Stickman {
     const stanceHip = (this.stance?.hip ?? 0) * this.stanceW;
     const target = (this.crouching ? CROUCH_HIP : STAND_HIP)
       - this.squash * 10 - bobbing - this.landSquat * 15 + airTuck + stanceHip
+      // A dash gets under itself as well as over: hips down, spine over.
+      - this.sprintT * 13
       // Both ends of a jump push the hips away from the feet: he leaves the
       // floor at full stretch and reaches for it again on the way back down.
       + this.takeoff * 5 + this.landPrep * 7
@@ -1320,8 +1332,13 @@ export class Stickman {
     c.lineCap = 'round';
     c.lineJoin = 'round';
 
-    const LIMB = 4.0 * weight;
-    const BODY = 4.6 * weight;
+    // Heavier than a line needs to be, on purpose. In the source a limb is
+    // drawn about two fifths as wide as the head is across, which is a very
+    // fat pen for a figure that size, and it is most of why those drawings
+    // read as ink on paper rather than as wireframe. Ours used to be a
+    // quarter of that and the figure went spidery the moment he moved.
+    const LIMB = 5.7 * weight;
+    const BODY = 6.4 * weight;
 
     // Back limbs first so the front arm and leg read on top.
     const backIsL = p.facing > 0;
@@ -1343,7 +1360,7 @@ export class Stickman {
     // Head, drawn as a rough polygon the way these figures always are.
     if (!this.headHidden) {
       sk.head(p.head.x, p.head.y, HEAD_R * this.headScale,
-        p.aim * 0.12 + p.bodyAngle, 4.4 * weight, 10);
+        p.aim * 0.12 + p.bodyAngle, 6.1 * weight, 10);
     }
 
     // Hips and shoulders get a short bar so the joints do not look pinched.

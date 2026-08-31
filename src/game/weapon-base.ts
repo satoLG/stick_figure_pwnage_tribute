@@ -1,6 +1,7 @@
 import type { SfxName } from '../core/audio';
 import { clamp, easeOutCubic, easeOutQuint, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
+import type { MarkKind } from './impact';
 import type { Particles } from './particles';
 import type { Projectile } from './projectiles';
 import { ARM_LEN, type HandTargets, type Stance, type Stickman } from './stickman';
@@ -19,8 +20,12 @@ export interface WeaponCtx {
   invert(seconds: number): void;
   /** The converging fan of lines that punctuates a landed blow. */
   hit(x: number, y: number, dir: number, power?: number): void;
-  /** Stop the world for a couple of frames, so the impact pose can be read. */
-  freeze(frames: number): void;
+  /**
+   * Stop the world for `drawings` of the source's 15Hz clock, so the
+   * impact pose can be read. Stored as seconds in `Game.freezeT` and
+   * converted back via `PICTURE_FPS` in `decayEffects`.
+   */
+  freeze(drawings: number): void;
   /** Run something once, `seconds` from now - a round arriving, for instance. */
   after(seconds: number, fn: () => void): void;
   sfx(name: SfxName, pitch?: number): void;
@@ -217,6 +222,20 @@ export abstract class Weapon {
    * does not.
    */
   readonly ranged: boolean = true;
+
+  /**
+   * The shape this power's blows leave on the paper.
+   *
+   * The film never draws the same impact twice for two different powers - a
+   * sword leaves the arc it cut, a hammer opens a hole with spikes all round
+   * it, a round going in leaves a tight star - so one shared fan for fourteen
+   * powers reads as a stamp pasted over whatever just happened. Weapons whose
+   * attacks differ from one another override `mark` on the fly.
+   */
+  get mark(): MarkKind { return 'splinter'; }
+
+  /** How fast this power lets him move, as a multiple of his own speed. */
+  readonly speedMul: number = 1;
 
   /** Held-trigger weapons keep firing; the rest need a fresh click. */
   auto = false;
