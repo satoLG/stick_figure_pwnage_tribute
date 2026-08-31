@@ -410,8 +410,9 @@ export abstract class MeleeWeapon extends Weapon {
     // Inverting the whole screen is the loudest thing this game can do, so it
     // is spent only on a charged special - the held chain's heavy finishers.
     if (heavy && this.mode === 'hold') ctx.invert(0.16);
-    // One drawn frame of held time on a light hit, two on a heavy one. At
-    // fifteen frames a second that is already 66 and 133ms of dead stop.
+    // One drawing of held time on a light hit, two on a heavy one. At
+    // the source's 15Hz clock that is 67ms and 133ms of dead stop; see
+    // WeaponCtx.freeze and Game.decayEffects for the picture-clock math.
     ctx.freeze(heavy ? 2 : 1);
     if (mv.quake) this.quake(ctx, at, mv.quake);
 

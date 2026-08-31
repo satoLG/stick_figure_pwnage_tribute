@@ -49,6 +49,22 @@ const INVERT_DRAWINGS = 1;
 const INVERT_TIME = INVERT_DRAWINGS / 15;
 
 /**
+ * How many of the film's drawings the swipe card holds for. The card is the
+ * one place the source deliberately throws the picture away, and that pause
+ * is in drawings, not seconds.
+ */
+const SWIPE_DRAWINGS = 2;
+const SWIPE_TIME = SWIPE_DRAWINGS / 15;
+
+/**
+ * The source's own cadence. All "drawings of time" in this file (freeze,
+ * invert, swipe) are measured against this clock, and converted from the
+ * world clock in `decayEffects` so a hold is the same number of drawings
+ * whether the world runs at 15 or 60 fps.
+ */
+const PICTURE_FPS = 15;
+
+/**
  * How far the aiming stick has to go to read as a swing, and how far back it
  * has to come to stop being one. The gap between them is what stops a stick
  * resting on the line from machine-gunning.
@@ -94,9 +110,15 @@ export class Game {
   private particles = new Particles();
   private impacts = new ImpactFx();
   /**
-   * Held time left after a hit, in seconds. Stopping the world for a couple of
-   * drawings is what turns a swing into a blow: it gives the eye a still frame
-   * to read the impact pose in, which no amount of extra ink does.
+   * Held time left after a hit, in *seconds of the picture clock*. Stopping
+   * the world for a couple of drawings is what turns a swing into a blow: it
+   * gives the eye a still frame to read the impact pose in, which no amount
+   * of extra ink does.
+   *
+   * `freezeT` lives on the **picture clock** (15Hz) so a freeze lasts the
+   * same number of *drawings* whether the world happens to be running at
+   * 60fps for an A/B or at 15fps for the source's cadence. The convertion
+   * is in `decayEffects` (`pictureDt`).
    */
   private freezeT = 0;
   /** Damage waiting on its own round to arrive, so nothing lands early. */
@@ -420,7 +442,9 @@ export class Game {
         // would be a strobe rather than punctuation.
         if ((power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
       },
-      freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
+      // `drawings` is in the source's 15Hz clock, not seconds. The
+      // convertion to a per-frame decrement lives in `decayEffects`.
+      freeze: (drawings) => { this.freezeT = Math.max(this.freezeT, drawings / PICTURE_FPS); },
       after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
@@ -487,7 +511,11 @@ export class Game {
     // Held time: the world stops, the picture stays up, the screen keeps
     // shaking. Input still reaches the buffer, it just cannot move anything yet.
     if (this.freezeT > 0) {
-      this.freezeT = Math.max(0, this.freezeT - rawDt);
+      // `freezeT` is on the picture clock; convert this frame's wall-clock
+      // `rawDt` so the freeze lasts the same number of drawings regardless
+      // of `animFps`. The actual decay for the *rest* of the effects runs
+      // again in `decayEffects` below, so we don't double-count here.
+      this.freezeT = Math.max(0, this.freezeT - rawDt * (PICTURE_FPS / this.animFps));
       this.decayEffects(rawDt);
       this.render(rawDt);
       this.input.endFrame(rawDt);
@@ -898,8 +926,9 @@ export class Game {
    * flicker and the source never does that.
    */
   private swipe(x: number, y: number, dir: number, power: number): void {
-    // Two of the film's drawings' worth, played out at sixty.
-    this.swipeT = 2 / 15;
+    // `SWIPE_DRAWINGS` drawings of the source's cadence, played out at whatever
+    // `animFps` is current (see `decayEffects` for the picture-clock math).
+    this.swipeT = SWIPE_TIME;
     this.swipeDir = dir;
     this.swipeAt = vec(x, y);
     this.swipePower = power;
@@ -961,11 +990,26 @@ export class Game {
     this.invertT = Math.max(this.invertT, INVERT_TIME);
   }
 
+  /**
+   * Decay per-frame screen effects.
+   *
+   * Two clocks are in play:
+   * - wall clock (`dt`): shake, flash bank, particles. These are about
+   *   *how the picture feels* and should follow the real frame rate.
+   * - picture clock (PICTURE_FPS, 15Hz): invert, swipe, freeze. These are
+   *   the source's drawings, and a card that is "two drawings" should stay
+   *   two drawings whether the world is at 15 or 60 fps. The world-clock
+   *   `dt` is scaled by `PICTURE_FPS / animFps` so a `dt` of 1/60s with
+   *   `animFps=60` produces the same picture-time as a 1/15s step with
+   *   `animFps=15`.
+   */
   private decayEffects(dt: number): void {
     this.shakeAmt = damp(this.shakeAmt, 0, 9, dt);
     this.flashAmt = Math.max(0, this.flashAmt - dt * 3.4);
-    this.invertT = Math.max(0, this.invertT - dt);
-    this.swipeT = Math.max(0, this.swipeT - dt);
+    const pictureDt = dt * (PICTURE_FPS / this.animFps);
+    this.freezeT = Math.max(0, this.freezeT - pictureDt);
+    this.invertT = Math.max(0, this.invertT - pictureDt);
+    this.swipeT = Math.max(0, this.swipeT - pictureDt);
     const s = this.shakeAmt;
     this.shakeOff = {
       x: hashNoise(1, Math.floor(this.time * 90)) * s,
