@@ -25,6 +25,30 @@ type Phase = 'menu' | 'playing' | 'won';
 const WIN_THRESHOLD = 0.994;
 
 /**
+ * Flash -> inversion rule (PR #8 follow-up, see issue #12).
+ *
+ * The film never draws a half-inversion: the paper is white or it is black,
+ * never a grey wash. So a stream of small flashes does not lift the screen
+ * in proportion - it banks up silently, and the moment it crosses the
+ * threshold it spends itself on a single, full-strength inverted frame and
+ * resets. This is the "one or zero" feel; the magic numbers below are the
+ * shape of that feel.
+ */
+
+/** How much flash is needed to trigger a single inverted drawing. */
+const FLASH_BANK = 0.45;
+
+/**
+ * How long the inverted frame stays on screen, in *pictures* (15Hz clock).
+ * One drawing is the short end of the source's punctuation; two gives the
+ * eye a chance to land on the white stroke before the scene comes back.
+ * Held as a constant rather than computed so a future change to `animFps`
+ * does not silently stretch or compress the inversion.
+ */
+const INVERT_DRAWINGS = 1;
+const INVERT_TIME = INVERT_DRAWINGS / 15;
+
+/**
  * How far the aiming stick has to go to read as a swing, and how far back it
  * has to come to stop being one. The gap between them is what stops a stick
  * resting on the line from machine-gunning.
@@ -922,12 +946,19 @@ export class Game {
    * threshold it spends itself on a single inverted drawing and resets, which
    * is the only form the source has for it. A run of small flashes therefore
    * reads as one hard blink instead of a grey haze that never quite clears.
+   *
+   * The reset-to-zero is deliberate (issue #12). Banking past `FLASH_BANK`
+   * does not produce a bigger blink - it produces the same blink and throws
+   * the rest of the light away. That is what the source does: the paper is
+   * white or it is black, never a wash. The `swipe` card (set elsewhere for
+   * power >= 1.5) is a separate path and takes precedence in the render loop;
+   * if both fire on the same blow the swipe is the only thing drawn.
    */
   private addFlash(a: number): void {
     this.flashAmt += a;
-    if (this.flashAmt < 0.45) return;
+    if (this.flashAmt < FLASH_BANK) return;
     this.flashAmt = 0;
-    this.invertT = Math.max(this.invertT, 1 / 15);
+    this.invertT = Math.max(this.invertT, INVERT_TIME);
   }
 
   private decayEffects(dt: number): void {
