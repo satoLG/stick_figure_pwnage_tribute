@@ -183,6 +183,8 @@ export class Fists extends MeleeWeapon {
   private smears: Smear[] = [];
   /** Seconds left on the interference the jump into the barrage leaves. */
   private swirl = 0;
+  /** Seconds the barrage runs on pwnage's account rather than a trigger. */
+  private forced = 0;
   /** Fractional smear budget, so the rate is per second and not per frame. */
   private smearAcc = 0;
 
@@ -244,7 +246,8 @@ export class Fists extends MeleeWeapon {
     }
     this.swirl = Math.max(0, this.swirl - ctx.dt);
 
-    const running = held && this.specialHeld > BARRAGE_HOLD && !this.spent;
+    this.forced = Math.max(0, this.forced - ctx.dt);
+    const running = (this.forced > 0 || (held && this.specialHeld > BARRAGE_HOLD)) && !this.spent;
     if (running) {
       // He goes into it off a jump. In the film the barrage does not start
       // from a stance: he leaves the floor, the picture comes apart around
@@ -308,6 +311,14 @@ export class Fists extends MeleeWeapon {
     this.punchT = rate;
     this.armSide = -this.armSide;
     this.throwPunch(ctx, speed);
+  }
+
+  /** The barrage, from its first blow, for as long as it takes to spend it. */
+  override special(_ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.spent = false;
+    this.barrageT = 0;
+    this.forced = BARRAGE_MAX;
   }
 
   /**

@@ -794,6 +794,15 @@ export class Titan extends Weapon {
 
   // ------------------------------------------------------------- attacking ---
 
+  /** The collapse sequence, from its first frame: it needs no wind-up. */
+  override special(ctx: WeaponCtx): void {
+    if (this.up < 0.5) { this.up = 1; this.birth = BIRTH_TOTAL; }
+    this.timer = 0;
+    this.phase = 'aim';
+    this.phaseT = 0;
+    ctx.sfx('charge', 0.8);
+  }
+
   protected release(ctx: WeaponCtx): void {
     if (this.phase !== 'idle' || this.up < 0.9) { this.timer = 0.2; return; }
     // Held, it keeps the beam out. A machine that size cutting with its visor
@@ -891,7 +900,9 @@ export class Titan extends Weapon {
     }
     if (this.phase === 'aim') {
       this.phaseT += ctx.dt;
-      if (!held) this.phase = 'idle';
+      // Once pwnage has opened the sequence it runs on its own; only a
+      // player-driven wind-up is cancelled by letting go.
+      if (!held && !this.specialOk) this.phase = 'idle';
       ctx.shake(1.4);
       return;
     }
@@ -1459,6 +1470,7 @@ export class Titan extends Weapon {
 // 17. SPLIT HEAD
 // ---------------------------------------------------------------------------
 /** Seconds of held trigger before the skull opens all the way. */
+const SPLIT_SPECIAL = 2.2;
 const SPLIT_HOLD = 0.5;
 /** Half-width of the cutting beam. It is meant to be seen from across the room. */
 /**
@@ -1489,6 +1501,8 @@ export class SplitHead extends Weapon {
   private lensT = 0;
   /** 0..1 how far the split has turned from the hatch into the full opening. */
   private wide = 0;
+  /** Seconds the beam is running on pwnage's account rather than a trigger. */
+  private forced = 0;
   /** Seconds of beam still running, and where it is pointing. */
   private beamT = 0;
   private beamAngle = 0;
@@ -1571,13 +1585,26 @@ export class SplitHead extends Weapon {
     if (Math.random() < 0.4) ctx.particles.debris(hit.x, hit.y, 1, 220, a + Math.PI, 2);
   }
 
+  /**
+   * The cutting beam, opened and running on its own for a couple of seconds -
+   * long enough to walk it across the stone - rather than only for as long as
+   * a trigger is down.
+   */
+  override special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.forced = SPLIT_SPECIAL;
+    this.beamT = 0.09;
+    ctx.sfx('beam', 0.9);
+  }
+
   protected override tick(ctx: WeaponCtx, held: boolean): void {
+    this.forced = Math.max(0, this.forced - ctx.dt);
     this.lens = Math.max(0, this.lens - ctx.dt * 5);
     this.lensT = Math.max(0, this.lensT - ctx.dt);
     this.volley = Math.max(0, this.volley - ctx.dt);
     this.beamT = Math.max(0, this.beamT - ctx.dt);
 
-    const cutting = held && this.specialHeld > SPLIT_HOLD;
+    const cutting = this.forced > 0 || (held && this.specialHeld > SPLIT_HOLD);
     if (cutting) { this.beamT = 0.09; this.runBeam(ctx); }
 
     // Cracked open for a salvo, and right open the other way for the beam.

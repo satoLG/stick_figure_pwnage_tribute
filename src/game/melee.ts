@@ -223,6 +223,22 @@ export abstract class MeleeWeapon extends Weapon {
     return 'ground';
   }
 
+  /**
+   * A blade's special is the chain it keeps for a held trigger, and pwnage
+   * opens on the first swing of it rather than on a wind-up: the mode is
+   * locked to `hold` and the move comes out on this frame.
+   */
+  override special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.mode = 'hold';
+    this.chain = 0;
+    this.holdLock = true;
+    const list = this.sets.hold.length > 0 ? this.sets.hold : this.sets.ground;
+    const mv = list[0] ?? FALLBACK;
+    this.chain = 1;
+    this.startMove(ctx, mv);
+  }
+
   protected override release(ctx: WeaponCtx): void {
     const mode = this.pickMode(ctx);
     if (mode !== this.mode) { this.mode = mode; this.chain = 0; }

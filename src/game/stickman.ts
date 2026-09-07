@@ -562,6 +562,23 @@ export class Stickman {
     this.animate(dt, terrain);
   }
 
+  /**
+   * Point him at something this instant, without waiting for the next update.
+   *
+   * Only pwnage uses it: the mode squares him up on the wall and fires his
+   * special on the same frame, and an aim that arrives a frame later would
+   * send that opening wherever the crosshair happened to be sitting.
+   */
+  setAim(at: Vec2): void {
+    const dx = at.x - this.pos.x;
+    const dy = at.y - (this.pos.y - STAND_HIP - TORSO * 0.55);
+    if (Math.abs(dx) > 6) this.facing = dx >= 0 ? 1 : -1;
+    this.aim = Math.atan2(dy, dx);
+    this.aimVisual = this.aim;
+    this.pose.aim = this.aim;
+    this.pose.facing = this.facing;
+  }
+
   /** Walk / run / sprint blended out of one analog magnitude. */
   private groundTopSpeed(push: number): number {
     const crouch = this.crouching ? 0.45 : 1;

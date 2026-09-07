@@ -908,8 +908,9 @@ export class Game {
     // second, which is past every weapon's own held-move threshold, and any
     // charge it needed is already full.
     const forced = this.specialHold > 0;
-    // The special is only ever on offer while the mode is opening.
-    this.weapon.specialOk = forced;
+    // The special is on offer for the whole of pwnage, which is what the
+    // panel says: the mode opens on one and the trigger buys more of them.
+    this.weapon.specialOk = this.pwnageT > 0;
     const firing = (!intent.wheelOpen && intent.firing) || forced;
     const pressed = (!intent.wheelOpen && intent.firePressed) || this.pwnageIn > 0.98;
     if (pressed) this.stats.shots++;
@@ -1109,7 +1110,21 @@ export class Game {
     this.pwnageIn = 1;
     this.specialHold = SPECIAL_HOLD;
     this.stress = 1;
+    // Straight ahead, and then off. The mode announces itself by the big move
+    // *happening* - not by handing the player a wound-up weapon and hoping
+    // they hold the button - so the aim is squared up on the wall for the
+    // opening and the weapon fires its special on this very frame.
+    this.terrain.bite = 1;
+    const face = this.sm.facing;
+    const aim = {
+      x: this.sm.pos.x + face * 900,
+      y: this.sm.center.y - 20,
+    };
+    this.sm.setAim(aim);
+    const wctx = this.makeCtx(1 / 60, aim);
+    this.weapon.specialOk = true;
     this.weapon.fillCharge();
+    this.weapon.special(wctx);
     audio.play('win', 0.7);
     this.shake(18);
     this.invertT = Math.max(this.invertT, INVERT_TIME);
@@ -1290,61 +1305,85 @@ export class Game {
   }
 
   /**
-   * The stress meter, along the bottom of the picture, and the button it turns
-   * into when it is full.
+   * The stress meter, and the pwnage panel beside it.
    *
-   * It lives down here rather than up in the HUD strip on purpose: it is about
-   * *him*, not about the wall, and the eye is already at his feet. The bar is
-   * the same hand-drawn box the wall meter uses so the two read as one set of
-   * furniture, and when it fills the word PWNAGE lands under it in a struck
-   * box that can be clicked, tapped or answered with `Q`.
+   * Both live along the bottom, because both are about *him* rather than about
+   * the wall, and the eye is already down at his feet. Two rules decide where
+   * exactly: the bar keeps to the left of centre, since the middle of the
+   * bottom edge belongs to the weapon pad on a phone, and everything pwnage
+   * sits over on the right, well clear of it.
    *
-   * While the mode is running the same bar drains, which is the clock.
+   * While the mode runs, the panel is the clock: the word, the seconds left
+   * counting down, and the line under it saying what the trigger now buys.
    */
   private drawStress(): void {
     const sk = this.sk;
     const c = this.ctx;
     const { w, h } = this.view;
     const k = this.hudK;
-    const barW = clamp(w * 0.34, 200, 420) * k;
-    const barH = 15 * k;
-    const x = (w - barW) / 2;
-    const y = h - 34 * k - this.safe.bottom;
+    const left = 34 * k + this.safe.left;
+    // Everything pwnage is over on the right, so the bar runs from the margin
+    // up to it. The weapon pad on a phone sits higher than this row, so the
+    // middle of the bottom edge is free after all - what had to be kept clear
+    // of it was the button, and that is what moved.
+    const bw = clamp(w * 0.24, 190, 320) * k;
+    const bh = 46 * k;
+    const bx = w - bw - 34 * k - this.safe.right;
+    const barW = Math.max(120, bx - 26 * k - left);
+    const barH = 24 * k;
+    const y = h - 44 * k - this.safe.bottom;
     const ink = y > this.terrain.groundTop ? '#fff' : '#000';
+    const label = clamp(w * 0.021, 14, 20) * k;
 
     c.save();
     c.strokeStyle = ink;
     c.fillStyle = ink;
-    c.lineWidth = 2.6;
+    c.lineWidth = 3.2;
     sk.polyPath([
-      { x, y }, { x: x + barW, y }, { x: x + barW, y: y + barH }, { x, y: y + barH },
+      { x: left, y }, { x: left + barW, y },
+      { x: left + barW, y: y + barH }, { x: left, y: y + barH },
     ], 1.2);
     c.stroke();
-    const fw = Math.max(0, (barW - 6) * clamp(this.stress, 0, 1));
+    const fw = Math.max(0, (barW - 8) * clamp(this.stress, 0, 1));
     if (fw > 1) {
-      const pts: Vec2[] = [{ x: x + 3, y: y + 3 }, { x: x + 3 + fw, y: y + 3 }];
+      const pts: Vec2[] = [{ x: left + 4, y: y + 4 }, { x: left + 4 + fw, y: y + 4 }];
       for (let i = 0; i <= 4; i++) {
-        pts.push({ x: x + 3 + fw + hashNoise(i, sk.boil) * 3, y: y + 3 + (i / 4) * (barH - 6) });
+        pts.push({ x: left + 4 + fw + hashNoise(i, sk.boil) * 3.5, y: y + 4 + (i / 4) * (barH - 8) });
       }
-      pts.push({ x: x + 3, y: y + barH - 3 });
-      sk.polyPath(pts, 1.1);
+      pts.push({ x: left + 4, y: y + barH - 4 });
+      sk.polyPath(pts, 1.2);
       c.fill();
     }
-    const size = clamp(w * 0.016, 11, 15) * k;
-    inkText(sk, this.pwnageT > 0 ? 'PWNAGE' : 'STRESS', x - 10 * k, y + barH * 0.78,
-      size, { align: 'right', color: ink, alpha: 0.85 });
+    // The word goes *inside* the bar, at its left end, knocked out of whatever
+    // is behind it - there is no room for a line of type above a bar this wide
+    // without it landing on the weapon readout.
+    const inside = fw > barW * 0.22 ? (ink === '#fff' ? '#000' : '#fff') : ink;
+    inkText(sk, this.pwnageT > 0 ? 'PWNAGE' : 'STRESS', left + 10 * k, y + barH * 0.72,
+      label * 0.82, { align: 'left', color: inside, alpha: 0.95, wobble: 0.7 });
+    // Full and waiting: the bar itself says so, in case the button is missed.
+    if (this.stress >= 1 && this.pwnageT <= 0 && Math.sin(this.time * 7) > 0) {
+      inkText(sk, 'FULL', left + barW - 10 * k, y + barH * 0.72, label * 0.82,
+        { align: 'right', color: ink === '#fff' ? '#000' : '#fff', wobble: 1 });
+    }
 
-    // The button. Only there with a full meter and the mode not running.
-    if (this.stress >= 1 && this.pwnageT <= 0) {
-      const bw = clamp(w * 0.2, 150, 280) * k;
-      const bh = 34 * k;
-      this.pwnageBtn = { x: (w - bw) / 2, y: y - bh - 12 * k, w: bw, h: bh };
-      // It breathes, so a full meter is never a still picture.
-      const pulse = 0.5 + Math.sin(this.time * 7) * 0.5;
+    // --- the panel on the right -------------------------------------------
+    const by = y + barH - bh;
+    if (this.pwnageT > 0) {
+      // Running: the word, the clock, and what the trigger is worth now.
+      const bink = by > this.terrain.groundTop ? '#fff' : '#000';
+      const shout = 1 + Math.sin(this.time * 26) * 0.04;
+      inkText(sk, `PWNAGE  ${this.pwnageT.toFixed(1)}S`, bx + bw / 2, by + bh * 0.44,
+        clamp(bh * 0.52, 18, 30) * shout, { color: bink, wobble: 1.5 });
+      inkText(sk, 'HOLD ATTACK FOR THE SPECIAL', bx + bw / 2, by + bh * 0.92,
+        clamp(bh * 0.26, 10, 15), { color: bink, alpha: 0.8, wobble: 0.6 });
+      this.pwnageBtn = { x: 0, y: 0, w: 0, h: 0 };
+    } else if (this.stress >= 1) {
+      this.pwnageBtn = { x: bx, y: by, w: bw, h: bh };
+      const pulse = Math.sin(this.time * 7) > 0;
       const hovered = this.device === 'desk' && hitRect(this.pwnageBtn, this.pointerWorld());
-      const bink = this.pwnageBtn.y > this.terrain.groundTop ? '#fff' : '#000';
-      inkButton(sk, this.pwnageBtn, 'PWNAGE MODE', hovered || pulse > 0.5,
-        clamp(bh * 0.5, 14, 22), bink);
+      const bink = by > this.terrain.groundTop ? '#fff' : '#000';
+      inkButton(sk, this.pwnageBtn, this.isTouch ? 'PWNAGE' : 'PWNAGE  ·  Q',
+        hovered || pulse, clamp(bh * 0.42, 15, 24), bink);
     } else {
       this.pwnageBtn = { x: 0, y: 0, w: 0, h: 0 };
     }
@@ -1386,7 +1425,9 @@ export class Game {
     const w2 = this.weapon;
     const compact = this.isTouch;
     const left = 44 * k + this.safe.left;
-    const baseY = compact ? topY + 58 * k : h - 62 * k - this.safe.bottom;
+    // The bottom row belongs to the stress meter now, so the weapon readout
+    // sits a line above it rather than sharing the space.
+    const baseY = compact ? topY + 58 * k : h - 108 * k - this.safe.bottom;
     // The bottom strip of the screen is the floor slab, which is solid black.
     // Anything printed down there has to be knocked out in white to be read.
     const ink = baseY > this.terrain.groundTop ? '#fff' : '#000';

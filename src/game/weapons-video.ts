@@ -253,6 +253,14 @@ export class Wind extends MeleeWeapon {
    * runs out along the aim, cutting as it travels - which is a whirlwind being
    * launched, rather than a scatter of slashes appearing on the wall.
    */
+  /** The gale, gathered to full and thrown on this frame. */
+  override special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.gather = 1;
+    this.heldFor = 99;
+    this.onLetGo(ctx);
+  }
+
   protected override onLetGo(ctx: WeaponCtx): void {
     if (this.heldFor <= GALE_HOLD || this.gather < 0.2) { this.gather = 0; return; }
     const power = 0.4 + this.gather * 0.6;
@@ -862,6 +870,13 @@ export class MissilePods extends Weapon {
   }
 
   /** Everything the pods have, off his back, at everything still standing. */
+  /** The salvo, loaded and away on this frame. */
+  override special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.load = 1;
+    this.salvo(ctx);
+  }
+
   private salvo(ctx: WeaponCtx): void {
     const f = ctx.sm.facing;
     this.launch = 1;
@@ -2556,6 +2571,15 @@ export class Mecha extends Weapon {
 
   protected override suppressFire(): boolean {
     return this.specialHeld > ROD_HOLD;
+  }
+
+  /** The rods, out and discharged on this frame rather than wound up to. */
+  override special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.rods = 1;
+    this.rodCharge = 1;
+    this.heldFor = 99;
+    this.onLetGo(ctx);
   }
 
   protected override onLetGo(ctx: WeaponCtx): void {

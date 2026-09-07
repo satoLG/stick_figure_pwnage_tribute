@@ -341,6 +341,32 @@ export abstract class Weapon {
   }
 
   /**
+   * Fire this weapon's special, now, at full strength.
+   *
+   * This is what opening pwnage does, and it has to *happen* rather than be
+   * arranged: the mode is announced by the big move going off, not by a
+   * weapon quietly deciding to wind one up. The default covers the two shapes
+   * most of the arsenal uses - a charged shot, and a move that goes off when a
+   * long hold is let go - and anything whose special is a sustained state of
+   * its own overrides this and starts that state directly.
+   */
+  special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.specialOk = true;
+    this.heldFor = 99;
+    if (this.chargeTime > 0) {
+      this.charge = 1;
+      this.startAnim();
+      this.release(ctx, 1);
+      this.timer = this.cooldown;
+      this.charge = 0;
+      this.chargeSfx = false;
+      return;
+    }
+    this.onLetGo(ctx);
+  }
+
+  /**
    * Hand this weapon a full charge and a clear cooldown, for the moment
    * pwnage opens. The game then holds the trigger down for a second on the
    * player's behalf, so whatever this weapon's held move is, it goes off.
