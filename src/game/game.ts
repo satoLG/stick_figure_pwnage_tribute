@@ -525,7 +525,7 @@ export class Game {
       // `rawDt` so the freeze lasts the same number of drawings regardless
       // of `animFps`. The actual decay for the *rest* of the effects runs
       // again in `decayEffects` below, so we don't double-count here.
-      this.freezeT = Math.max(0, this.freezeT - rawDt * (PICTURE_FPS / this.animFps));
+      this.freezeT = Math.max(0, this.freezeT - rawDt);
       this.decayEffects(rawDt);
       this.render(rawDt);
       this.input.endFrame(rawDt);
@@ -1026,20 +1026,24 @@ export class Game {
    * - wall clock (`dt`): shake, flash bank, particles. These are about
    *   *how the picture feels* and should follow the real frame rate.
    * - picture clock (PICTURE_FPS, 15Hz): invert, swipe, freeze. These are
-   *   the source's drawings, and a card that is "two drawings" should stay
-   *   two drawings whether the world is at 15 or 60 fps. The world-clock
-   *   `dt` is scaled by `PICTURE_FPS / animFps` so a `dt` of 1/60s with
-   *   `animFps=60` produces the same picture-time as a 1/15s step with
-   *   `animFps=15`.
+   *   the source's drawings, and a card that is "two drawings" should last as
+   *   long as two of the film's drawings do - 2/15 of a second - whether the
+   *   world is stepping at 15 or at 60.
+   *
+   * Which means they run on the wall clock too, because they are *already*
+   * stored as seconds: `SWIPE_DRAWINGS / 15` is the duration, and the count of
+   * drawings is only how it is authored. Scaling that by `PICTURE_FPS /
+   * animFps` on top held a one-drawing card for sixteen frames at sixty -
+   * a quarter of a second of black paper on every heavy blow, which is four
+   * times what the film does and reads as a stutter.
    */
   private decayEffects(dt: number): void {
     this.shakeAmt = damp(this.shakeAmt, 0, 9, dt);
     this.flashAmt = Math.max(0, this.flashAmt - dt * 3.4);
-    const pictureDt = dt * (PICTURE_FPS / this.animFps);
-    this.freezeT = Math.max(0, this.freezeT - pictureDt);
-    this.invertT = Math.max(0, this.invertT - pictureDt);
-    this.swipeT = Math.max(0, this.swipeT - pictureDt);
-    this.swipeCooldown = Math.max(0, this.swipeCooldown - pictureDt);
+    this.freezeT = Math.max(0, this.freezeT - dt);
+    this.invertT = Math.max(0, this.invertT - dt);
+    this.swipeT = Math.max(0, this.swipeT - dt);
+    this.swipeCooldown = Math.max(0, this.swipeCooldown - dt);
     const s = this.shakeAmt;
     this.shakeOff = {
       x: hashNoise(1, Math.floor(this.time * 90)) * s,
