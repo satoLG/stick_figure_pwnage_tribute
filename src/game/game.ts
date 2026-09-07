@@ -7,6 +7,7 @@ import { installer } from '../core/pwa';
 import { AimSolver, type AimMode } from '../ui/aim';
 import { cueWidth, drawStartCue, fitCueSize } from '../ui/cue';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
+import { settings } from '../core/settings';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
   drawProgress, focusRing, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
@@ -23,6 +24,46 @@ type Phase = 'menu' | 'playing' | 'won';
 
 /** The wall is never quite 100% clean; sweep the last slivers instead. */
 const WIN_THRESHOLD = 0.994;
+
+/**
+ * Flash -> inversion rule (PR #8 follow-up, see issue #12).
+ *
+ * The film never draws a half-inversion: the paper is white or it is black,
+ * never a grey wash. So a stream of small flashes does not lift the screen
+ * in proportion - it banks up silently, and the moment it crosses the
+ * threshold it spends itself on a single, full-strength inverted frame and
+ * resets. This is the "one or zero" feel; the magic numbers below are the
+ * shape of that feel.
+ */
+
+/** How much flash is needed to trigger a single inverted drawing. */
+const FLASH_BANK = 0.45;
+
+/**
+ * How long the inverted frame stays on screen, in *pictures* (15Hz clock).
+ * One drawing is the short end of the source's punctuation; two gives the
+ * eye a chance to land on the white stroke before the scene comes back.
+ * Held as a constant rather than computed so a future change to `animFps`
+ * does not silently stretch or compress the inversion.
+ */
+const INVERT_DRAWINGS = 1;
+const INVERT_TIME = INVERT_DRAWINGS / 15;
+
+/**
+ * How many of the film's drawings the swipe card holds for. The card is the
+ * one place the source deliberately throws the picture away, and that pause
+ * is in drawings, not seconds.
+ */
+const SWIPE_DRAWINGS = 1;
+const SWIPE_TIME = SWIPE_DRAWINGS / 15;
+
+/**
+ * The source's own cadence. All "drawings of time" in this file (freeze,
+ * invert, swipe) are measured against this clock, and converted from the
+ * world clock in `decayEffects` so a hold is the same number of drawings
+ * whether the world runs at 15 or 60 fps.
+ */
+const PICTURE_FPS = 15;
 
 /**
  * How far the aiming stick has to go to read as a swing, and how far back it
@@ -70,9 +111,15 @@ export class Game {
   private particles = new Particles();
   private impacts = new ImpactFx();
   /**
-   * Held time left after a hit, in seconds. Stopping the world for a couple of
-   * drawings is what turns a swing into a blow: it gives the eye a still frame
-   * to read the impact pose in, which no amount of extra ink does.
+   * Held time left after a hit, in *seconds of the picture clock*. Stopping
+   * the world for a couple of drawings is what turns a swing into a blow: it
+   * gives the eye a still frame to read the impact pose in, which no amount
+   * of extra ink does.
+   *
+   * `freezeT` lives on the **picture clock** (15Hz) so a freeze lasts the
+   * same number of *drawings* whether the world happens to be running at
+   * 60fps for an A/B or at 15fps for the source's cadence. The convertion
+   * is in `decayEffects` (`pictureDt`).
    */
   private freezeT = 0;
   /** Damage waiting on its own round to arrive, so nothing lands early. */
@@ -104,6 +151,13 @@ export class Game {
    * but the shape of the stroke, which is why the blow after it lands so hard.
    */
   private swipeT = 0;
+  /**
+   * Swipe card cooldown flag. When a heavy blow (power >= 1.5) first hits the
+   * wall, the card draws for exactly one picture. This flag prevents
+   * multiple swipes on the same impact — the source never shows two cards
+   * back-to-back; it would be a flicker, not punctuation.
+   */
+  private swipeCooldown = 0;
   private swipeDir = 0;
   private swipeSeed = 0;
   private swipeAt: Vec2 = vec(0, 0);
@@ -121,6 +175,8 @@ export class Game {
   /** 0..1 through the cue's exit, and 0..1 through the meter's entrance. */
   private cueOut = 0;
   private meterIn = 0;
+  /** Tracks the weapon's charge transition to fire the charge-inversion once. */
+  private wasCharging = false;
 
   private scaleX = 1;
   private scaleY = 1;
@@ -328,10 +384,12 @@ export class Game {
     this.wallHit = false;
     this.cueOut = 0;
     this.meterIn = 0;
+    this.wasCharging = false;
     this.shakeAmt = 0;
     this.flashAmt = 0;
     this.invertT = 0;
     this.swipeT = 0;
+    this.swipeCooldown = 0;
     this.hintFade = 1;
     this.stats = { shots: 0, elapsed: 0 };
     this.layoutButtons();
@@ -389,14 +447,14 @@ export class Game {
       time: this.time,
       shake: (a) => this.shake(a),
       flash: (a) => this.addFlash(a),
-      invert: (s) => { this.invertT = Math.max(this.invertT, s); },
+      invert: (s) => { if (settings.impactFx) this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => {
         this.impacts.add(x, y, dir, power, this.weapon.mark);
-        // Only the heavy end of the range earns the card; on every jab it
-        // would be a strobe rather than punctuation.
-        if ((power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
+        if (settings.impactFx && (power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
       },
-      freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
+      // `drawings` is in the source's 15Hz clock, not seconds. The
+      // convertion to a per-frame decrement lives in `decayEffects`.
+      freeze: (drawings) => { this.freezeT = Math.max(this.freezeT, drawings / PICTURE_FPS); },
       after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
@@ -463,7 +521,11 @@ export class Game {
     // Held time: the world stops, the picture stays up, the screen keeps
     // shaking. Input still reaches the buffer, it just cannot move anything yet.
     if (this.freezeT > 0) {
-      this.freezeT = Math.max(0, this.freezeT - rawDt);
+      // `freezeT` is on the picture clock; convert this frame's wall-clock
+      // `rawDt` so the freeze lasts the same number of drawings regardless
+      // of `animFps`. The actual decay for the *rest* of the effects runs
+      // again in `decayEffects` below, so we don't double-count here.
+      this.freezeT = Math.max(0, this.freezeT - rawDt * (PICTURE_FPS / this.animFps));
       this.decayEffects(rawDt);
       this.render(rawDt);
       this.input.endFrame(rawDt);
@@ -786,6 +848,21 @@ export class Game {
     // here, every frame, so dropping the stance is just saying nothing.
     this.sm.setStance(this.weapon.stance(wctx));
 
+    // --- charge inversion -------------------------------------------------
+    // When the player first starts charging a weapon (trigger held > 0),
+    // fire a single inverted frame as visual feedback that the build-up has
+    // begun. This replaces the old behaviour where inversion was tied to
+    // the random flash-bank from addFlash.
+    if (settings.impactFx) {
+      const ch = this.weapon.charge > 0.02;
+      if (ch && !this.wasCharging) {
+        this.addFlash(0.45);
+      }
+      this.wasCharging = ch;
+    } else {
+      this.wasCharging = this.weapon.charge > 0.02;
+    }
+
     // --- projectiles + their craters ---------------------------------------
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
@@ -837,11 +914,16 @@ export class Game {
     audio.play(b.sfx === 'cannon' ? 'cannon' : 'explosion');
     this.shake(b.shake);
     this.addFlash(b.flash);
-    this.particles.shockwave(at.x, at.y, b.radius * 1.5);
-    this.particles.debris(at.x, at.y, b.debris, 240 + b.radius * 3);
-    this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), 380 + b.radius * 3);
-    this.particles.smoke(at.x, at.y, Math.round(b.radius / 8), b.radius * 0.45);
-    this.particles.streaks(at.x, at.y, 12, Math.atan2(-p.vy, -p.vx), TAU, b.radius * 0.9);
+    // Particle sizes are proportional to the playfield, not screen pixels:
+    // PR #8 pulled the camera in (~660 units, was 864), so absolute sizes
+    // overran the figure. The worldW terms below are the camera, and the
+    // b.radius multipliers preserve per-weapon scale.
+    const w = this.terrain.w;
+    this.particles.shockwave(at.x, at.y, w * 0.18 + b.radius * 0.5);
+    this.particles.debris(at.x, at.y, b.debris, w * 0.36 + b.radius * 1.4);
+    this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), w * 0.58 + b.radius * 1.4);
+    this.particles.smoke(at.x, at.y, Math.round(b.radius / 8), w * 0.07 + b.radius * 0.18);
+    this.particles.streaks(at.x, at.y, 12, Math.atan2(-p.vy, -p.vx), TAU, w * 0.12 + b.radius * 0.35);
 
     // Blowback on the player if they stood too close to their own rocket.
     const dx = this.sm.pos.x - at.x, dy = (this.sm.pos.y - 50) - at.y;
@@ -864,13 +946,18 @@ export class Game {
   }
 
   /**
-   * Arm the swipe card. Two drawings, and never stacked: a second blow landing
-   * inside the first only ever re-aims it, because two cards back to back is a
-   * flicker and the source never does that.
+   * Arm the swipe card. One drawing, and never re-armed on the same impact:
+   * a heavy blow that keeps touching the wall for several frames would
+   * otherwise re-trigger the card every picture, turning it into a strobe.
+   * The cooldown is the same length as the card itself, so the card plays
+   * once per landed blow and the next swipe needs a fresh hit after it ends.
    */
   private swipe(x: number, y: number, dir: number, power: number): void {
-    // Two of the film's drawings' worth, played out at sixty.
-    this.swipeT = 2 / 15;
+    if (this.swipeCooldown > 0) return;
+    // `SWIPE_DRAWINGS` drawings of the source's cadence, played out at whatever
+    // `animFps` is current (see `decayEffects` for the picture-clock math).
+    this.swipeT = SWIPE_TIME;
+    this.swipeCooldown = SWIPE_TIME;
     this.swipeDir = dir;
     this.swipeAt = vec(x, y);
     this.swipePower = power;
@@ -917,19 +1004,42 @@ export class Game {
    * threshold it spends itself on a single inverted drawing and resets, which
    * is the only form the source has for it. A run of small flashes therefore
    * reads as one hard blink instead of a grey haze that never quite clears.
+   *
+   * The reset-to-zero is deliberate (issue #12). Banking past `FLASH_BANK`
+   * does not produce a bigger blink - it produces the same blink and throws
+   * the rest of the light away. That is what the source does: the paper is
+   * white or it is black, never a wash. The `swipe` card (set elsewhere for
+   * power >= 1.5) is a separate path and takes precedence in the render loop;
+   * if both fire on the same blow the swipe is the only thing drawn.
    */
   private addFlash(a: number): void {
     this.flashAmt += a;
-    if (this.flashAmt < 0.45) return;
+    if (!settings.impactFx || this.flashAmt < FLASH_BANK) return;
     this.flashAmt = 0;
-    this.invertT = Math.max(this.invertT, 1 / 15);
+    this.invertT = Math.max(this.invertT, INVERT_TIME);
   }
 
+  /**
+   * Decay per-frame screen effects.
+   *
+   * Two clocks are in play:
+   * - wall clock (`dt`): shake, flash bank, particles. These are about
+   *   *how the picture feels* and should follow the real frame rate.
+   * - picture clock (PICTURE_FPS, 15Hz): invert, swipe, freeze. These are
+   *   the source's drawings, and a card that is "two drawings" should stay
+   *   two drawings whether the world is at 15 or 60 fps. The world-clock
+   *   `dt` is scaled by `PICTURE_FPS / animFps` so a `dt` of 1/60s with
+   *   `animFps=60` produces the same picture-time as a 1/15s step with
+   *   `animFps=15`.
+   */
   private decayEffects(dt: number): void {
     this.shakeAmt = damp(this.shakeAmt, 0, 9, dt);
     this.flashAmt = Math.max(0, this.flashAmt - dt * 3.4);
-    this.invertT = Math.max(0, this.invertT - dt);
-    this.swipeT = Math.max(0, this.swipeT - dt);
+    const pictureDt = dt * (PICTURE_FPS / this.animFps);
+    this.freezeT = Math.max(0, this.freezeT - pictureDt);
+    this.invertT = Math.max(0, this.invertT - pictureDt);
+    this.swipeT = Math.max(0, this.swipeT - pictureDt);
+    this.swipeCooldown = Math.max(0, this.swipeCooldown - pictureDt);
     const s = this.shakeAmt;
     this.shakeOff = {
       x: hashNoise(1, Math.floor(this.time * 90)) * s,
@@ -1016,7 +1126,7 @@ export class Game {
 
     c.restore();
 
-    // The swipe card, which outranks everything: for two drawings the picture
+    // The swipe card, which outranks everything: for one drawing the picture
     // is gone and one white stroke stands on black paper.
     if (this.swipeT > 0) {
       this.drawSwipe();

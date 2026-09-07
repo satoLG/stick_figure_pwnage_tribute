@@ -9,6 +9,8 @@ export interface Settings {
   sfx: number;
   /** Index into AIM_SPEEDS. Only stick aiming has a speed to scale. */
   aimSpeed: number;
+  /** Impact frame effects: swipe card and white/black inversion. */
+  impactFx: boolean;
 }
 
 export const VOLUMES = [
@@ -28,7 +30,7 @@ export const AIM_SPEEDS = [
 // Music sits under everything else rather than over it: the sound this game
 // is actually made of is the wall coming apart, so the track starts at a
 // quarter and the player turns it up if they want it.
-const DEFAULTS: Settings = { music: 1, sfx: 3, aimSpeed: 2 };
+const DEFAULTS: Settings = { music: 1, sfx: 3, aimSpeed: 2, impactFx: true };
 const STORE = 'pwnage.settings.v1';
 
 const pick = (v: unknown, len: number, fallback: number): number =>
@@ -43,6 +45,7 @@ function load(): Settings {
       music: pick(got.music, VOLUMES.length, DEFAULTS.music),
       sfx: pick(got.sfx, VOLUMES.length, DEFAULTS.sfx),
       aimSpeed: pick(got.aimSpeed, AIM_SPEEDS.length, DEFAULTS.aimSpeed),
+      impactFx: typeof got.impactFx === 'boolean' ? got.impactFx : DEFAULTS.impactFx,
     };
   } catch {
     return { ...DEFAULTS };   // private mode, blocked storage: defaults still play

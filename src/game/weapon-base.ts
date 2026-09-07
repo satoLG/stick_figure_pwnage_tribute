@@ -20,8 +20,12 @@ export interface WeaponCtx {
   invert(seconds: number): void;
   /** The converging fan of lines that punctuates a landed blow. */
   hit(x: number, y: number, dir: number, power?: number): void;
-  /** Stop the world for a couple of frames, so the impact pose can be read. */
-  freeze(frames: number): void;
+  /**
+   * Stop the world for `drawings` of the source's 15Hz clock, so the
+   * impact pose can be read. Stored as seconds in `Game.freezeT` and
+   * converted back via `PICTURE_FPS` in `decayEffects`.
+   */
+  freeze(drawings: number): void;
   /** Run something once, `seconds` from now - a round arriving, for instance. */
   after(seconds: number, fn: () => void): void;
   sfx(name: SfxName, pitch?: number): void;

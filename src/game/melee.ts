@@ -385,9 +385,14 @@ export abstract class MeleeWeapon extends Weapon {
       if (hitPoint) {
         at = hitPoint;
         removed += applyBlast(ctx.terrain, hitPoint.x, hitPoint.y, mv.blast);
-        ctx.particles.shockwave(hitPoint.x, hitPoint.y, mv.blast.radius * 1.5);
-        ctx.particles.debris(hitPoint.x, hitPoint.y, mv.blast.debris, 240 + mv.blast.radius * 3);
-        ctx.particles.smoke(hitPoint.x, hitPoint.y, 6, 22);
+        // Particle sizes are now fractions of the playfield (see #9 / game.ts:detonate
+        // for the same change). Melee blasts are smaller than projectile blasts, so the
+        // fractions are scaled down accordingly; the `mv.blast.radius * k` terms still
+        // let a Warhammer slam read bigger than a sword tap.
+        const mw = ctx.terrain.w;
+        ctx.particles.shockwave(hitPoint.x, hitPoint.y, mw * 0.12 + mv.blast.radius * 0.35);
+        ctx.particles.debris(hitPoint.x, hitPoint.y, mv.blast.debris, mw * 0.24 + mv.blast.radius * 1.1);
+        ctx.particles.smoke(hitPoint.x, hitPoint.y, 6, mw * 0.034);
       }
     }
 
@@ -405,8 +410,9 @@ export abstract class MeleeWeapon extends Weapon {
     // Inverting the whole screen is the loudest thing this game can do, so it
     // is spent only on a charged special - the held chain's heavy finishers.
     if (heavy && this.mode === 'hold') ctx.invert(0.16);
-    // One drawn frame of held time on a light hit, two on a heavy one. At
-    // fifteen frames a second that is already 66 and 133ms of dead stop.
+    // One drawing of held time on a light hit, two on a heavy one. At
+    // the source's 15Hz clock that is 67ms and 133ms of dead stop; see
+    // WeaponCtx.freeze and Game.decayEffects for the picture-clock math.
     ctx.freeze(heavy ? 2 : 1);
     if (mv.quake) this.quake(ctx, at, mv.quake);
 
