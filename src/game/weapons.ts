@@ -596,23 +596,29 @@ const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
   // step in it and a shove back afterwards. The arcs are long because the reach
   // is: the cut opens far wider than the blade, and it should look as though
   // the weight is what did it.
+  //
+  // And they *travel*. Watched frame by frame at 0:08 and 0:14 the source's
+  // swordsman never cuts from where he is standing: every stroke throws him
+  // most of a body length forward into it and leaves him skidding, which is
+  // why the dashes here are roughly double what they were and each one carries
+  // a slide after it.
   ground: [
     {
       from: -2.5, to: 1.1, wind: 0.4, strike: 0.18, anim: 0.72, cooldown: 0.72, reach: 1.35, thick: 80,
-      heavy: true, impact: 1.8, dash: 130, recover: 40, flash: 0.4, invert: 0.06, shake: 24, quake: 1,
+      heavy: true, impact: 1.8, dash: 235, slide: 0.2, recover: 40, flash: 0.4, invert: 0.06, shake: 24, quake: 1,
       hitSfx: 'slam', hitPitch: 0.85,
       stance: 'brace', stanceLean: -0.24, stanceHip: -12, stanceOut: 0.16, name: 'CLEAVE',
     },
     {
       from: 2.6, to: -1.15, wind: 0.36, strike: 0.18, anim: 0.7, cooldown: 0.7, reach: 1.4, thick: 82,
-      heavy: true, impact: 1.8, dash: 150, recover: 40, flash: 0.34, invert: 0.05, shake: 22,
+      heavy: true, impact: 1.8, dash: 265, slide: 0.22, recover: 40, flash: 0.34, invert: 0.05, shake: 22,
       quake: 1, hitSfx: 'slam', hitPitch: 0.9,
       stance: 'brace', stanceLean: -0.22, stanceHip: -12, stanceOut: 0.16, name: 'SWEEP',
     },
     {
       // The whole body turns with the sword and everything in front of him goes.
       from: -3.1, to: 1.75, wind: 0.32, strike: 0.2, anim: 0.84, cooldown: 0.95, reach: 1.5, thick: 96,
-      heavy: true, spin: 1, hop: 215, dash: 170, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
+      heavy: true, spin: 1, hop: 215, dash: 330, slide: 0.3, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
       hitSfx: 'slam', hitPitch: 0.78, name: 'WHIRLWIND',
     },
   ],
@@ -700,6 +706,25 @@ export class Greatsword extends MeleeWeapon {
   }
 
   override onEquip(): void { super.onEquip(); this.dragT = 0; this.airT = 0; }
+
+  /**
+   * Carrying it bends him. In the source the swordsman is never upright: he
+   * goes about in a low crouch with his weight forward over the blade, head
+   * down at about hip height, and only comes up at the top of a swing. That is
+   * as much of the character as the sword is, so the drag brings a stance with
+   * it - deepest when he is moving, since that is when the weight is really
+   * hanging off him.
+   */
+  override stance(ctx: WeaponCtx): Stance | null {
+    if (this.dragT < 0.08) return super.stance(ctx);
+    const moving = Math.min(1, Math.abs(ctx.sm.vel.x) / 260);
+    return {
+      kind: 'brace',
+      weight: this.dragT * (0.42 + moving * 0.45),
+      lean: 0.2 + moving * 0.16,
+      hip: -12 - moving * 9,
+    };
+  }
 
   /**
    * He never lifts it. Standing or walking, the point is on the floor behind
