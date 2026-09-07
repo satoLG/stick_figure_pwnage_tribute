@@ -27,6 +27,8 @@ export interface PadState {
   /** Edges, for stepping through the arsenal a weapon at a time. */
   next: boolean;
   prev: boolean;
+  /** The one button that opens pwnage, and does nothing else. */
+  special: boolean;
   menu: boolean;
   /**
    * Menu navigation: one step per push, from the d-pad or the left stick, and
@@ -65,7 +67,7 @@ function stick(x: number, y: number): Vec2 {
 const IDLE: PadState = {
   connected: false, name: '', move: { x: 0, y: 0 }, aim: { x: 0, y: 0 },
   fire: false, firePressed: false, jump: false, jumpPressed: false, crouch: false,
-  wheel: false, wheelReleased: false, next: false, prev: false, menu: false,
+  wheel: false, wheelReleased: false, next: false, prev: false, special: false, menu: false,
   navX: 0, navY: 0, confirm: false, back: false, any: false,
 };
 
@@ -164,6 +166,9 @@ export class Gamepads {
       crouch: down(B.b) || move.y > 0.55,
       wheel, wheelReleased,
       next: edge(B.right) || edge(B.y), prev: edge(B.left),
+      // Down on the d-pad, which nothing else uses: the one press that is
+      // neither aim, move nor attack.
+      special: edge(B.down),
       menu: edge(B.start) || edge(B.select),
       navX: nav.x, navY: nav.y,
       confirm: edge(B.a), back: edge(B.b),

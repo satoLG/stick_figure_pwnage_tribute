@@ -119,6 +119,9 @@ const SHOUT_TAP = 0.3;
  * whole character of it: you point this by standing somewhere, not by pointing.
  */
 export class Shout extends Weapon {
+  /** Nothing else to hold for, so holding just keeps the attack coming. */
+  override auto = true;
+
   /** Both of them shout a beam, so both of them pierce. */
   override get mark(): MarkKind { return 'pierce'; }
 
@@ -793,6 +796,12 @@ export class Titan extends Weapon {
 
   protected release(ctx: WeaponCtx): void {
     if (this.phase !== 'idle' || this.up < 0.9) { this.timer = 0.2; return; }
+    // Held, it keeps the beam out. A machine that size cutting with its visor
+    // is the thing you want to be able to *steer*, and holding the trigger is
+    // how you steer it: the eyes keep firing down the aim for as long as it is
+    // down. Tapped, it works through the punch, punch, beam cycle it always
+    // did.
+    if (this.heldFor > 0.24) { this.eyeBeam(ctx); return; }
     this.step++;
     if (this.step % 3 === 0) this.eyeBeam(ctx); else this.throwPunch(ctx);
   }
@@ -828,7 +837,7 @@ export class Titan extends Weapon {
   }
 
   protected override suppressFire(): boolean {
-    return this.heldFor > TITAN_HOLD || this.phase !== 'idle';
+    return this.specialHeld > TITAN_HOLD || this.phase !== 'idle';
   }
 
   protected override onLetGo(ctx: WeaponCtx): void {
@@ -876,7 +885,7 @@ export class Titan extends Weapon {
     if (this.slab) this.flySlab(ctx);
 
     // The arm folds up while the trigger is down and it is still standing.
-    if (this.phase === 'idle' && held && this.heldFor > TITAN_HOLD && this.up > 0.9) {
+    if (this.phase === 'idle' && held && this.specialHeld > TITAN_HOLD && this.up > 0.9) {
       this.phase = 'aim';
       this.phaseT = 0;
     }
@@ -1534,7 +1543,7 @@ export class SplitHead extends Weapon {
   }
 
   protected override suppressFire(): boolean {
-    return this.heldFor > SPLIT_HOLD || this.beamT > 0;
+    return this.specialHeld > SPLIT_HOLD || this.beamT > 0;
   }
 
   /**
@@ -1568,7 +1577,7 @@ export class SplitHead extends Weapon {
     this.volley = Math.max(0, this.volley - ctx.dt);
     this.beamT = Math.max(0, this.beamT - ctx.dt);
 
-    const cutting = held && this.heldFor > SPLIT_HOLD;
+    const cutting = held && this.specialHeld > SPLIT_HOLD;
     if (cutting) { this.beamT = 0.09; this.runBeam(ctx); }
 
     // Cracked open for a salvo, and right open the other way for the beam.

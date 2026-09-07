@@ -252,6 +252,18 @@ export abstract class Weapon {
    * running a clock of their own.
    */
   protected heldFor = 0;
+  /**
+   * Whether a held special is allowed to come out at all.
+   *
+   * It is not, except in the one second the game holds the trigger down for
+   * him as pwnage opens. Leaning on the button used to be how you reached a
+   * weapon's big move; that move is now the mode's opening, and the button is
+   * free to mean something ordinary and sustained instead - a rifle rather
+   * than a rocket, a beam you can steer, more shots and smaller.
+   */
+  specialOk = false;
+  /** `heldFor`, but only while a special is actually on offer. */
+  protected get specialHeld(): number { return this.specialOk ? this.heldFor : 0; }
   private wasHeld = false;
   /** Attack animation clock, counting down. */
   protected anim = 0;
@@ -328,6 +340,16 @@ export abstract class Weapon {
     this.wasHeld = false;
   }
 
+  /**
+   * Hand this weapon a full charge and a clear cooldown, for the moment
+   * pwnage opens. The game then holds the trigger down for a second on the
+   * player's behalf, so whatever this weapon's held move is, it goes off.
+   */
+  fillCharge(): void {
+    this.timer = 0;
+    if (this.chargeTime > 0) this.charge = 1;
+  }
+
   update(ctx: WeaponCtx, held: boolean, pressed: boolean): void {
     this.timer -= ctx.dt;
     if (this.anim > 0) this.anim = Math.max(0, this.anim - ctx.dt);
@@ -339,16 +361,23 @@ export abstract class Weapon {
     this.heldFor = held ? this.heldFor + ctx.dt : 0;
     this.tick(ctx, held);
 
-    if (this.chargeTime > 0) {
+    // Winding a weapon up is a pwnage thing now. The charged shot is the
+    // special, the special is the mode's opening, and leaning on the trigger
+    // in the ordinary way is free to mean something else - so the charge only
+    // builds while a special is on offer.
+    if (this.chargeTime > 0 && this.specialOk) {
       if (held && this.timer <= 0) {
         if (this.charge === 0 && !this.chargeSfx) { ctx.sfx('charge'); this.chargeSfx = true; }
         this.charge = Math.min(1, this.charge + ctx.dt / this.chargeTime);
-      } else if (this.charge > 0) {
-        this.release(ctx, this.charge);
-        this.timer = this.cooldown;
-        this.charge = 0;
-        this.chargeSfx = false;
       }
+      return;
+    }
+    // A charge that was building when the offer ran out still goes off.
+    if (this.charge > 0) {
+      this.release(ctx, this.charge);
+      this.timer = this.cooldown;
+      this.charge = 0;
+      this.chargeSfx = false;
       return;
     }
 
@@ -357,7 +386,9 @@ export abstract class Weapon {
       this.timer = this.cooldown;
       this.startAnim();
       this.swap = -this.swap;
-      this.release(ctx, 1);
+      // A charged weapon firing down the ordinary path is doing its *tap*, so
+      // it is handed no charge at all rather than a full one.
+      this.release(ctx, this.chargeTime > 0 ? 0 : 1);
     }
   }
 

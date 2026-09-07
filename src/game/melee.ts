@@ -219,7 +219,7 @@ export abstract class MeleeWeapon extends Weapon {
     if (this.holdLock) return 'hold';
     if (!ctx.sm.onGround) return 'air';
     if (Math.abs(ctx.sm.vel.x) > RUN_ATTACK_SPEED) return 'run';
-    if (this.heldFor > HOLD_TIME) return 'hold';
+    if (this.specialHeld > HOLD_TIME) return 'hold';
     return 'ground';
   }
 

@@ -408,7 +408,22 @@ export class Terrain {
    * happens on, so it is never removed - and, being solid, it walls the bite
    * off from below exactly like intact masonry does.
    */
+  /**
+   * How far into the stone anything is allowed to reach this frame, as a
+   * multiple of what the blow asks for.
+   *
+   * One knob, set by the game, and the only thing separating an ordinary blow
+   * from a pwnage one. Outside pwnage it is a fraction: the same swing, the
+   * same crater on the surface, the same noise and dust - and almost nothing
+   * actually comes out of the wall, which is what makes it maddening enough to
+   * be worth a stress meter. It is depth rather than width on purpose: a
+   * narrow bite reads as a scratch, a shallow one reads as a blow that did not
+   * get through.
+   */
+  bite = 1;
+
   carvePolygon(pts: readonly Vec2[], depth = Infinity): CarveResult {
+    if (this.bite < 1 && depth !== Infinity) depth *= this.bite;
     const result: CarveResult = { removed: 0, edges: [] };
     if (pts.length < 3) return result;
 

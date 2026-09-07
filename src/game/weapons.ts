@@ -229,7 +229,7 @@ export class Fists extends MeleeWeapon {
    * flurry restarting rather than as running out.
    */
   protected override suppressFire(): boolean {
-    return this.heldFor > BARRAGE_HOLD;
+    return this.specialHeld > BARRAGE_HOLD;
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
@@ -244,7 +244,7 @@ export class Fists extends MeleeWeapon {
     }
     this.swirl = Math.max(0, this.swirl - ctx.dt);
 
-    const running = held && this.heldFor > BARRAGE_HOLD && !this.spent;
+    const running = held && this.specialHeld > BARRAGE_HOLD && !this.spent;
     if (running) {
       // He goes into it off a jump. In the film the barrage does not start
       // from a stance: he leaves the floor, the picture comes apart around
@@ -1014,7 +1014,7 @@ export class Warhammer extends MeleeWeapon {
    * into just another combo. Letting go is what sets it off.
    */
   protected override suppressFire(): boolean {
-    return this.frenzy > 0 || this.heldFor > FRENZY_HOLD;
+    return this.frenzy > 0 || this.specialHeld > FRENZY_HOLD;
   }
 
   protected override onLetGo(ctx: WeaponCtx): void {
@@ -1040,7 +1040,7 @@ export class Warhammer extends MeleeWeapon {
 
   override get comboLabel(): string | null {
     if (this.frenzy > 0) return `FRENZY  x${FRENZY_BLOWS - this.frenzy + 1}`;
-    if (this.heldFor > FRENZY_HOLD) return 'WINDING UP';
+    if (this.specialHeld > FRENZY_HOLD) return 'WINDING UP';
     return super.comboLabel;
   }
 
@@ -1182,9 +1182,12 @@ type Gun = 'magnum' | 'shotgun' | 'rifle' | 'bazooka';
 const CLOSE_RANGE = 250;
 /** Seconds of held trigger before the bazooka comes off his back. */
 const SLING_HOLD = 0.42;
+/** How long the trigger comes down before the rifle comes off his back. */
+const RIFLE_HOLD = 0.22;
+/** Seconds between rifle rounds while it is held. Fast; it is an assault rifle. */
+const RIFLE_RATE = 0.085;
 /** When the grenades leave his hand, and when the rifle comes off his back. */
 const GRENADE_AT = 0.34;
-const RIFLE_AT = 0.72;
 /** How little air has to be left in front of a grenade before he shoots it. */
 const SNIPE_AT = 210;
 /** How long an over-arm throw takes to play out. */
@@ -1240,6 +1243,8 @@ export class Gunslinger extends Weapon {
   private live: Projectile[] = [];
   /** Rate limiter on the sniping, so three rounds are three drawings. */
   private snipeT = 0;
+  /** Seconds to the next rifle round while the trigger is held. */
+  private autoT = 0;
   /** Counts down through an over-arm throw. */
   private throwT = 0;
   /** How far through the swap the hands are, so a gun does not teleport. */
@@ -1254,7 +1259,7 @@ export class Gunslinger extends Weapon {
 
   override get comboLabel(): string | null {
     if (this.volley > 0) return 'FUSILLADE';
-    if (this.heldFor > SLING_HOLD) return 'TUBE UP';
+    if (this.specialHeld > SLING_HOLD) return 'TUBE UP';
     return this.gun === 'shotgun' ? 'CLOSE' : null;
   }
 
@@ -1266,7 +1271,7 @@ export class Gunslinger extends Weapon {
   }
 
   protected override suppressFire(_ctx: WeaponCtx): boolean {
-    return this.volley > 0 || this.heldFor > SLING_HOLD;
+    return this.volley > 0 || this.specialHeld > SLING_HOLD;
   }
 
   protected release(ctx: WeaponCtx): void {
@@ -1363,8 +1368,11 @@ export class Gunslinger extends Weapon {
       });
     }
 
-    // 3. And the rifle comes off his back to meet them there.
-    ctx.after(RIFLE_AT, () => { this.gun = 'rifle'; this.swapT = 1; ctx.sfx('ui', 1.5); });
+    // The rifle used to come off his back here to shoot the grenades down in
+    // mid-air. It does not any more: the rifle is what *holding the trigger*
+    // gets you now, and the party piece is the tube and the grenades. Three
+    // explosions still land, spaced along the line, because the grenades go
+    // off where they arrive.
   }
 
   /**
@@ -1431,11 +1439,35 @@ export class Gunslinger extends Weapon {
       if (this.volley <= 0) { this.live.length = 0; this.gun = 'magnum'; this.swapT = 1; }
       return;
     }
-    // Shouldering the tube while the trigger is down.
-    if (held && this.heldFor > SLING_HOLD && this.gun !== 'bazooka') {
+    // Shouldering the tube while the trigger is down - only ever as pwnage
+    // opens, which is the one time the party piece is on offer.
+    if (held && this.specialHeld > SLING_HOLD && this.gun !== 'bazooka') {
       this.gun = 'bazooka';
       this.swapT = 1;
       ctx.sfx('ui', 1.2);
+      return;
+    }
+
+    // Otherwise, holding is the rifle. It comes off his back after a moment
+    // and empties itself down the aim for as long as the trigger is down -
+    // the one weapon here that does not want a click per round - and goes
+    // back on the strap when the trigger comes up.
+    if (held && this.heldFor > RIFLE_HOLD && this.gun !== 'bazooka') {
+      if (this.gun !== 'rifle') {
+        this.gun = 'rifle';
+        this.swapT = 1;
+        ctx.sfx('ui', 1.5);
+        this.autoT = 0.1;
+      }
+      this.autoT -= ctx.dt;
+      if (this.autoT <= 0) {
+        this.autoT = RIFLE_RATE;
+        this.shootOne(ctx);
+        this.timer = Math.max(this.timer, RIFLE_RATE);
+      }
+    } else if (!held && this.gun === 'rifle') {
+      this.gun = 'magnum';
+      this.swapT = 1;
     }
   }
 
@@ -1746,6 +1778,8 @@ const BEAM_RANGE = 1600;
 const BEAM_BORE = 340;
 /** Under this much charge a release is a thrown ball rather than the beam. */
 const ORB_TAP = 0.22;
+/** How long the trigger is down before the balls turn into a stream. */
+const FAST_HOLD = 0.3;
 
 export class EnergyBeam extends Weapon {
   /** Light arriving: a cone through the point, nothing thrown sideways. */
@@ -1794,7 +1828,7 @@ export class EnergyBeam extends Weapon {
   }
 
   protected release(ctx: WeaponCtx, power: number): void {
-    if (power < ORB_TAP) { this.throwOrb(ctx); return; }
+    if (power < ORB_TAP) { this.throwOrb(ctx, this.heldFor > FAST_HOLD); return; }
     this.beam = this.beamMax;
     this.power = 0.45 + power * 0.55;
     this.beamAngle = ctx.sm.pose.aim;
@@ -1822,26 +1856,38 @@ export class EnergyBeam extends Weapon {
    * does on a tap has to be *light*: the aura barely comes up, the hands take
    * turns, and he can hang in the air throwing them.
    */
-  private throwOrb(ctx: WeaponCtx): void {
+  /**
+   * One ball of light out of one hand, then the next out of the other.
+   *
+   * `fast` is what holding the trigger gets you: they come out about twice as
+   * quickly and half the size, which is the same power spent as a stream
+   * rather than as a shot. Tapped, they are the slower, heavier ones.
+   */
+  private throwOrb(ctx: WeaponCtx, fast = false): void {
     this.orbSide = -this.orbSide;
-    this.orbT = 0.2;
-    this.cooldown = 0.19;
+    this.orbT = fast ? 0.11 : 0.2;
+    this.cooldown = fast ? 0.085 : 0.19;
     this.timer = this.cooldown;
-    this.startAnim(0.19);
+    this.startAnim(this.cooldown);
     // A light lift under the aura rather than a shove: enough for it to show.
     this.thrust = Math.max(this.thrust, 0.42);
     if (!ctx.sm.onGround) this.airborne = true;
 
     const from = grip(ctx, 44, this.orbSide * 12);
     const a = this.aimFrom(ctx, from) + rand(-0.02, 0.02);
+    const small = fast ? 0.62 : 1;
     ctx.projectiles.push(new Projectile({
       x: from.x, y: from.y,
-      vx: Math.cos(a) * 1150, vy: Math.sin(a) * 1150,
-      kind: 'orb', gravity: 0, radius: 9, life: 2.6,
-      blast: { ...BLASTS.orb, radius: BLASTS.orb.radius * 1.15, shake: 4 },
+      vx: Math.cos(a) * (fast ? 1420 : 1150), vy: Math.sin(a) * (fast ? 1420 : 1150),
+      kind: 'orb', gravity: 0, radius: 9 * small, life: 2.6,
+      blast: {
+        ...BLASTS.orb,
+        radius: BLASTS.orb.radius * 1.15 * small,
+        shake: 4 * small,
+      },
     }));
-    ctx.sfx('fire', rand(1.15, 1.3));
-    ctx.particles.streaks(from.x, from.y, 3, a, 0.5, 46);
+    ctx.sfx('fire', rand(1.15, 1.3) * (fast ? 1.2 : 1));
+    ctx.particles.streaks(from.x, from.y, fast ? 2 : 3, a, 0.5, fast ? 34 : 46);
     // He is pushed a hair back by each one, and in the air that is what keeps
     // him up: throwing is the thrust.
     ctx.sm.applyRecoil(0.22, a, this.airborne ? 26 : 8);

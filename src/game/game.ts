@@ -66,6 +66,36 @@ const SWIPE_TIME = SWIPE_DRAWINGS / 15;
 const PICTURE_FPS = 15;
 
 /**
+ * The stress meter, and what it is for.
+ *
+ * Hitting the wall in the ordinary way barely marks it: `WEAK_BITE` is how far
+ * a blow may reach into the stone outside pwnage, and at an eighth of the way
+ * the crater, the noise and the dust all still happen while almost nothing
+ * comes out. That is the point - it is *infuriating*, and the meter along the
+ * bottom is him getting angrier about it.
+ *
+ * Fill it and PWNAGE opens: his special goes off as though the trigger had
+ * been held to full, and for ten seconds every ordinary blow lands with the
+ * weight it always used to have. The meter empties over those ten seconds, in
+ * plain sight, and then it is back to scratching at the wall.
+ */
+const WEAK_BITE = 0.12;
+const PWNAGE_TIME = 10;
+/**
+ * How much stress a unit of wall damage is worth. Set so a steady run of
+ * ordinary blows fills the meter in something like fifteen of them - long
+ * enough to be a build-up, short enough that the game is mostly pwnage.
+ */
+const STRESS_GAIN = 210;
+/**
+ * How long the trigger is held down for him at the start of pwnage. Long
+ * enough that every weapon's held move has passed its own threshold - the
+ * gale's gather, the rack folding open, the barrage's wind-up - so the mode
+ * opens on the special whatever is in his hands.
+ */
+const SPECIAL_HOLD = 1;
+
+/**
  * How far the aiming stick has to go to read as a swing, and how far back it
  * has to come to stop being one. The gap between them is what stops a stick
  * resting on the line from machine-gunning.
@@ -187,6 +217,24 @@ export class Game {
   private probe = document.getElementById('safe-probe');
 
   private stats = { shots: 0, elapsed: 0 };
+
+  /** 0..1 of the stress meter. Full opens pwnage; pwnage empties it. */
+  private stress = 0;
+  /** Seconds of pwnage left. Above zero, the wall is in real trouble. */
+  private pwnageT = 0;
+  /** Seconds of trigger still being held for him, at the start of pwnage. */
+  private specialHold = 0;
+  /** Wall destroyed as of last frame, so stress can be paid on the damage. */
+  private lastDestroyed = 0;
+  /** 0..1 through the flourish when the mode opens. */
+  private pwnageIn = 0;
+  /** Where the PWNAGE button is, when it is showing. */
+  private pwnageBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+
+  /** True while the wall is worth hitting. */
+  get pwnage(): boolean { return this.pwnageT > 0; }
+  /** Read-only peek for the tests and the dev console. */
+  get stressLevel(): number { return this.stress; }
 
   /** Read-only peeks, used by the dev console and the automated smoke tests. */
   get player(): Stickman { return this.sm; }
@@ -389,6 +437,12 @@ export class Game {
     this.flashAmt = 0;
     this.invertT = 0;
     this.swipeT = 0;
+    this.stress = 0;
+    this.pwnageT = 0;
+    this.pwnageIn = 0;
+    this.specialHold = 0;
+    this.lastDestroyed = 0;
+    this.terrain.bite = WEAK_BITE;
     this.swipeCooldown = 0;
     this.hintFade = 1;
     this.stats = { shots: 0, elapsed: 0 };
@@ -449,6 +503,12 @@ export class Game {
       flash: (a) => this.addFlash(a),
       invert: (s) => { if (settings.impactFx) this.invertT = Math.max(this.invertT, s); },
       hit: (x, y, dir, power) => {
+        // The blow's *drawing* is pwnage's, and only pwnage's. Outside it he
+        // is scuffing masonry: the crater, the dust and the noise all still
+        // happen, but the fan of splinters and the card that throws the
+        // picture away are what a blow looks like when it is actually doing
+        // something, and they would be a lie on a hit that takes nothing out.
+        if (!this.pwnage) return;
         this.impacts.add(x, y, dir, power, this.weapon.mark);
         if (settings.impactFx && (power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
       },
@@ -822,10 +882,36 @@ export class Game {
       this.particles.dust(this.sm.pos.x - back * 4, this.sm.pos.y - 3, 1 + Math.round(p * 2), back > 0 ? 0 : Math.PI, p);
     }
 
+    // --- stress, and the mode it opens -------------------------------------
+    //
+    // Stress is paid on damage actually done, which is why the weak bite makes
+    // it a slow burn: the same swing that would take a bite out of the wall in
+    // pwnage only scuffs it here, and scuffing is what fills the meter.
+    const gained = Math.max(0, this.terrain.destroyed - this.lastDestroyed);
+    this.lastDestroyed = this.terrain.destroyed;
+    if (this.pwnageT > 0) {
+      this.pwnageT = Math.max(0, this.pwnageT - rawDt);
+      // The meter is the clock: it drains in plain sight over the ten seconds.
+      this.stress = this.pwnageT / PWNAGE_TIME;
+      this.pwnageIn = Math.max(0, this.pwnageIn - rawDt * 2.2);
+    } else if (this.stress < 1) {
+      this.stress = Math.min(1, this.stress + gained * STRESS_GAIN);
+      if (this.stress >= 1) audio.play('charge', 1.2);
+    }
+    this.terrain.bite = this.pwnageT > 0 ? 1 : WEAK_BITE;
+    this.specialHold = Math.max(0, this.specialHold - rawDt);
+    if (this.wantsPwnage(intent)) this.startPwnage();
+
     // --- weapon ------------------------------------------------------------
     const wctx = this.makeCtx(dt, intent.aim);
-    const firing = !intent.wheelOpen && intent.firing;
-    const pressed = !intent.wheelOpen && intent.firePressed;
+    // The mode opens on his special: the trigger is held down for him for a
+    // second, which is past every weapon's own held-move threshold, and any
+    // charge it needed is already full.
+    const forced = this.specialHold > 0;
+    // The special is only ever on offer while the mode is opening.
+    this.weapon.specialOk = forced;
+    const firing = (!intent.wheelOpen && intent.firing) || forced;
+    const pressed = (!intent.wheelOpen && intent.firePressed) || this.pwnageIn > 0.98;
     if (pressed) this.stats.shots++;
     this.weapon.update(wctx, firing, pressed);
     // Swinging in mid-air very nearly stops the fall, so a combo begun off a
@@ -997,6 +1083,36 @@ export class Game {
       scale: 1.35,
     });
     c.restore();
+  }
+
+  /**
+   * Whether the player is asking for pwnage this frame: the button under the
+   * meter, the key, or the pad's face button. Only ever true with a full
+   * meter and the mode not already running.
+   */
+  private wantsPwnage(intent: Intent): boolean {
+    if (this.stress < 1 || this.pwnageT > 0) return false;
+    if (this.input.justPressed('KeyQ') || this.pad.special) return true;
+    if (intent.wheelOpen) return false;
+    // The button itself, on a mouse or a thumb. It sits under the figure's
+    // feet rather than up in the HUD strip, which is where the eye already is.
+    const press = this.input.pressPoint();
+    return !!press && hitRect(this.pwnageBtn, this.toWorld(press.x, press.y));
+  }
+
+  /**
+   * Open it. His special goes off as though the trigger had been held to full,
+   * and for ten seconds the wall is worth hitting again.
+   */
+  private startPwnage(): void {
+    this.pwnageT = PWNAGE_TIME;
+    this.pwnageIn = 1;
+    this.specialHold = SPECIAL_HOLD;
+    this.stress = 1;
+    this.weapon.fillCharge();
+    audio.play('win', 0.7);
+    this.shake(18);
+    this.invertT = Math.max(this.invertT, INVERT_TIME);
   }
 
   /**
@@ -1174,6 +1290,68 @@ export class Game {
   }
 
   /**
+   * The stress meter, along the bottom of the picture, and the button it turns
+   * into when it is full.
+   *
+   * It lives down here rather than up in the HUD strip on purpose: it is about
+   * *him*, not about the wall, and the eye is already at his feet. The bar is
+   * the same hand-drawn box the wall meter uses so the two read as one set of
+   * furniture, and when it fills the word PWNAGE lands under it in a struck
+   * box that can be clicked, tapped or answered with `Q`.
+   *
+   * While the mode is running the same bar drains, which is the clock.
+   */
+  private drawStress(): void {
+    const sk = this.sk;
+    const c = this.ctx;
+    const { w, h } = this.view;
+    const k = this.hudK;
+    const barW = clamp(w * 0.34, 200, 420) * k;
+    const barH = 15 * k;
+    const x = (w - barW) / 2;
+    const y = h - 34 * k - this.safe.bottom;
+    const ink = y > this.terrain.groundTop ? '#fff' : '#000';
+
+    c.save();
+    c.strokeStyle = ink;
+    c.fillStyle = ink;
+    c.lineWidth = 2.6;
+    sk.polyPath([
+      { x, y }, { x: x + barW, y }, { x: x + barW, y: y + barH }, { x, y: y + barH },
+    ], 1.2);
+    c.stroke();
+    const fw = Math.max(0, (barW - 6) * clamp(this.stress, 0, 1));
+    if (fw > 1) {
+      const pts: Vec2[] = [{ x: x + 3, y: y + 3 }, { x: x + 3 + fw, y: y + 3 }];
+      for (let i = 0; i <= 4; i++) {
+        pts.push({ x: x + 3 + fw + hashNoise(i, sk.boil) * 3, y: y + 3 + (i / 4) * (barH - 6) });
+      }
+      pts.push({ x: x + 3, y: y + barH - 3 });
+      sk.polyPath(pts, 1.1);
+      c.fill();
+    }
+    const size = clamp(w * 0.016, 11, 15) * k;
+    inkText(sk, this.pwnageT > 0 ? 'PWNAGE' : 'STRESS', x - 10 * k, y + barH * 0.78,
+      size, { align: 'right', color: ink, alpha: 0.85 });
+
+    // The button. Only there with a full meter and the mode not running.
+    if (this.stress >= 1 && this.pwnageT <= 0) {
+      const bw = clamp(w * 0.2, 150, 280) * k;
+      const bh = 34 * k;
+      this.pwnageBtn = { x: (w - bw) / 2, y: y - bh - 12 * k, w: bw, h: bh };
+      // It breathes, so a full meter is never a still picture.
+      const pulse = 0.5 + Math.sin(this.time * 7) * 0.5;
+      const hovered = this.device === 'desk' && hitRect(this.pwnageBtn, this.pointerWorld());
+      const bink = this.pwnageBtn.y > this.terrain.groundTop ? '#fff' : '#000';
+      inkButton(sk, this.pwnageBtn, 'PWNAGE MODE', hovered || pulse > 0.5,
+        clamp(bh * 0.5, 14, 22), bink);
+    } else {
+      this.pwnageBtn = { x: 0, y: 0, w: 0, h: 0 };
+    }
+    c.restore();
+  }
+
+  /**
    * The HUD is drawn in world units like everything else, so pulling the
    * camera in made all of it a third bigger on the glass. It is furniture,
    * not scene: it goes back to the size it was, which is this much smaller in
@@ -1201,6 +1379,7 @@ export class Game {
       c.restore();
     }
     if (this.cueOut < 1) this.drawCue();
+    this.drawStress();
 
     // Current weapon. On touch the bottom edge belongs to the thumbs, so the
     // readout moves up under the meter instead.
@@ -1273,10 +1452,11 @@ export class Game {
         const lines = [
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip, at a wall to kick off it)',
-          'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
+          'MOUSE  AIM     CLICK  ATTACK     HOLD  KEEP ATTACKING',
           'HOLD TAB  WEAPON WHEEL     TOP ROW OF KEYS  QUICK SWAP',
+          'HIT THE WALL TO BUILD STRESS     Q  PWNAGE MODE, WHEN IT IS FULL',
         ];
-        const y0 = h - 96 - this.safe.bottom;
+        const y0 = h - 118 - this.safe.bottom;
         const hintInk = y0 > this.terrain.groundTop ? '#fff' : '#000';
         lines.forEach((l, i) => inkText(
           sk, l, w - 20 - this.safe.right, y0 + i * (size + 8), size,
@@ -1407,6 +1587,7 @@ export class Game {
           ['R1 / R2 / X', 'swing where he looks; the left stick steers it too'],
           ['HOLD L1', 'weapon fan — point at one and let go'],
           ['START', 'settings'],
+          ['STRESS BAR', 'hit the wall to fill it, then take the PWNAGE button'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : this.isTouch
@@ -1416,6 +1597,7 @@ export class Game {
           ['JUMP AT A WALL', 'kick off it — chain them to climb'],
           ['RIGHT THUMB', 'press to attack — guns aim where you touch'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
+          ['STRESS BAR', 'hit the wall to fill it, then tap PWNAGE'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : [
@@ -1425,6 +1607,7 @@ export class Game {
           ['SPACE AT A WALL', 'kick off it — chain them to climb'],
           ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
           ['HOLD TAB', 'weapon wheel   ·   the top row of keys quick-swaps'],
+          ['STRESS BAR', 'hit the wall to fill it, then Q for pwnage mode'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
     const rowSize = clamp(w * 0.019, 11, 16);

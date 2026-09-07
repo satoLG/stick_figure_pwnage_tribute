@@ -245,7 +245,7 @@ export class Wind extends MeleeWeapon {
   // -------------------------------------------------------------- the storm ---
 
   protected override suppressFire(): boolean {
-    return this.heldFor > GALE_HOLD || this.vortex !== null;
+    return this.specialHeld > GALE_HOLD || this.vortex !== null;
   }
 
   /**
@@ -390,7 +390,7 @@ export class Wind extends MeleeWeapon {
 
     // Pulling the air in. It has to be visible from across the room, because
     // what happens next takes a second and a half to play out.
-    const pulling = held && this.heldFor > GALE_HOLD && !this.vortex;
+    const pulling = held && this.specialHeld > GALE_HOLD && !this.vortex;
     if (pulling) {
       this.gather = Math.min(1, this.gather + ctx.dt / 1.1);
       ctx.shake(0.6 + this.gather * 2.2);
@@ -888,17 +888,17 @@ export class MissilePods extends Weapon {
   }
 
   protected override suppressFire(): boolean {
-    return this.heldFor > SALVO_HOLD;
+    return this.specialHeld > SALVO_HOLD;
   }
 
   protected override onLetGo(ctx: WeaponCtx): void {
-    if (this.heldFor > SALVO_HOLD && this.load > 0.25) this.salvo(ctx);
+    if (this.specialHeld > SALVO_HOLD && this.load > 0.25) this.salvo(ctx);
     this.load = 0;
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
     this.launch = Math.max(0, this.launch - ctx.dt * 4);
-    const loading = held && this.heldFor > SALVO_HOLD;
+    const loading = held && this.specialHeld > SALVO_HOLD;
     this.load = loading ? Math.min(1, this.load + ctx.dt / 0.85) : damp(this.load, 0, 12, ctx.dt);
     if (!loading) return;
     this.loadSfx -= ctx.dt;
@@ -1080,6 +1080,9 @@ interface Sigil {
 }
 
 export class ArcaneStaff extends Weapon {
+  /** Nothing else to hold for, so holding just keeps the attack coming. */
+  override auto = true;
+
   /** The orbs go in like rounds; the charged beam runs through. */
   override get mark(): MarkKind { return this.beam > 0 ? 'pierce' : 'spark'; }
 
@@ -1613,6 +1616,9 @@ const SEAL_TAP = 0.28;
 const BREATH_TIME = 0.55;
 
 export class Shinobi extends Weapon {
+  /** Nothing else to hold for, so holding just keeps the attack coming. */
+  override auto = true;
+
   /** A thrown blade pricks; the breath blooms. */
   override get mark(): MarkKind { return this.breath > 0 ? 'bloom' : 'spark'; }
 
@@ -2091,6 +2097,9 @@ interface Arc {
 }
 
 export class Thunderbolt extends Weapon {
+  /** Nothing else to hold for, so holding just keeps the attack coming. */
+  override auto = true;
+
   /** Legs that kink and fork where the charge earths itself. */
   override get mark(): MarkKind { return 'bolt'; }
 
@@ -2546,7 +2555,7 @@ export class Mecha extends Weapon {
   // ------------------------------------------------------- the rod array ---
 
   protected override suppressFire(): boolean {
-    return this.heldFor > ROD_HOLD;
+    return this.specialHeld > ROD_HOLD;
   }
 
   protected override onLetGo(ctx: WeaponCtx): void {
@@ -2580,7 +2589,7 @@ export class Mecha extends Weapon {
     // the moment it comes back up.
     // The array stays out through its own discharge: folding it away on the
     // frame the trigger comes up leaves four beams starting from nothing.
-    const out = (held && this.heldFor > ROD_HOLD) || this.laserT > 0;
+    const out = (held && this.specialHeld > ROD_HOLD) || this.laserT > 0;
     this.rods = damp(this.rods, out ? 1 : 0, out ? 9 : 11, ctx.dt);
     if (out) {
       this.rodCharge = Math.min(1, this.rodCharge + ctx.dt / 0.85);
