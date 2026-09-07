@@ -40,6 +40,10 @@ const BARRAGE_MAX = 5;
  * read as a different weapon rather than as the same one, wound up.
  */
 const RAMP_IN = 1.05;
+/** Seconds of interference left on the paper by the leap into the barrage. */
+const SWIRL_TIME = 0.5;
+/** Seed for the swirl's wobble; any constant will do, this one is arbitrary. */
+const m0 = 4413;
 const RAMP_OUT = 0.85;
 /** Seconds between blows at the start of the ramp, and at full speed. */
 const BARRAGE_SLOW = 0.2;
@@ -177,6 +181,8 @@ export class Fists extends MeleeWeapon {
   private punchT = 0;
   private punches: BigPunch[] = [];
   private smears: Smear[] = [];
+  /** Seconds left on the interference the jump into the barrage leaves. */
+  private swirl = 0;
   /** Fractional smear budget, so the rate is per second and not per frame. */
   private smearAcc = 0;
 
@@ -236,9 +242,14 @@ export class Fists extends MeleeWeapon {
       this.smears[i].life -= ctx.dt;
       if (this.smears[i].life <= 0) this.smears.splice(i, 1);
     }
+    this.swirl = Math.max(0, this.swirl - ctx.dt);
 
     const running = held && this.heldFor > BARRAGE_HOLD && !this.spent;
     if (running) {
+      // He goes into it off a jump. In the film the barrage does not start
+      // from a stance: he leaves the floor, the picture comes apart around
+      // him, and the blows start while he is still up there.
+      if (this.barrageT === 0) this.launch(ctx);
       this.barrageT += ctx.dt;
       this.winddown = RAMP_OUT;
       if (this.barrageT >= BARRAGE_MAX) {
@@ -297,6 +308,24 @@ export class Fists extends MeleeWeapon {
     this.punchT = rate;
     this.armSide = -this.armSide;
     this.throwPunch(ctx, speed);
+  }
+
+  /**
+   * The jump the barrage opens on, and the mess it makes of the paper.
+   *
+   * Off the floor, thrown a little forward, with a burst of after-images and a
+   * set of turning rings left behind him. The source's version of this is two
+   * or three drawings of pure interference before the first blow lands, and
+   * without it the barrage simply switches on.
+   */
+  private launch(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    if (sm.onGround) { sm.vel.y = -520; sm.onGround = false; }
+    sm.vel.x += sm.facing * 90;
+    sm.addGhostBurst(0.55);
+    this.swirl = SWIRL_TIME;
+    ctx.sfx('heavyswing', 0.75);
+    ctx.shake(9);
   }
 
   /**
@@ -443,7 +472,7 @@ export class Fists extends MeleeWeapon {
 
   /** No weapon: what you see is the shock coming off the knuckles. */
   protected drawWeapon(sk: Sketch, ctx: WeaponCtx): void {
-    if (this.punches.length > 0) this.drawPunches(sk);
+    if (this.punches.length > 0 || this.swirl > 0) this.drawPunches(sk, ctx);
     if (this.anim <= 0 || this.t > 0.62) return;
     const mv = this.move;
     const big = !!mv.heavy || (mv.thick ?? 0) > 24;
@@ -475,7 +504,7 @@ export class Fists extends MeleeWeapon {
    * them, the way a brush run dry does. His arms are not drawn at all - the
    * smears are where his arms went.
    */
-  private drawPunches(sk: Sketch): void {
+  private drawPunches(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     c.save();
     c.lineJoin = 'round';
@@ -500,6 +529,34 @@ export class Fists extends MeleeWeapon {
         w: m.width * (0.5 + k * 0.7),
       };
     });
+
+    // The interference off the leap, behind the drags: rings turning about him
+    // at wildly different sizes with the paper showing through, which is the
+    // closest an ink drawing gets to what the source does to the picture for
+    // those two or three frames.
+    if (this.swirl > 0) {
+      const k = this.swirl / SWIRL_TIME;
+      const o = ctx.sm.center;
+      c.strokeStyle = '#000';
+      for (let i = 0; i < 7; i++) {
+        const t = (1 - k) * (0.6 + i * 0.16);
+        const r = 26 + t * (150 + i * 46);
+        // A ring that has thinned below a full pen is a grey line, not a
+        // faint black one, so it stops being drawn instead.
+        const wid = 5.5 * k * (1 - t * 0.5);
+        if (wid < 1.3) continue;
+        c.lineWidth = wid;
+        const n = 13;
+        const pts: Vec2[] = [];
+        for (let j = 0; j < n; j++) {
+          const a = (j / n) * TAU + i * 0.7 + ctx.time * (1.6 + i * 0.5);
+          const rr = r * (1 + hashNoise(m0 + i * 5 + j, sk.boil) * 0.22);
+          pts.push({ x: o.x + Math.cos(a) * rr, y: o.y + Math.sin(a) * rr * 0.72 });
+        }
+        sk.polyPath(pts, 1.6);
+        c.stroke();
+      }
+    }
 
     c.fillStyle = '#fff';
     for (const g of geom) {
