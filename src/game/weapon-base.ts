@@ -1,6 +1,7 @@
 import type { SfxName } from '../core/audio';
 import { clamp, easeOutCubic, easeOutQuint, rand, TAU, type Vec2 } from '../core/math';
 import type { Sketch } from '../core/sketch';
+import type { MarkKind } from './impact';
 import type { Particles } from './particles';
 import type { Projectile } from './projectiles';
 import { ARM_LEN, type HandTargets, type Stance, type Stickman } from './stickman';
@@ -19,8 +20,12 @@ export interface WeaponCtx {
   invert(seconds: number): void;
   /** The converging fan of lines that punctuates a landed blow. */
   hit(x: number, y: number, dir: number, power?: number): void;
-  /** Stop the world for a couple of frames, so the impact pose can be read. */
-  freeze(frames: number): void;
+  /**
+   * Stop the world for `drawings` of the source's 15Hz clock, so the
+   * impact pose can be read. Stored as seconds in `Game.freezeT` and
+   * converted back via `PICTURE_FPS` in `decayEffects`.
+   */
+  freeze(drawings: number): void;
   /** Run something once, `seconds` from now - a round arriving, for instance. */
   after(seconds: number, fn: () => void): void;
   sfx(name: SfxName, pitch?: number): void;
@@ -218,6 +223,20 @@ export abstract class Weapon {
    */
   readonly ranged: boolean = true;
 
+  /**
+   * The shape this power's blows leave on the paper.
+   *
+   * The film never draws the same impact twice for two different powers - a
+   * sword leaves the arc it cut, a hammer opens a hole with spikes all round
+   * it, a round going in leaves a tight star - so one shared fan for fourteen
+   * powers reads as a stamp pasted over whatever just happened. Weapons whose
+   * attacks differ from one another override `mark` on the fly.
+   */
+  get mark(): MarkKind { return 'splinter'; }
+
+  /** How fast this power lets him move, as a multiple of his own speed. */
+  readonly speedMul: number = 1;
+
   /** Held-trigger weapons keep firing; the rest need a fresh click. */
   auto = false;
   cooldown = 0.3;
@@ -233,6 +252,18 @@ export abstract class Weapon {
    * running a clock of their own.
    */
   protected heldFor = 0;
+  /**
+   * Whether a held special is allowed to come out at all.
+   *
+   * It is not, except in the one second the game holds the trigger down for
+   * him as pwnage opens. Leaning on the button used to be how you reached a
+   * weapon's big move; that move is now the mode's opening, and the button is
+   * free to mean something ordinary and sustained instead - a rifle rather
+   * than a rocket, a beam you can steer, more shots and smaller.
+   */
+  specialOk = false;
+  /** `heldFor`, but only while a special is actually on offer. */
+  protected get specialHeld(): number { return this.specialOk ? this.heldFor : 0; }
   private wasHeld = false;
   /** Attack animation clock, counting down. */
   protected anim = 0;
@@ -309,6 +340,42 @@ export abstract class Weapon {
     this.wasHeld = false;
   }
 
+  /**
+   * Fire this weapon's special, now, at full strength.
+   *
+   * This is what opening pwnage does, and it has to *happen* rather than be
+   * arranged: the mode is announced by the big move going off, not by a
+   * weapon quietly deciding to wind one up. The default covers the two shapes
+   * most of the arsenal uses - a charged shot, and a move that goes off when a
+   * long hold is let go - and anything whose special is a sustained state of
+   * its own overrides this and starts that state directly.
+   */
+  special(ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.specialOk = true;
+    this.heldFor = 99;
+    if (this.chargeTime > 0) {
+      this.charge = 1;
+      this.startAnim();
+      this.release(ctx, 1);
+      this.timer = this.cooldown;
+      this.charge = 0;
+      this.chargeSfx = false;
+      return;
+    }
+    this.onLetGo(ctx);
+  }
+
+  /**
+   * Hand this weapon a full charge and a clear cooldown, for the moment
+   * pwnage opens. The game then holds the trigger down for a second on the
+   * player's behalf, so whatever this weapon's held move is, it goes off.
+   */
+  fillCharge(): void {
+    this.timer = 0;
+    if (this.chargeTime > 0) this.charge = 1;
+  }
+
   update(ctx: WeaponCtx, held: boolean, pressed: boolean): void {
     this.timer -= ctx.dt;
     if (this.anim > 0) this.anim = Math.max(0, this.anim - ctx.dt);
@@ -320,16 +387,23 @@ export abstract class Weapon {
     this.heldFor = held ? this.heldFor + ctx.dt : 0;
     this.tick(ctx, held);
 
-    if (this.chargeTime > 0) {
+    // Winding a weapon up is a pwnage thing now. The charged shot is the
+    // special, the special is the mode's opening, and leaning on the trigger
+    // in the ordinary way is free to mean something else - so the charge only
+    // builds while a special is on offer.
+    if (this.chargeTime > 0 && this.specialOk) {
       if (held && this.timer <= 0) {
         if (this.charge === 0 && !this.chargeSfx) { ctx.sfx('charge'); this.chargeSfx = true; }
         this.charge = Math.min(1, this.charge + ctx.dt / this.chargeTime);
-      } else if (this.charge > 0) {
-        this.release(ctx, this.charge);
-        this.timer = this.cooldown;
-        this.charge = 0;
-        this.chargeSfx = false;
       }
+      return;
+    }
+    // A charge that was building when the offer ran out still goes off.
+    if (this.charge > 0) {
+      this.release(ctx, this.charge);
+      this.timer = this.cooldown;
+      this.charge = 0;
+      this.chargeSfx = false;
       return;
     }
 
@@ -338,7 +412,9 @@ export abstract class Weapon {
       this.timer = this.cooldown;
       this.startAnim();
       this.swap = -this.swap;
-      this.release(ctx, 1);
+      // A charged weapon firing down the ordinary path is doing its *tap*, so
+      // it is handed no charge at all rather than a full one.
+      this.release(ctx, this.chargeTime > 0 ? 0 : 1);
     }
   }
 

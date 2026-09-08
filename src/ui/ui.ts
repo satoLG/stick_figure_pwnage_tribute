@@ -89,7 +89,9 @@ export function focusRing(sk: Sketch, r: Rect, time: number): void {
 }
 
 /** A hand-drawn button: rough box, inked label, inverts on hover. */
-export function inkButton(sk: Sketch, r: Rect, label: string, hovered: boolean, size = 30): void {
+export function inkButton(
+  sk: Sketch, r: Rect, label: string, hovered: boolean, size = 30, color = '#000',
+): void {
   const c = sk.ctx;
   const pad = hovered ? 3 : 0;
   const pts: Vec2[] = [
@@ -98,9 +100,9 @@ export function inkButton(sk: Sketch, r: Rect, label: string, hovered: boolean, 
     { x: r.x + r.w + pad, y: r.y + r.h + pad },
     { x: r.x - pad, y: r.y + r.h + pad },
   ];
-  c.strokeStyle = '#000';
+  c.strokeStyle = color;
   if (hovered) {
-    c.fillStyle = '#000';
+    c.fillStyle = color;
     sk.polyPath(pts, 1.6);
     c.fill();
   }
@@ -108,7 +110,9 @@ export function inkButton(sk: Sketch, r: Rect, label: string, hovered: boolean, 
   sk.polyPath(pts, 1.6);
   c.stroke();
   inkText(sk, label, r.x + r.w / 2, r.y + r.h / 2 + 1, size, {
-    color: hovered ? '#fff' : '#000',
+    // Knocked out of the fill when it is filled, in the pen's own colour when
+    // it is not - so a white-inked button over the floor slab reads either way.
+    color: hovered ? (color === '#000' ? '#fff' : '#000') : color,
     wobble: hovered ? 1.1 : 0.6,
   });
 }

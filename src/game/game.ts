@@ -7,12 +7,13 @@ import { installer } from '../core/pwa';
 import { AimSolver, type AimMode } from '../ui/aim';
 import { cueWidth, drawStartCue, fitCueSize } from '../ui/cue';
 import { SettingsMenu, type InputReport } from '../ui/settings-menu';
+import { settings } from '../core/settings';
 import { TouchControls, type TouchState } from '../ui/touch';
 import {
   drawProgress, focusRing, hitRect, inkButton, inkText, measureText, slotKey, WeaponWheel,
   type Rect, type WheelLayout,
 } from '../ui/ui';
-import { ImpactFx } from './impact';
+import { drawMark, ImpactFx, type MarkKind } from './impact';
 import { Particles } from './particles';
 import { applyBlast, Projectile } from './projectiles';
 import { BODY_H, RUN_PUSH, Stickman, type Controls } from './stickman';
@@ -23,6 +24,76 @@ type Phase = 'menu' | 'playing' | 'won';
 
 /** The wall is never quite 100% clean; sweep the last slivers instead. */
 const WIN_THRESHOLD = 0.994;
+
+/**
+ * Flash -> inversion rule (PR #8 follow-up, see issue #12).
+ *
+ * The film never draws a half-inversion: the paper is white or it is black,
+ * never a grey wash. So a stream of small flashes does not lift the screen
+ * in proportion - it banks up silently, and the moment it crosses the
+ * threshold it spends itself on a single, full-strength inverted frame and
+ * resets. This is the "one or zero" feel; the magic numbers below are the
+ * shape of that feel.
+ */
+
+/** How much flash is needed to trigger a single inverted drawing. */
+const FLASH_BANK = 0.45;
+
+/**
+ * How long the inverted frame stays on screen, in *pictures* (15Hz clock).
+ * One drawing is the short end of the source's punctuation; two gives the
+ * eye a chance to land on the white stroke before the scene comes back.
+ * Held as a constant rather than computed so a future change to `animFps`
+ * does not silently stretch or compress the inversion.
+ */
+const INVERT_DRAWINGS = 1;
+const INVERT_TIME = INVERT_DRAWINGS / 15;
+
+/**
+ * How many of the film's drawings the swipe card holds for. The card is the
+ * one place the source deliberately throws the picture away, and that pause
+ * is in drawings, not seconds.
+ */
+const SWIPE_DRAWINGS = 1;
+const SWIPE_TIME = SWIPE_DRAWINGS / 15;
+
+/**
+ * The source's own cadence. All "drawings of time" in this file (freeze,
+ * invert, swipe) are measured against this clock, and converted from the
+ * world clock in `decayEffects` so a hold is the same number of drawings
+ * whether the world runs at 15 or 60 fps.
+ */
+const PICTURE_FPS = 15;
+
+/**
+ * The stress meter, and what it is for.
+ *
+ * Hitting the wall in the ordinary way barely marks it: `WEAK_BITE` is how far
+ * a blow may reach into the stone outside pwnage, and at an eighth of the way
+ * the crater, the noise and the dust all still happen while almost nothing
+ * comes out. That is the point - it is *infuriating*, and the meter along the
+ * bottom is him getting angrier about it.
+ *
+ * Fill it and PWNAGE opens: his special goes off as though the trigger had
+ * been held to full, and for ten seconds every ordinary blow lands with the
+ * weight it always used to have. The meter empties over those ten seconds, in
+ * plain sight, and then it is back to scratching at the wall.
+ */
+const WEAK_BITE = 0.12;
+const PWNAGE_TIME = 10;
+/**
+ * How much stress a unit of wall damage is worth. Set so a steady run of
+ * ordinary blows fills the meter in something like fifteen of them - long
+ * enough to be a build-up, short enough that the game is mostly pwnage.
+ */
+const STRESS_GAIN = 210;
+/**
+ * How long the trigger is held down for him at the start of pwnage. Long
+ * enough that every weapon's held move has passed its own threshold - the
+ * gale's gather, the rack folding open, the barrage's wind-up - so the mode
+ * opens on the special whatever is in his hands.
+ */
+const SPECIAL_HOLD = 1;
 
 /**
  * How far the aiming stick has to go to read as a swing, and how far back it
@@ -70,9 +141,15 @@ export class Game {
   private particles = new Particles();
   private impacts = new ImpactFx();
   /**
-   * Held time left after a hit, in seconds. Stopping the world for a couple of
-   * drawings is what turns a swing into a blow: it gives the eye a still frame
-   * to read the impact pose in, which no amount of extra ink does.
+   * Held time left after a hit, in *seconds of the picture clock*. Stopping
+   * the world for a couple of drawings is what turns a swing into a blow: it
+   * gives the eye a still frame to read the impact pose in, which no amount
+   * of extra ink does.
+   *
+   * `freezeT` lives on the **picture clock** (15Hz) so a freeze lasts the
+   * same number of *drawings* whether the world happens to be running at
+   * 60fps for an A/B or at 15fps for the source's cadence. The convertion
+   * is in `decayEffects` (`pictureDt`).
    */
   private freezeT = 0;
   /** Damage waiting on its own round to arrive, so nothing lands early. */
@@ -91,8 +168,31 @@ export class Game {
   // --- screen effects -------------------------------------------------------
   private shakeAmt = 0;
   private shakeOff: Vec2 = vec(0, 0);
+  /** Light banked from blasts, spent on inverted drawings. Never painted. */
   private flashAmt = 0;
   private invertT = 0;
+  /**
+   * The swipe card: seconds left on the two drawings where the whole picture
+   * is thrown away and replaced by one white sweep on black paper.
+   *
+   * The source cuts to it on the blows that matter, and it is doing something
+   * an inversion cannot: an inverted frame still shows the scene, only in
+   * negative, so the eye keeps reading positions out of it. This shows nothing
+   * but the shape of the stroke, which is why the blow after it lands so hard.
+   */
+  private swipeT = 0;
+  /**
+   * Swipe card cooldown flag. When a heavy blow (power >= 1.5) first hits the
+   * wall, the card draws for exactly one picture. This flag prevents
+   * multiple swipes on the same impact — the source never shows two cards
+   * back-to-back; it would be a flicker, not punctuation.
+   */
+  private swipeCooldown = 0;
+  private swipeDir = 0;
+  private swipeSeed = 0;
+  private swipeAt: Vec2 = vec(0, 0);
+  private swipePower = 1;
+  private swipeKind: MarkKind = 'splinter';
   private timeScale = 1;
   private hintFade = 1;
   /**
@@ -105,6 +205,8 @@ export class Game {
   /** 0..1 through the cue's exit, and 0..1 through the meter's entrance. */
   private cueOut = 0;
   private meterIn = 0;
+  /** Tracks the weapon's charge transition to fire the charge-inversion once. */
+  private wasCharging = false;
 
   private scaleX = 1;
   private scaleY = 1;
@@ -116,11 +218,31 @@ export class Game {
 
   private stats = { shots: 0, elapsed: 0 };
 
+  /** 0..1 of the stress meter. Full opens pwnage; pwnage empties it. */
+  private stress = 0;
+  /** Seconds of pwnage left. Above zero, the wall is in real trouble. */
+  private pwnageT = 0;
+  /** Seconds of trigger still being held for him, at the start of pwnage. */
+  private specialHold = 0;
+  /** Wall destroyed as of last frame, so stress can be paid on the damage. */
+  private lastDestroyed = 0;
+  /** 0..1 through the flourish when the mode opens. */
+  private pwnageIn = 0;
+  /** Where the PWNAGE button is, when it is showing. */
+  private pwnageBtn: Rect = { x: 0, y: 0, w: 0, h: 0 };
+
+  /** True while the wall is worth hitting. */
+  get pwnage(): boolean { return this.pwnageT > 0; }
+  /** Read-only peek for the tests and the dev console. */
+  get stressLevel(): number { return this.stress; }
+
   /** Read-only peeks, used by the dev console and the automated smoke tests. */
   get player(): Stickman { return this.sm; }
   get destroyedPct(): number { return this.terrain.destroyed; }
   get currentPhase(): string { return this.phase; }
   get viewSize(): { w: number; h: number } { return this.view; }
+  /** Where the wall's face starts, so a test can stand him a fixed way off it. */
+  get wallFaceX(): number { return this.terrain.wallX; }
   get equippedIndex(): number { return this.equipped; }
   get installOffer(): string | null { return installer.offer; }
   constructor(canvas: HTMLCanvasElement) {
@@ -205,7 +327,7 @@ export class Game {
    * read as one picture rather than a game with a bar bolted over it.
    */
   private get hudBand(): number {
-    return this.topInset + clamp(this.view.h * 0.05, 44, 92) * 1.3 + 30;
+    return this.topInset + clamp(this.view.h * 0.05, 44, 92) * this.hudK + 26;
   }
 
   /**
@@ -310,9 +432,18 @@ export class Game {
     this.wallHit = false;
     this.cueOut = 0;
     this.meterIn = 0;
+    this.wasCharging = false;
     this.shakeAmt = 0;
     this.flashAmt = 0;
     this.invertT = 0;
+    this.swipeT = 0;
+    this.stress = 0;
+    this.pwnageT = 0;
+    this.pwnageIn = 0;
+    this.specialHold = 0;
+    this.lastDestroyed = 0;
+    this.terrain.bite = WEAK_BITE;
+    this.swipeCooldown = 0;
     this.hintFade = 1;
     this.stats = { shots: 0, elapsed: 0 };
     this.layoutButtons();
@@ -369,10 +500,21 @@ export class Game {
       dt,
       time: this.time,
       shake: (a) => this.shake(a),
-      flash: (a) => { this.flashAmt = Math.min(1, this.flashAmt + a); },
-      invert: (s) => { this.invertT = Math.max(this.invertT, s); },
-      hit: (x, y, dir, power) => this.impacts.add(x, y, dir, power),
-      freeze: (frames) => { this.freezeT = Math.max(this.freezeT, frames / 15); },
+      flash: (a) => this.addFlash(a),
+      invert: (s) => { if (settings.impactFx) this.invertT = Math.max(this.invertT, s); },
+      hit: (x, y, dir, power) => {
+        // The blow's *drawing* is pwnage's, and only pwnage's. Outside it he
+        // is scuffing masonry: the crater, the dust and the noise all still
+        // happen, but the fan of splinters and the card that throws the
+        // picture away are what a blow looks like when it is actually doing
+        // something, and they would be a lie on a hit that takes nothing out.
+        if (!this.pwnage) return;
+        this.impacts.add(x, y, dir, power, this.weapon.mark);
+        if (settings.impactFx && (power ?? 1) >= 1.5) this.swipe(x, y, dir, power ?? 1);
+      },
+      // `drawings` is in the source's 15Hz clock, not seconds. The
+      // convertion to a per-frame decrement lives in `decayEffects`.
+      freeze: (drawings) => { this.freezeT = Math.max(this.freezeT, drawings / PICTURE_FPS); },
       after: (seconds, fn) => { this.pending.push({ t: seconds, fn }); },
       sfx: (n: SfxName, p?: number) => audio.play(n, p),
     };
@@ -395,9 +537,15 @@ export class Game {
    */
   private frameAcc = 0;
   /**
-   * Frames drawn per second. 60 is smooth and responsive; 15 is the reference
-   * film's own cadence, and costs the input latency that comes with it. V
-   * toggles, because the two really are different games to play.
+   * Frames per second, for the world and for the picture alike.
+   *
+   * The source is animated on twos - count it and half of every pair of its
+   * video frames is identical to the one before - but that is 2005 and a
+   * hand-drawn Flash timeline talking, not a choice worth copying. Everything
+   * it does at fifteen gets translated up: the poses, the held frames and the
+   * counts of an effect are all authored in the film's drawings and then
+   * played out at sixty, so the shapes are the source's and the motion is not
+   * a slideshow.
    */
   private animFps = 60;
 
@@ -415,7 +563,7 @@ export class Game {
     this.time += rawDt;
     this.phaseTime += rawDt;
     this.sk.update(this.time);
-    // A/B the cadence against plain 60 fps while we tune the feel.
+    // A/B against the source's own cadence while tuning a movement.
     if (this.input.justPressed('KeyV')) this.animFps = this.animFps === 60 ? 15 : 60;
 
     this.pad = this.pads.read();
@@ -433,6 +581,10 @@ export class Game {
     // Held time: the world stops, the picture stays up, the screen keeps
     // shaking. Input still reaches the buffer, it just cannot move anything yet.
     if (this.freezeT > 0) {
+      // `freezeT` is on the picture clock; convert this frame's wall-clock
+      // `rawDt` so the freeze lasts the same number of drawings regardless
+      // of `animFps`. The actual decay for the *rest* of the effects runs
+      // again in `decayEffects` below, so we don't double-count here.
       this.freezeT = Math.max(0, this.freezeT - rawDt);
       this.decayEffects(rawDt);
       this.render(rawDt);
@@ -450,6 +602,7 @@ export class Game {
     this.render(rawDt);
     this.input.endFrame(rawDt);
   }
+
 
   /**
    * Whichever device spoke last owns the screen. A pad only takes over once it
@@ -710,6 +863,7 @@ export class Game {
     if (this.hintFade > 0 && this.phaseTime > 9) this.hintFade = Math.max(0, this.hintFade - rawDt * 0.5);
 
     // --- character ---------------------------------------------------------
+    this.sm.speedMul = this.weapon.speedMul;
     this.sm.update(dt, this.terrain, intent, intent.aim);
     if (this.sm.justJumped) audio.play('jump', rand(0.9, 1.15));
     if (this.sm.justWallJumped) {
@@ -728,10 +882,37 @@ export class Game {
       this.particles.dust(this.sm.pos.x - back * 4, this.sm.pos.y - 3, 1 + Math.round(p * 2), back > 0 ? 0 : Math.PI, p);
     }
 
+    // --- stress, and the mode it opens -------------------------------------
+    //
+    // Stress is paid on damage actually done, which is why the weak bite makes
+    // it a slow burn: the same swing that would take a bite out of the wall in
+    // pwnage only scuffs it here, and scuffing is what fills the meter.
+    const gained = Math.max(0, this.terrain.destroyed - this.lastDestroyed);
+    this.lastDestroyed = this.terrain.destroyed;
+    if (this.pwnageT > 0) {
+      this.pwnageT = Math.max(0, this.pwnageT - rawDt);
+      // The meter is the clock: it drains in plain sight over the ten seconds.
+      this.stress = this.pwnageT / PWNAGE_TIME;
+      this.pwnageIn = Math.max(0, this.pwnageIn - rawDt * 2.2);
+    } else if (this.stress < 1) {
+      this.stress = Math.min(1, this.stress + gained * STRESS_GAIN);
+      if (this.stress >= 1) audio.play('charge', 1.2);
+    }
+    this.terrain.bite = this.pwnageT > 0 ? 1 : WEAK_BITE;
+    this.specialHold = Math.max(0, this.specialHold - rawDt);
+    if (this.wantsPwnage(intent)) this.startPwnage();
+
     // --- weapon ------------------------------------------------------------
     const wctx = this.makeCtx(dt, intent.aim);
-    const firing = !intent.wheelOpen && intent.firing;
-    const pressed = !intent.wheelOpen && intent.firePressed;
+    // The mode opens on his special: the trigger is held down for him for a
+    // second, which is past every weapon's own held-move threshold, and any
+    // charge it needed is already full.
+    const forced = this.specialHold > 0;
+    // The special is on offer for the whole of pwnage, which is what the
+    // panel says: the mode opens on one and the trigger buys more of them.
+    this.weapon.specialOk = this.pwnageT > 0;
+    const firing = (!intent.wheelOpen && intent.firing) || forced;
+    const pressed = (!intent.wheelOpen && intent.firePressed) || this.pwnageIn > 0.98;
     if (pressed) this.stats.shots++;
     this.weapon.update(wctx, firing, pressed);
     // Swinging in mid-air very nearly stops the fall, so a combo begun off a
@@ -753,6 +934,21 @@ export class Game {
     // Weapons that own the whole body - a charge-up, a heavy wind-up - say so
     // here, every frame, so dropping the stance is just saying nothing.
     this.sm.setStance(this.weapon.stance(wctx));
+
+    // --- charge inversion -------------------------------------------------
+    // When the player first starts charging a weapon (trigger held > 0),
+    // fire a single inverted frame as visual feedback that the build-up has
+    // begun. This replaces the old behaviour where inversion was tied to
+    // the random flash-bank from addFlash.
+    if (settings.impactFx) {
+      const ch = this.weapon.charge > 0.02;
+      if (ch && !this.wasCharging) {
+        this.addFlash(0.45);
+      }
+      this.wasCharging = ch;
+    } else {
+      this.wasCharging = this.weapon.charge > 0.02;
+    }
 
     // --- projectiles + their craters ---------------------------------------
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
@@ -781,7 +977,6 @@ export class Game {
       this.phase = 'won';
       this.phaseTime = 0;
       this.timeScale = 1;
-      this.flashAmt = 1;
       this.invertT = 0.25;
       this.shake(30);
       this.particles.shockwave(this.view.w * 0.84, this.view.h * 0.42, 320);
@@ -805,13 +1000,17 @@ export class Game {
     const b = p.blast;
     audio.play(b.sfx === 'cannon' ? 'cannon' : 'explosion');
     this.shake(b.shake);
-    this.flashAmt = Math.min(1, this.flashAmt + b.flash);
-    if (b.flash > 0.6) this.invertT = Math.max(this.invertT, 0.06);
-    this.particles.shockwave(at.x, at.y, b.radius * 1.5);
-    this.particles.debris(at.x, at.y, b.debris, 240 + b.radius * 3);
-    this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), 380 + b.radius * 3);
-    this.particles.smoke(at.x, at.y, Math.round(b.radius / 8), b.radius * 0.45);
-    this.particles.streaks(at.x, at.y, 12, Math.atan2(-p.vy, -p.vx), TAU, b.radius * 0.9);
+    this.addFlash(b.flash);
+    // Particle sizes are proportional to the playfield, not screen pixels:
+    // PR #8 pulled the camera in (~660 units, was 864), so absolute sizes
+    // overran the figure. The worldW terms below are the camera, and the
+    // b.radius multipliers preserve per-weapon scale.
+    const w = this.terrain.w;
+    this.particles.shockwave(at.x, at.y, w * 0.18 + b.radius * 0.5);
+    this.particles.debris(at.x, at.y, b.debris, w * 0.36 + b.radius * 1.4);
+    this.particles.sparks(at.x, at.y, Math.round(b.debris * 0.6), w * 0.58 + b.radius * 1.4);
+    this.particles.smoke(at.x, at.y, Math.round(b.radius / 8), w * 0.07 + b.radius * 0.18);
+    this.particles.streaks(at.x, at.y, 12, Math.atan2(-p.vy, -p.vx), TAU, w * 0.12 + b.radius * 0.35);
 
     // Blowback on the player if they stood too close to their own rocket.
     const dx = this.sm.pos.x - at.x, dy = (this.sm.pos.y - 50) - at.y;
@@ -833,10 +1032,149 @@ export class Game {
     audio.play('ui');
   }
 
+  /**
+   * Arm the swipe card. One drawing, and never re-armed on the same impact:
+   * a heavy blow that keeps touching the wall for several frames would
+   * otherwise re-trigger the card every picture, turning it into a strobe.
+   * The cooldown is the same length as the card itself, so the card plays
+   * once per landed blow and the next swipe needs a fresh hit after it ends.
+   */
+  private swipe(x: number, y: number, dir: number, power: number): void {
+    if (this.swipeCooldown > 0) return;
+    // `SWIPE_DRAWINGS` drawings of the source's cadence, played out at whatever
+    // `animFps` is current (see `decayEffects` for the picture-clock math).
+    this.swipeT = SWIPE_TIME;
+    this.swipeCooldown = SWIPE_TIME;
+    this.swipeDir = dir;
+    this.swipeAt = vec(x, y);
+    this.swipePower = power;
+    this.swipeKind = this.weapon.mark;
+    this.swipeSeed = Math.floor(this.time * 60);
+  }
+
+  /**
+   * The card itself: black paper, one white mark, nothing else.
+   *
+   * Two things about it are the whole point. It is the mark of *this* power -
+   * the shape that weapon leaves, not a house crescent every one of them
+   * borrows - and it stands where the blow actually landed, so the card reads
+   * as the same event seen with the lights off rather than as a title slide
+   * dropped over the game.
+   */
+  private drawSwipe(): void {
+    const c = this.ctx;
+    const { w, h } = this.view;
+    c.save();
+    c.setTransform(this.scaleX, 0, 0, this.scaleY, 0, 0);
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, w, h);
+    drawMark(this.sk, {
+      kind: this.swipeKind,
+      x: this.swipeAt.x + this.shakeOff.x,
+      y: this.swipeAt.y + this.shakeOff.y,
+      dir: this.swipeDir,
+      power: this.swipePower,
+      seed: this.swipeSeed,
+      strokes: 15,
+      fade: 1,
+      reach: Math.min(w, h) * 0.62,
+      inverted: true,
+      // Bigger than the live mark: with the picture gone this is all there is
+      // to look at, and in the film that frame is filled.
+      scale: 1.35,
+    });
+    c.restore();
+  }
+
+  /**
+   * Whether the player is asking for pwnage this frame: the button under the
+   * meter, the key, or the pad's face button. Only ever true with a full
+   * meter and the mode not already running.
+   */
+  private wantsPwnage(intent: Intent): boolean {
+    if (this.stress < 1 || this.pwnageT > 0) return false;
+    if (this.input.justPressed('KeyQ') || this.pad.special) return true;
+    if (intent.wheelOpen) return false;
+    // The button itself, on a mouse or a thumb. It sits under the figure's
+    // feet rather than up in the HUD strip, which is where the eye already is.
+    const press = this.input.pressPoint();
+    return !!press && hitRect(this.pwnageBtn, this.toWorld(press.x, press.y));
+  }
+
+  /**
+   * Open it. His special goes off as though the trigger had been held to full,
+   * and for ten seconds the wall is worth hitting again.
+   */
+  private startPwnage(): void {
+    this.pwnageT = PWNAGE_TIME;
+    this.pwnageIn = 1;
+    this.specialHold = SPECIAL_HOLD;
+    this.stress = 1;
+    // Straight ahead, and then off. The mode announces itself by the big move
+    // *happening* - not by handing the player a wound-up weapon and hoping
+    // they hold the button - so the aim is squared up on the wall for the
+    // opening and the weapon fires its special on this very frame.
+    this.terrain.bite = 1;
+    const face = this.sm.facing;
+    const aim = {
+      x: this.sm.pos.x + face * 900,
+      y: this.sm.center.y - 20,
+    };
+    this.sm.setAim(aim);
+    const wctx = this.makeCtx(1 / 60, aim);
+    this.weapon.specialOk = true;
+    this.weapon.fillCharge();
+    this.weapon.special(wctx);
+    audio.play('win', 0.7);
+    this.shake(18);
+    this.invertT = Math.max(this.invertT, INVERT_TIME);
+  }
+
+  /**
+   * Light thrown by a blast. It banks up rather than being painted: past a
+   * threshold it spends itself on a single inverted drawing and resets, which
+   * is the only form the source has for it. A run of small flashes therefore
+   * reads as one hard blink instead of a grey haze that never quite clears.
+   *
+   * The reset-to-zero is deliberate (issue #12). Banking past `FLASH_BANK`
+   * does not produce a bigger blink - it produces the same blink and throws
+   * the rest of the light away. That is what the source does: the paper is
+   * white or it is black, never a wash. The `swipe` card (set elsewhere for
+   * power >= 1.5) is a separate path and takes precedence in the render loop;
+   * if both fire on the same blow the swipe is the only thing drawn.
+   */
+  private addFlash(a: number): void {
+    this.flashAmt += a;
+    if (!settings.impactFx || this.flashAmt < FLASH_BANK) return;
+    this.flashAmt = 0;
+    this.invertT = Math.max(this.invertT, INVERT_TIME);
+  }
+
+  /**
+   * Decay per-frame screen effects.
+   *
+   * Two clocks are in play:
+   * - wall clock (`dt`): shake, flash bank, particles. These are about
+   *   *how the picture feels* and should follow the real frame rate.
+   * - picture clock (PICTURE_FPS, 15Hz): invert, swipe, freeze. These are
+   *   the source's drawings, and a card that is "two drawings" should last as
+   *   long as two of the film's drawings do - 2/15 of a second - whether the
+   *   world is stepping at 15 or at 60.
+   *
+   * Which means they run on the wall clock too, because they are *already*
+   * stored as seconds: `SWIPE_DRAWINGS / 15` is the duration, and the count of
+   * drawings is only how it is authored. Scaling that by `PICTURE_FPS /
+   * animFps` on top held a one-drawing card for sixteen frames at sixty -
+   * a quarter of a second of black paper on every heavy blow, which is four
+   * times what the film does and reads as a stutter.
+   */
   private decayEffects(dt: number): void {
     this.shakeAmt = damp(this.shakeAmt, 0, 9, dt);
     this.flashAmt = Math.max(0, this.flashAmt - dt * 3.4);
+    this.freezeT = Math.max(0, this.freezeT - dt);
     this.invertT = Math.max(0, this.invertT - dt);
+    this.swipeT = Math.max(0, this.swipeT - dt);
+    this.swipeCooldown = Math.max(0, this.swipeCooldown - dt);
     const s = this.shakeAmt;
     this.shakeOff = {
       x: hashNoise(1, Math.floor(this.time * 90)) * s,
@@ -923,12 +1261,18 @@ export class Game {
 
     c.restore();
 
-    // A hard black/white inversion is the punctuation these animations use for
-    // their biggest hits, so that is exactly what a heavy blast does here.
-    if (this.flashAmt > 0.01 || this.invertT > 0) {
+    // The swipe card, which outranks everything: for one drawing the picture
+    // is gone and one white stroke stands on black paper.
+    if (this.swipeT > 0) {
+      this.drawSwipe();
+    } else if (this.invertT > 0) {
+      // A hard black/white inversion is the punctuation these animations use
+      // for their biggest hits, so that is what a heavy blast does here - and
+      // all it does. There is no half-inversion in the source: the paper is
+      // white or it is black, never the grey wash a partly-opaque difference
+      // pass leaves over the whole picture.
       c.save();
       c.globalCompositeOperation = 'difference';
-      c.globalAlpha = this.invertT > 0 ? 1 : clamp(this.flashAmt, 0, 1) * 0.85;
       c.fillStyle = '#fff';
       c.fillRect(0, 0, w, h);
       c.restore();
@@ -960,13 +1304,108 @@ export class Game {
     if (this.device === 'desk') this.drawCursor();
   }
 
+  /**
+   * The stress meter, and the pwnage panel beside it.
+   *
+   * Both live along the bottom, because both are about *him* rather than about
+   * the wall, and the eye is already down at his feet. Two rules decide where
+   * exactly: the bar keeps to the left of centre, since the middle of the
+   * bottom edge belongs to the weapon pad on a phone, and everything pwnage
+   * sits over on the right, well clear of it.
+   *
+   * While the mode runs, the panel is the clock: the word, the seconds left
+   * counting down, and the line under it saying what the trigger now buys.
+   */
+  private drawStress(): void {
+    const sk = this.sk;
+    const c = this.ctx;
+    const { w, h } = this.view;
+    const k = this.hudK;
+    const left = 34 * k + this.safe.left;
+    // Everything pwnage is over on the right, so the bar runs from the margin
+    // up to it. The weapon pad on a phone sits higher than this row, so the
+    // middle of the bottom edge is free after all - what had to be kept clear
+    // of it was the button, and that is what moved.
+    const bw = clamp(w * 0.24, 190, 320) * k;
+    const bh = 46 * k;
+    const bx = w - bw - 34 * k - this.safe.right;
+    const barW = Math.max(120, bx - 26 * k - left);
+    const barH = 24 * k;
+    const y = h - 44 * k - this.safe.bottom;
+    const ink = y > this.terrain.groundTop ? '#fff' : '#000';
+    const label = clamp(w * 0.021, 14, 20) * k;
+
+    c.save();
+    c.strokeStyle = ink;
+    c.fillStyle = ink;
+    c.lineWidth = 3.2;
+    sk.polyPath([
+      { x: left, y }, { x: left + barW, y },
+      { x: left + barW, y: y + barH }, { x: left, y: y + barH },
+    ], 1.2);
+    c.stroke();
+    const fw = Math.max(0, (barW - 8) * clamp(this.stress, 0, 1));
+    if (fw > 1) {
+      const pts: Vec2[] = [{ x: left + 4, y: y + 4 }, { x: left + 4 + fw, y: y + 4 }];
+      for (let i = 0; i <= 4; i++) {
+        pts.push({ x: left + 4 + fw + hashNoise(i, sk.boil) * 3.5, y: y + 4 + (i / 4) * (barH - 8) });
+      }
+      pts.push({ x: left + 4, y: y + barH - 4 });
+      sk.polyPath(pts, 1.2);
+      c.fill();
+    }
+    // The word goes *inside* the bar, at its left end, knocked out of whatever
+    // is behind it - there is no room for a line of type above a bar this wide
+    // without it landing on the weapon readout.
+    const inside = fw > barW * 0.22 ? (ink === '#fff' ? '#000' : '#fff') : ink;
+    inkText(sk, this.pwnageT > 0 ? 'PWNAGE' : 'STRESS', left + 10 * k, y + barH * 0.72,
+      label * 0.82, { align: 'left', color: inside, alpha: 0.95, wobble: 0.7 });
+    // Full and waiting: the bar itself says so, in case the button is missed.
+    if (this.stress >= 1 && this.pwnageT <= 0 && Math.sin(this.time * 7) > 0) {
+      inkText(sk, 'FULL', left + barW - 10 * k, y + barH * 0.72, label * 0.82,
+        { align: 'right', color: ink === '#fff' ? '#000' : '#fff', wobble: 1 });
+    }
+
+    // --- the panel on the right -------------------------------------------
+    const by = y + barH - bh;
+    if (this.pwnageT > 0) {
+      // Running: the word, the clock, and what the trigger is worth now.
+      const bink = by > this.terrain.groundTop ? '#fff' : '#000';
+      const shout = 1 + Math.sin(this.time * 26) * 0.04;
+      inkText(sk, `PWNAGE  ${this.pwnageT.toFixed(1)}S`, bx + bw / 2, by + bh * 0.44,
+        clamp(bh * 0.52, 18, 30) * shout, { color: bink, wobble: 1.5 });
+      inkText(sk, 'HOLD ATTACK FOR THE SPECIAL', bx + bw / 2, by + bh * 0.92,
+        clamp(bh * 0.26, 10, 15), { color: bink, alpha: 0.8, wobble: 0.6 });
+      this.pwnageBtn = { x: 0, y: 0, w: 0, h: 0 };
+    } else if (this.stress >= 1) {
+      this.pwnageBtn = { x: bx, y: by, w: bw, h: bh };
+      const pulse = Math.sin(this.time * 7) > 0;
+      const hovered = this.device === 'desk' && hitRect(this.pwnageBtn, this.pointerWorld());
+      const bink = by > this.terrain.groundTop ? '#fff' : '#000';
+      inkButton(sk, this.pwnageBtn, this.isTouch ? 'PWNAGE' : 'PWNAGE  ·  Q',
+        hovered || pulse, clamp(bh * 0.42, 15, 24), bink);
+    } else {
+      this.pwnageBtn = { x: 0, y: 0, w: 0, h: 0 };
+    }
+    c.restore();
+  }
+
+  /**
+   * The HUD is drawn in world units like everything else, so pulling the
+   * camera in made all of it a third bigger on the glass. It is furniture,
+   * not scene: it goes back to the size it was, which is this much smaller in
+   * the units the scene is now measured in.
+   */
+  private readonly hudK = 0.77;
+
   private drawHud(): void {
     const sk = this.sk;
     const c = this.ctx;
     const { w, h } = this.view;
+    const k = this.hudK;
     const frac = this.terrain.destroyed;
-    const barW = clamp(w * 0.42, 240, 470);
-    const topY = 34 + this.topInset;
+    const barW = clamp(w * 0.42, 240, 470) * k;
+    const topY = 30 + this.topInset;
     // Before the first blow the strip is empty and the cue has the screen; the
     // meter drops in behind the first hit, which is the moment it means
     // anything. It arrives from above so it reads as the HUD assembling.
@@ -979,29 +1418,32 @@ export class Game {
       c.restore();
     }
     if (this.cueOut < 1) this.drawCue();
+    this.drawStress();
 
     // Current weapon. On touch the bottom edge belongs to the thumbs, so the
     // readout moves up under the meter instead.
     const w2 = this.weapon;
     const compact = this.isTouch;
-    const left = 44 + this.safe.left;
-    const baseY = compact ? topY + 58 : h - 70 - this.safe.bottom;
+    const left = 44 * k + this.safe.left;
+    // The bottom row belongs to the stress meter now, so the weapon readout
+    // sits a line above it rather than sharing the space.
+    const baseY = compact ? topY + 58 * k : h - 108 * k - this.safe.bottom;
     // The bottom strip of the screen is the floor slab, which is solid black.
     // Anything printed down there has to be knocked out in white to be read.
     const ink = baseY > this.terrain.groundTop ? '#fff' : '#000';
     c.save();
-    const nameSize = clamp(w * 0.02, 15, 24);
+    const nameSize = clamp(w * 0.02, 15, 24) * k;
     inkText(sk, slotKey(this.equipped), left, baseY + 8, nameSize * 1.65, { align: 'center', alpha: 0.85, color: ink });
     inkText(sk, w2.name, left + nameSize * 1.35, baseY, nameSize, { align: 'left', color: ink });
     // Which half of the arsenal this came out of, set small after the name.
     inkText(sk, w2.group === 'extra' ? 'EXTRA' : 'MAIN',
       left + nameSize * 1.35 + measureText(sk, w2.name, nameSize) + 12, baseY + 1,
       nameSize * 0.5, { align: 'left', alpha: 0.4, color: ink });
-    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34, baseY + 24, 13, { align: 'left', alpha: 0.55, color: ink });
+    if (!compact) inkText(sk, w2.tagline.toUpperCase(), left + 34 * k, baseY + 24 * k, 13 * k, { align: 'left', alpha: 0.55, color: ink });
 
     const barX = left + nameSize * 1.35;
-    const barY = baseY + (compact ? nameSize * 0.85 : 38);
-    const cdW = clamp(w * 0.16, 110, 180);
+    const barY = baseY + (compact ? nameSize * 0.85 : 38 * k);
+    const cdW = clamp(w * 0.16, 110, 180) * k;
     const meter = w2.charge > 0 ? w2.charge : 1 - w2.cooldownFrac;
     c.strokeStyle = ink;
     c.lineWidth = 2;
@@ -1012,12 +1454,12 @@ export class Game {
     c.stroke();
     c.fillStyle = ink;
     c.fillRect(barX + 2, barY + 2, Math.max(0, (cdW - 4) * clamp(meter, 0, 1)), 4);
-    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44, barY + 4, 12, { alpha: 0.7, color: ink });
+    if (w2.charge > 0.02) inkText(sk, 'CHARGING', barX + cdW + 44 * k, barY + 4, 12 * k, { alpha: 0.7, color: ink });
 
     // The running melee chain, so the player can see the combo they are on.
     const combo = w2.comboLabel;
     if (combo) {
-      inkText(sk, combo, barX + cdW + 16, barY + 5, clamp(w * 0.017, 12, 17),
+      inkText(sk, combo, barX + cdW + 16 * k, barY + 5, clamp(w * 0.017, 12, 17) * k,
         { align: 'left', alpha: 0.85, wobble: 1.2, color: ink });
     }
     c.restore();
@@ -1051,10 +1493,11 @@ export class Game {
         const lines = [
           'WASD / ARROWS  RUN     HOLD SHIFT  SPRINT',
           'SPACE  JUMP  (again in mid-air to flip, at a wall to kick off it)',
-          'MOUSE  AIM     CLICK  ATTACK     HOLD  HEAVY COMBO',
+          'MOUSE  AIM     CLICK  ATTACK     HOLD  KEEP ATTACKING',
           'HOLD TAB  WEAPON WHEEL     TOP ROW OF KEYS  QUICK SWAP',
+          'HIT THE WALL TO BUILD STRESS     Q  PWNAGE MODE, WHEN IT IS FULL',
         ];
-        const y0 = h - 96 - this.safe.bottom;
+        const y0 = h - 118 - this.safe.bottom;
         const hintInk = y0 > this.terrain.groundTop ? '#fff' : '#000';
         lines.forEach((l, i) => inkText(
           sk, l, w - 20 - this.safe.right, y0 + i * (size + 8), size,
@@ -1103,7 +1546,7 @@ export class Game {
     // more. The open ground is only consulted to stop the words running off
     // the left edge of a narrow phone.
     const open = Math.max(160, t.wallX);
-    const size = fitCueSize(open * 0.62, clamp(w * 0.028, 15, 38));
+    const size = fitCueSize(open * 0.62, clamp(w * 0.028, 15, 38) * this.hudK);
     const half = cueWidth(size) / 2;
     const x = Math.max(half + size * 0.7, t.wallX - size * 1.4 - half);
     const band = t.groundTop - t.wallTop;
@@ -1185,6 +1628,7 @@ export class Game {
           ['R1 / R2 / X', 'swing where he looks; the left stick steers it too'],
           ['HOLD L1', 'weapon fan — point at one and let go'],
           ['START', 'settings'],
+          ['STRESS BAR', 'hit the wall to fill it, then take the PWNAGE button'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : this.isTouch
@@ -1194,6 +1638,7 @@ export class Game {
           ['JUMP AT A WALL', 'kick off it — chain them to climb'],
           ['RIGHT THUMB', 'press to attack — guns aim where you touch'],
           ['PAD AT THE BOTTOM', 'hold, slide to a weapon, lift to equip'],
+          ['STRESS BAR', 'hit the wall to fill it, then tap PWNAGE'],
           ['GOAL', 'wipe the black wall off the screen'],
         ]
       : [
@@ -1203,6 +1648,7 @@ export class Game {
           ['SPACE AT A WALL', 'kick off it — chain them to climb'],
           ['MOUSE', 'aim   ·   CLICK to attack, keep going for combos'],
           ['HOLD TAB', 'weapon wheel   ·   the top row of keys quick-swaps'],
+          ['STRESS BAR', 'hit the wall to fill it, then Q for pwnage mode'],
           ['GOAL', 'wipe the black wall off the screen'],
         ];
     const rowSize = clamp(w * 0.019, 11, 16);

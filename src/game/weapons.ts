@@ -1,3 +1,4 @@
+import type { MarkKind } from './impact';
 import {
   clamp, damp, easeOutCubic, hashNoise, lerp, quadPoint, rand, TAU, type Vec2,
 } from '../core/math';
@@ -39,6 +40,10 @@ const BARRAGE_MAX = 5;
  * read as a different weapon rather than as the same one, wound up.
  */
 const RAMP_IN = 1.05;
+/** Seconds of interference left on the paper by the leap into the barrage. */
+const SWIRL_TIME = 0.5;
+/** Seed for the swirl's wobble; any constant will do, this one is arbitrary. */
+const m0 = 4413;
 const RAMP_OUT = 0.85;
 /** Seconds between blows at the start of the ramp, and at full speed. */
 const BARRAGE_SLOW = 0.2;
@@ -147,6 +152,9 @@ const FIST_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
 };
 
 export class Fists extends MeleeWeapon {
+  /** Knuckles crater; they do not cut. */
+  override get mark(): MarkKind { return 'crater'; }
+
   readonly id = 1;
   readonly name = 'BRAWLER';
   readonly tagline = 'four punches, then hold on';
@@ -173,6 +181,10 @@ export class Fists extends MeleeWeapon {
   private punchT = 0;
   private punches: BigPunch[] = [];
   private smears: Smear[] = [];
+  /** Seconds left on the interference the jump into the barrage leaves. */
+  private swirl = 0;
+  /** Seconds the barrage runs on pwnage's account rather than a trigger. */
+  private forced = 0;
   /** Fractional smear budget, so the rate is per second and not per frame. */
   private smearAcc = 0;
 
@@ -219,7 +231,7 @@ export class Fists extends MeleeWeapon {
    * flurry restarting rather than as running out.
    */
   protected override suppressFire(): boolean {
-    return this.heldFor > BARRAGE_HOLD;
+    return this.specialHeld > BARRAGE_HOLD;
   }
 
   protected override tick(ctx: WeaponCtx, held: boolean): void {
@@ -232,9 +244,15 @@ export class Fists extends MeleeWeapon {
       this.smears[i].life -= ctx.dt;
       if (this.smears[i].life <= 0) this.smears.splice(i, 1);
     }
+    this.swirl = Math.max(0, this.swirl - ctx.dt);
 
-    const running = held && this.heldFor > BARRAGE_HOLD && !this.spent;
+    this.forced = Math.max(0, this.forced - ctx.dt);
+    const running = (this.forced > 0 || (held && this.specialHeld > BARRAGE_HOLD)) && !this.spent;
     if (running) {
+      // He goes into it off a jump. In the film the barrage does not start
+      // from a stance: he leaves the floor, the picture comes apart around
+      // him, and the blows start while he is still up there.
+      if (this.barrageT === 0) this.launch(ctx);
       this.barrageT += ctx.dt;
       this.winddown = RAMP_OUT;
       if (this.barrageT >= BARRAGE_MAX) {
@@ -295,6 +313,32 @@ export class Fists extends MeleeWeapon {
     this.throwPunch(ctx, speed);
   }
 
+  /** The barrage, from its first blow, for as long as it takes to spend it. */
+  override special(_ctx: WeaponCtx): void {
+    this.timer = 0;
+    this.spent = false;
+    this.barrageT = 0;
+    this.forced = BARRAGE_MAX;
+  }
+
+  /**
+   * The jump the barrage opens on, and the mess it makes of the paper.
+   *
+   * Off the floor, thrown a little forward, with a burst of after-images and a
+   * set of turning rings left behind him. The source's version of this is two
+   * or three drawings of pure interference before the first blow lands, and
+   * without it the barrage simply switches on.
+   */
+  private launch(ctx: WeaponCtx): void {
+    const sm = ctx.sm;
+    if (sm.onGround) { sm.vel.y = -520; sm.onGround = false; }
+    sm.vel.x += sm.facing * 90;
+    sm.addGhostBurst(0.55);
+    this.swirl = SWIRL_TIME;
+    ctx.sfx('heavyswing', 0.75);
+    ctx.shake(9);
+  }
+
   /**
    * One drag of ink. It is anchored on his shoulders and thrown *backwards* -
    * these are the arms smearing, not the punches landing - fanned a little
@@ -331,9 +375,9 @@ export class Fists extends MeleeWeapon {
       // the reference's longest is about a third of the frame and most are
       // half that again.
       len: (58 + Math.pow(Math.random(), 1.8) * 200) * (0.55 + field * 0.45),
-      width: rand(11, 30) * (0.6 + field * 0.4),
+      width: rand(15, 38) * (0.62 + field * 0.42),
       bow: rand(-0.16, 0.16),
-      hollow: Math.random() < 0.16,
+      hollow: Math.random() < 0.07,
       life: rand(0.2, 0.36),
       max: 0.36,
       seed: Math.floor(rand(0, 9999)),
@@ -439,7 +483,7 @@ export class Fists extends MeleeWeapon {
 
   /** No weapon: what you see is the shock coming off the knuckles. */
   protected drawWeapon(sk: Sketch, ctx: WeaponCtx): void {
-    if (this.punches.length > 0) this.drawPunches(sk);
+    if (this.punches.length > 0 || this.swirl > 0) this.drawPunches(sk, ctx);
     if (this.anim <= 0 || this.t > 0.62) return;
     const mv = this.move;
     const big = !!mv.heavy || (mv.thick ?? 0) > 24;
@@ -471,7 +515,7 @@ export class Fists extends MeleeWeapon {
    * them, the way a brush run dry does. His arms are not drawn at all - the
    * smears are where his arms went.
    */
-  private drawPunches(sk: Sketch): void {
+  private drawPunches(sk: Sketch, ctx: WeaponCtx): void {
     const c = sk.ctx;
     c.save();
     c.lineJoin = 'round';
@@ -497,9 +541,36 @@ export class Fists extends MeleeWeapon {
       };
     });
 
+    // The interference off the leap, behind the drags: rings turning about him
+    // at wildly different sizes with the paper showing through, which is the
+    // closest an ink drawing gets to what the source does to the picture for
+    // those two or three frames.
+    if (this.swirl > 0) {
+      const k = this.swirl / SWIRL_TIME;
+      const o = ctx.sm.center;
+      c.strokeStyle = '#000';
+      for (let i = 0; i < 7; i++) {
+        const t = (1 - k) * (0.6 + i * 0.16);
+        const r = 26 + t * (150 + i * 46);
+        // A ring that has thinned below a full pen is a grey line, not a
+        // faint black one, so it stops being drawn instead.
+        const wid = 5.5 * k * (1 - t * 0.5);
+        if (wid < 1.3) continue;
+        c.lineWidth = wid;
+        const n = 13;
+        const pts: Vec2[] = [];
+        for (let j = 0; j < n; j++) {
+          const a = (j / n) * TAU + i * 0.7 + ctx.time * (1.6 + i * 0.5);
+          const rr = r * (1 + hashNoise(m0 + i * 5 + j, sk.boil) * 0.22);
+          pts.push({ x: o.x + Math.cos(a) * rr, y: o.y + Math.sin(a) * rr * 0.72 });
+        }
+        sk.polyPath(pts, 1.6);
+        c.stroke();
+      }
+    }
+
     c.fillStyle = '#fff';
     for (const g of geom) {
-      c.globalAlpha = clamp(g.k * 3.4, 0, 1);
       const { m, L, at } = g;
       const segs = 2 + Math.floor(Math.abs(hashNoise(m.seed, 3)) * 3);
       let d = 0;
@@ -516,8 +587,7 @@ export class Fists extends MeleeWeapon {
     }
 
     for (const g of geom) {
-      const { m, k, L, at } = g;
-      c.globalAlpha = clamp(k * 3.4, 0, 1);
+      const { m, L, at } = g;
       // Not a black blob: a white-bellied drag walled in by a heavy rim that
       // is only drawn part of the way round it. Where the drag runs thin the
       // two sides of the rim meet and it reads solid black, and where it runs
@@ -539,7 +609,7 @@ export class Fists extends MeleeWeapon {
         d = d1 + L * (0.05 + Math.abs(hashNoise(m.seed + sgi * 9, sk.boil)) * 0.16);
       }
       // A hooked tick off the blunt end, the way the reference finishes them.
-      if (!m.hollow && k > 0.4) {
+      if (!m.hollow && g.k > 0.4) {
         c.fillStyle = '#000';
         sk.tuftPath(g.head.x, g.head.y, 2, 0, g.w * 2.4, 1.1, m.ang + Math.PI, m.seed + 41, 0.09);
         c.fill();
@@ -594,23 +664,29 @@ const GREATSWORD_SETS: Record<MeleeMode, readonly MeleeMove[]> = {
   // step in it and a shove back afterwards. The arcs are long because the reach
   // is: the cut opens far wider than the blade, and it should look as though
   // the weight is what did it.
+  //
+  // And they *travel*. Watched frame by frame at 0:08 and 0:14 the source's
+  // swordsman never cuts from where he is standing: every stroke throws him
+  // most of a body length forward into it and leaves him skidding, which is
+  // why the dashes here are roughly double what they were and each one carries
+  // a slide after it.
   ground: [
     {
       from: -2.5, to: 1.1, wind: 0.4, strike: 0.18, anim: 0.72, cooldown: 0.72, reach: 1.35, thick: 80,
-      heavy: true, impact: 1.8, dash: 130, recover: 40, flash: 0.4, invert: 0.06, shake: 24, quake: 1,
+      heavy: true, impact: 1.8, dash: 235, slide: 0.2, recover: 40, flash: 0.4, invert: 0.06, shake: 24, quake: 1,
       hitSfx: 'slam', hitPitch: 0.85,
       stance: 'brace', stanceLean: -0.24, stanceHip: -12, stanceOut: 0.16, name: 'CLEAVE',
     },
     {
       from: 2.6, to: -1.15, wind: 0.36, strike: 0.18, anim: 0.7, cooldown: 0.7, reach: 1.4, thick: 82,
-      heavy: true, impact: 1.8, dash: 150, recover: 40, flash: 0.34, invert: 0.05, shake: 22,
+      heavy: true, impact: 1.8, dash: 265, slide: 0.22, recover: 40, flash: 0.34, invert: 0.05, shake: 22,
       quake: 1, hitSfx: 'slam', hitPitch: 0.9,
       stance: 'brace', stanceLean: -0.22, stanceHip: -12, stanceOut: 0.16, name: 'SWEEP',
     },
     {
       // The whole body turns with the sword and everything in front of him goes.
       from: -3.1, to: 1.75, wind: 0.32, strike: 0.2, anim: 0.84, cooldown: 0.95, reach: 1.5, thick: 96,
-      heavy: true, spin: 1, hop: 215, dash: 170, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
+      heavy: true, spin: 1, hop: 215, dash: 330, slide: 0.3, flash: 0.5, invert: 0.07, shake: 28, quake: 1.2,
       hitSfx: 'slam', hitPitch: 0.78, name: 'WHIRLWIND',
     },
   ],
@@ -672,6 +748,9 @@ const DRAG_LOW = 0.24, DRAG_HIGH = 0.66;
 const DRAG_COYOTE = 0.3;
 
 export class Greatsword extends MeleeWeapon {
+  /** A cut leaves the arc it cut, not a scatter. */
+  override get mark(): MarkKind { return 'slash'; }
+
   readonly id = 2;
   readonly name = 'SWORDSMAN';
   readonly tagline = 'rides the floor, lands like a truck';
@@ -695,6 +774,25 @@ export class Greatsword extends MeleeWeapon {
   }
 
   override onEquip(): void { super.onEquip(); this.dragT = 0; this.airT = 0; }
+
+  /**
+   * Carrying it bends him. In the source the swordsman is never upright: he
+   * goes about in a low crouch with his weight forward over the blade, head
+   * down at about hip height, and only comes up at the top of a swing. That is
+   * as much of the character as the sword is, so the drag brings a stance with
+   * it - deepest when he is moving, since that is when the weight is really
+   * hanging off him.
+   */
+  override stance(ctx: WeaponCtx): Stance | null {
+    if (this.dragT < 0.08) return super.stance(ctx);
+    const moving = Math.min(1, Math.abs(ctx.sm.vel.x) / 260);
+    return {
+      kind: 'brace',
+      weight: this.dragT * (0.42 + moving * 0.45),
+      lean: 0.2 + moving * 0.16,
+      hip: -12 - moving * 9,
+    };
+  }
 
   /**
    * He never lifts it. Standing or walking, the point is on the floor behind
@@ -886,6 +984,9 @@ const FRENZY_BLOWS = 7;
 const FRENZY_RATE = 0.19;
 
 export class Warhammer extends MeleeWeapon {
+  /** A head that size opens a hole, and the hole throws spikes all round. */
+  override get mark(): MarkKind { return 'crater'; }
+
   readonly id = 3;
   readonly name = 'SMASHER';
   readonly tagline = 'the head is bigger than he is';
@@ -924,7 +1025,7 @@ export class Warhammer extends MeleeWeapon {
    * into just another combo. Letting go is what sets it off.
    */
   protected override suppressFire(): boolean {
-    return this.frenzy > 0 || this.heldFor > FRENZY_HOLD;
+    return this.frenzy > 0 || this.specialHeld > FRENZY_HOLD;
   }
 
   protected override onLetGo(ctx: WeaponCtx): void {
@@ -950,7 +1051,7 @@ export class Warhammer extends MeleeWeapon {
 
   override get comboLabel(): string | null {
     if (this.frenzy > 0) return `FRENZY  x${FRENZY_BLOWS - this.frenzy + 1}`;
-    if (this.heldFor > FRENZY_HOLD) return 'WINDING UP';
+    if (this.specialHeld > FRENZY_HOLD) return 'WINDING UP';
     return super.comboLabel;
   }
 
@@ -1092,9 +1193,12 @@ type Gun = 'magnum' | 'shotgun' | 'rifle' | 'bazooka';
 const CLOSE_RANGE = 250;
 /** Seconds of held trigger before the bazooka comes off his back. */
 const SLING_HOLD = 0.42;
+/** How long the trigger comes down before the rifle comes off his back. */
+const RIFLE_HOLD = 0.22;
+/** Seconds between rifle rounds while it is held. Fast; it is an assault rifle. */
+const RIFLE_RATE = 0.085;
 /** When the grenades leave his hand, and when the rifle comes off his back. */
 const GRENADE_AT = 0.34;
-const RIFLE_AT = 0.72;
 /** How little air has to be left in front of a grenade before he shoots it. */
 const SNIPE_AT = 210;
 /** How long an over-arm throw takes to play out. */
@@ -1125,6 +1229,12 @@ const SLUNG_BOX: Record<Gun, readonly [number, number, number, number]> = {
 };
 
 export class Gunslinger extends Weapon {
+  /**
+   * Four guns and a rocket tube: a round going in leaves a tight star, a
+   * warhead leaves a bloom. Which one is in his hands decides it.
+   */
+  override get mark(): MarkKind { return this.gun === 'bazooka' ? 'bloom' : 'spark'; }
+
   readonly id = 5;
   readonly name = 'GUNSLINGER';
   readonly tagline = 'four on his back, one in his hands';
@@ -1144,6 +1254,8 @@ export class Gunslinger extends Weapon {
   private live: Projectile[] = [];
   /** Rate limiter on the sniping, so three rounds are three drawings. */
   private snipeT = 0;
+  /** Seconds to the next rifle round while the trigger is held. */
+  private autoT = 0;
   /** Counts down through an over-arm throw. */
   private throwT = 0;
   /** How far through the swap the hands are, so a gun does not teleport. */
@@ -1158,7 +1270,7 @@ export class Gunslinger extends Weapon {
 
   override get comboLabel(): string | null {
     if (this.volley > 0) return 'FUSILLADE';
-    if (this.heldFor > SLING_HOLD) return 'TUBE UP';
+    if (this.specialHeld > SLING_HOLD) return 'TUBE UP';
     return this.gun === 'shotgun' ? 'CLOSE' : null;
   }
 
@@ -1170,7 +1282,7 @@ export class Gunslinger extends Weapon {
   }
 
   protected override suppressFire(_ctx: WeaponCtx): boolean {
-    return this.volley > 0 || this.heldFor > SLING_HOLD;
+    return this.volley > 0 || this.specialHeld > SLING_HOLD;
   }
 
   protected release(ctx: WeaponCtx): void {
@@ -1267,8 +1379,11 @@ export class Gunslinger extends Weapon {
       });
     }
 
-    // 3. And the rifle comes off his back to meet them there.
-    ctx.after(RIFLE_AT, () => { this.gun = 'rifle'; this.swapT = 1; ctx.sfx('ui', 1.5); });
+    // The rifle used to come off his back here to shoot the grenades down in
+    // mid-air. It does not any more: the rifle is what *holding the trigger*
+    // gets you now, and the party piece is the tube and the grenades. Three
+    // explosions still land, spaced along the line, because the grenades go
+    // off where they arrive.
   }
 
   /**
@@ -1335,11 +1450,35 @@ export class Gunslinger extends Weapon {
       if (this.volley <= 0) { this.live.length = 0; this.gun = 'magnum'; this.swapT = 1; }
       return;
     }
-    // Shouldering the tube while the trigger is down.
-    if (held && this.heldFor > SLING_HOLD && this.gun !== 'bazooka') {
+    // Shouldering the tube while the trigger is down - only ever as pwnage
+    // opens, which is the one time the party piece is on offer.
+    if (held && this.specialHeld > SLING_HOLD && this.gun !== 'bazooka') {
       this.gun = 'bazooka';
       this.swapT = 1;
       ctx.sfx('ui', 1.2);
+      return;
+    }
+
+    // Otherwise, holding is the rifle. It comes off his back after a moment
+    // and empties itself down the aim for as long as the trigger is down -
+    // the one weapon here that does not want a click per round - and goes
+    // back on the strap when the trigger comes up.
+    if (held && this.heldFor > RIFLE_HOLD && this.gun !== 'bazooka') {
+      if (this.gun !== 'rifle') {
+        this.gun = 'rifle';
+        this.swapT = 1;
+        ctx.sfx('ui', 1.5);
+        this.autoT = 0.1;
+      }
+      this.autoT -= ctx.dt;
+      if (this.autoT <= 0) {
+        this.autoT = RIFLE_RATE;
+        this.shootOne(ctx);
+        this.timer = Math.max(this.timer, RIFLE_RATE);
+      }
+    } else if (!held && this.gun === 'rifle') {
+      this.gun = 'magnum';
+      this.swapT = 1;
     }
   }
 
@@ -1650,8 +1789,13 @@ const BEAM_RANGE = 1600;
 const BEAM_BORE = 340;
 /** Under this much charge a release is a thrown ball rather than the beam. */
 const ORB_TAP = 0.22;
+/** How long the trigger is down before the balls turn into a stream. */
+const FAST_HOLD = 0.3;
 
 export class EnergyBeam extends Weapon {
+  /** Light arriving: a cone through the point, nothing thrown sideways. */
+  override get mark(): MarkKind { return 'bloom'; }
+
   readonly id = 14;
   readonly name = 'SAYAJEANS';
   override readonly group = 'extra' as const;
@@ -1695,7 +1839,7 @@ export class EnergyBeam extends Weapon {
   }
 
   protected release(ctx: WeaponCtx, power: number): void {
-    if (power < ORB_TAP) { this.throwOrb(ctx); return; }
+    if (power < ORB_TAP) { this.throwOrb(ctx, this.heldFor > FAST_HOLD); return; }
     this.beam = this.beamMax;
     this.power = 0.45 + power * 0.55;
     this.beamAngle = ctx.sm.pose.aim;
@@ -1723,26 +1867,38 @@ export class EnergyBeam extends Weapon {
    * does on a tap has to be *light*: the aura barely comes up, the hands take
    * turns, and he can hang in the air throwing them.
    */
-  private throwOrb(ctx: WeaponCtx): void {
+  /**
+   * One ball of light out of one hand, then the next out of the other.
+   *
+   * `fast` is what holding the trigger gets you: they come out about twice as
+   * quickly and half the size, which is the same power spent as a stream
+   * rather than as a shot. Tapped, they are the slower, heavier ones.
+   */
+  private throwOrb(ctx: WeaponCtx, fast = false): void {
     this.orbSide = -this.orbSide;
-    this.orbT = 0.2;
-    this.cooldown = 0.19;
+    this.orbT = fast ? 0.11 : 0.2;
+    this.cooldown = fast ? 0.085 : 0.19;
     this.timer = this.cooldown;
-    this.startAnim(0.19);
+    this.startAnim(this.cooldown);
     // A light lift under the aura rather than a shove: enough for it to show.
     this.thrust = Math.max(this.thrust, 0.42);
     if (!ctx.sm.onGround) this.airborne = true;
 
     const from = grip(ctx, 44, this.orbSide * 12);
     const a = this.aimFrom(ctx, from) + rand(-0.02, 0.02);
+    const small = fast ? 0.62 : 1;
     ctx.projectiles.push(new Projectile({
       x: from.x, y: from.y,
-      vx: Math.cos(a) * 1150, vy: Math.sin(a) * 1150,
-      kind: 'orb', gravity: 0, radius: 9, life: 2.6,
-      blast: { ...BLASTS.orb, radius: BLASTS.orb.radius * 1.15, shake: 4 },
+      vx: Math.cos(a) * (fast ? 1420 : 1150), vy: Math.sin(a) * (fast ? 1420 : 1150),
+      kind: 'orb', gravity: 0, radius: 9 * small, life: 2.6,
+      blast: {
+        ...BLASTS.orb,
+        radius: BLASTS.orb.radius * 1.15 * small,
+        shake: 4 * small,
+      },
     }));
-    ctx.sfx('fire', rand(1.15, 1.3));
-    ctx.particles.streaks(from.x, from.y, 3, a, 0.5, 46);
+    ctx.sfx('fire', rand(1.15, 1.3) * (fast ? 1.2 : 1));
+    ctx.particles.streaks(from.x, from.y, fast ? 2 : 3, a, 0.5, fast ? 34 : 46);
     // He is pushed a hair back by each one, and in the air that is what keeps
     // him up: throwing is the thrust.
     ctx.sm.applyRecoil(0.22, a, this.airborne ? 26 : 8);
